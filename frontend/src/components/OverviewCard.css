@@ -1,0 +1,172 @@
+.overview-card { padding: 26px 28px; }
+
+.ov-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.ov-company {
+  font-family: var(--font-display);
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: -0.6px;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.ov-symbol {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.ov-exchange {
+  background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(217,70,239,0.08));
+  color: var(--accent-blue);
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: 999px;
+  padding: 1px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.ov-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 6px;
+}
+
+.ov-price {
+  font-family: var(--font-display);
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: -1.6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-change {
+  font-size: 15px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.ov-change.positive { background: rgba(16,185,129,0.1); }
+.ov-change.negative { background: rgba(239,68,68,0.08); }
+
+/* ── Price chart ── */
+.pc-wrap { margin: 6px 0 14px; }
+
+.pc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.pc-range-change { font-size: 13.5px; font-weight: 700; }
+.pc-range-label { color: var(--text-muted); font-weight: 500; }
+
+.pc-range-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.pc-range-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.pc-range-tab:hover { color: var(--text-primary); }
+.pc-range-tab.active {
+  background: #ffffff;
+  color: var(--accent-blue);
+  box-shadow: 0 1px 4px rgba(16,24,40,0.12);
+}
+
+.pc-tooltip {
+  background: #ffffff;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16,24,40,0.14);
+  padding: 8px 12px;
+}
+.pc-tooltip-date { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+.pc-tooltip-price {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ── ranges / metrics ── */
+.ov-range-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 13px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 18px;
+}
+.ov-range-row strong { color: var(--text-primary); font-variant-numeric: tabular-nums; margin-left: 3px; }
+
+.ov-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+  gap: 12px;
+}
+
+.ov-metric {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.ov-metric:hover {
+  border-color: rgba(99,102,241,0.35);
+  box-shadow: 0 6px 16px -6px rgba(99,102,241,0.25);
+  transform: translateY(-2px);
+}
+
+.ov-metric-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+.ov-metric-value {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pledge-warn { cursor: help; }

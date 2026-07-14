@@ -1,0 +1,137 @@
+/* ── card wrapper ──────────────────────────────────────────────────────────── */
+.alpha-card { overflow: visible; }
+
+.alpha-meta { display: flex; align-items: center; gap: 8px; }
+
+.conf-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 10px; text-transform: capitalize;
+}
+.conf-high   { background: rgba(16,185,129,.15);  color: #10b981; }
+.conf-med    { background: rgba(217,119,6,.15); color: #d97706; }
+.conf-low    { background: rgba(239,68,68,.15);  color: #ef4444; }
+
+.gemini-badge {
+  font-size: 11px; color: var(--text-muted);
+  padding: 2px 8px; border: 1px solid var(--border); border-radius: 10px;
+}
+
+/* ── loading state ─────────────────────────────────────────────────────────── */
+.alpha-loading-badge {
+  font-size: 12px; color: var(--text-muted);
+  display: flex; align-items: center; gap: 6px;
+}
+.alpha-spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent-blue);
+  animation: spin .8s linear infinite; display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.sk-row {
+  display: flex; gap: 20px; align-items: center; padding: 4px 0;
+}
+
+/* ── body layout ───────────────────────────────────────────────────────────── */
+.alpha-body {
+  display: flex; flex-direction: column; gap: 0;
+}
+
+.alpha-error {
+  color: var(--accent-red); font-size: 14px; padding: 20px 18px;
+}
+
+/* ── top row ───────────────────────────────────────────────────────────────── */
+.alpha-top {
+  display: flex; gap: 24px; align-items: flex-start;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── SVG gauge ─────────────────────────────────────────────────────────────── */
+.conviction-gauge {
+  position: relative; width: 92px; height: 92px; flex-shrink: 0;
+}
+.gauge-center {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.gauge-score  { font-size: 22px; font-weight: 700; line-height: 1; }
+.gauge-label  { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 3px; }
+
+/* ── summary block ─────────────────────────────────────────────────────────── */
+.alpha-summary-block { flex: 1; min-width: 0; }
+
+.alpha-thesis-text {
+  font-size: 14px; line-height: 1.6; color: var(--text-primary);
+  margin: 0 0 12px; white-space: pre-wrap;
+}
+
+/* ── action chip ───────────────────────────────────────────────────────────── */
+.action-chip {
+  display: inline-block; font-size: 12px; font-weight: 700;
+  padding: 5px 14px; border-radius: 20px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.action-buy-strong { background: rgba(16,185,129,.18);  color: #10b981; border: 1px solid rgba(16,185,129,.35); }
+.action-buy        { background: rgba(52,211,153,.14); color: #34d399; border: 1px solid rgba(52,211,153,.3); }
+.action-hold       { background: rgba(217,119,6,.15); color: #d97706; border: 1px solid rgba(217,119,6,.3); }
+.action-reduce     { background: rgba(234,88,12,.15); color: #ea580c; border: 1px solid rgba(234,88,12,.3); }
+.action-sell       { background: rgba(239,68,68,.13);  color: #ef4444; border: 1px solid rgba(239,68,68,.3); }
+
+/* ── bull / bear columns ───────────────────────────────────────────────────── */
+.alpha-columns {
+  display: flex; gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+.alpha-col { flex: 1; padding: 14px 18px; min-width: 0; }
+.alpha-col-divider { width: 1px; background: var(--border); flex-shrink: 0; }
+
+.col-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.6px; margin-bottom: 8px;
+}
+.bull-label { color: #10b981; }
+.bear-label { color: #ef4444; }
+.flag-label { color: #ea580c; }
+.catalyst-label { color: #6366f1; }
+
+.col-text {
+  font-size: 13px; line-height: 1.55; color: var(--text-secondary);
+  margin: 0; white-space: pre-wrap;
+}
+
+/* ── flags + catalysts ─────────────────────────────────────────────────────── */
+.alpha-flags-row {
+  display: flex; gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+.alpha-flags-col { flex: 1; padding: 14px 18px; min-width: 0; }
+.alpha-flags-col + .alpha-flags-col { border-left: 1px solid var(--border); }
+
+.alpha-list {
+  margin: 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.alpha-list li {
+  font-size: 13px; line-height: 1.45; color: var(--text-secondary);
+  display: flex; gap: 6px; align-items: flex-start;
+}
+.alpha-list .list-icon { flex-shrink: 0; }
+.alpha-empty { color: var(--text-muted); font-size: 13px; margin: 0; }
+
+.flag-list li     { color: #ea580c; }
+.catalyst-list li { color: #6366f1; }
+
+/* ── footer ────────────────────────────────────────────────────────────────── */
+.alpha-footer-row {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 18px;
+}
+.alpha-footer-item { font-size: 13px; line-height: 1.5; }
+.footer-label {
+  font-weight: 600; color: var(--text-secondary); margin-right: 6px;
+  text-transform: uppercase; font-size: 11px; letter-spacing: 0.4px;
+}
+.footer-text { color: var(--text-primary); }

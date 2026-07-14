@@ -1,0 +1,58 @@
+.itip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  color: var(--text-muted);
+  cursor: help;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.itip:hover,
+.itip:focus {
+  color: var(--accent-blue);
+  outline: none;
+}
+
+.itip-pop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: #0f172a;
+  color: #f1f5f9;
+  border-radius: 11px;
+  padding: 10px 13px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.35);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+  pointer-events: none;
+  z-index: 700;
+
+  /* reset any inherited label styling (uppercase headers etc.) */
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.55;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+}
+.itip-pop::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #0f172a;
+}
+
+.itip:hover .itip-pop,
+.itip:focus .itip-pop {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}

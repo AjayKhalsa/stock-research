@@ -1,0 +1,97 @@
+/* ── tabs ──────────────────────────────────────────────────────────────────── */
+.news-tabs { display: flex; gap: 2px; }
+
+.news-tab {
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 13px; font-weight: 500;
+  padding: 6px 12px; border-radius: 6px; transition: all .15s;
+  display: flex; align-items: center; gap: 5px;
+}
+.news-tab:hover:not(:disabled)     { background: var(--bg-hover); color: var(--text-primary); }
+.news-tab-active                   { background: var(--bg-hover); color: var(--text-primary); }
+.news-tab:disabled                 { opacity: 0.4; cursor: default; }
+
+.tab-count {
+  background: var(--bg-secondary); color: var(--text-muted);
+  font-size: 11px; padding: 1px 6px; border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.news-count { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.rf-count   { color: #ea580c; font-size: 12px; font-weight: 600; }
+
+/* ── sentiment overview bar ────────────────────────────────────────────────── */
+.sentiment-bar-wrap { padding: 8px 18px 4px; }
+.sentiment-bar {
+  height: 4px; border-radius: 2px; display: flex; overflow: hidden;
+  background: var(--border);
+}
+.sb-pos { background: #10b981; }
+.sb-neu { background: #94a3b8; }
+.sb-neg { background: #ef4444; }
+
+.sentiment-bar-labels {
+  display: flex; align-items: center; gap: 10px; margin-top: 4px;
+  font-size: 11px;
+}
+.sbl-pos { color: #10b981; }
+.sbl-neu { color: var(--text-muted); }
+.sbl-neg { color: #ef4444; }
+.sbl-composite { font-weight: 600; }
+
+/* ── list / item ───────────────────────────────────────────────────────────── */
+.news-list { display: flex; flex-direction: column; }
+.news-empty {
+  padding: 20px 18px; color: var(--text-muted); font-size: 13px; text-align: center;
+}
+
+.news-item {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px 18px; border-bottom: 1px solid var(--border);
+  text-decoration: none; color: inherit; transition: background .1s;
+}
+.news-item:last-child { border-bottom: none; }
+.news-item:hover      { background: var(--bg-hover); }
+
+.news-item-top { display: flex; align-items: flex-start; gap: 8px; }
+.red-flag      { font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+
+.news-title {
+  font-size: 13px; font-weight: 500; color: var(--text-primary); line-height: 1.4;
+}
+.news-item:hover .news-title { color: var(--accent-blue); }
+
+.news-meta {
+  display: flex; align-items: center; gap: 8px;
+  padding-left: 22px; flex-wrap: wrap;
+}
+
+.news-source   { font-size: 11px; color: var(--text-muted); }
+.news-time     { font-size: 11px; color: var(--text-muted); }
+.news-category {
+  font-size: 11px; color: var(--text-muted);
+  background: var(--bg-secondary); padding: 1px 6px; border-radius: 4px;
+  border: 1px solid var(--border); max-width: 140px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bse-tag {
+  background: rgba(99,102,241,.12); color: #6366f1;
+  padding: 1px 6px; border-radius: 4px; font-weight: 600;
+}
+
+/* ── sentiment tag ─────────────────────────────────────────────────────────── */
+.tag {
+  font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 8px;
+  text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap;
+}
+.tag-positive { background: rgba(16,185,129,.15);  color: #10b981; }
+.tag-negative { background: rgba(239,68,68,.13);  color: #ef4444; }
+.tag-neutral  { background: rgba(100,116,139,.15); color: #64748b; }
+
+/* ── numeric score badge ───────────────────────────────────────────────────── */
+.score-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 7px;
+}
+.score-pos { background: rgba(16,185,129,.12);  color: #10b981; }
+.score-neg { background: rgba(239,68,68,.1);   color: #ef4444; }
+.score-neu { background: rgba(100,116,139,.12); color: #64748b; }

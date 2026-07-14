@@ -1,0 +1,166 @@
+/* ── wrapper ───────────────────────────────────────────────────────────────── */
+.quant-card {}
+.composite-badge { font-size: 13px; font-weight: 600; }
+
+/* ── section dividers ──────────────────────────────────────────────────────── */
+.quant-section {
+  border-bottom: 1px solid var(--border);
+  padding: 14px 18px;
+}
+.quant-section-last { border-bottom: none; }
+
+/* ── section header ────────────────────────────────────────────────────────── */
+.qs-section-header {
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px;
+}
+.qs-section-header > div { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.qs-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--text-secondary);
+}
+.qs-score {
+  font-size: 20px; font-weight: 700; line-height: 1;
+}
+.qs-interp {
+  font-size: 12px; color: var(--text-muted); font-style: italic;
+}
+.qs-interp-text {
+  font-size: 13px; color: var(--text-muted); margin: 8px 0 0; line-height: 1.4;
+}
+
+/* ── Piotroski grid ────────────────────────────────────────────────────────── */
+.pio-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+@media (max-width: 700px) {
+  .pio-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+.pio-cell {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 8px 4px; border-radius: 6px; text-align: center;
+  border: 1px solid transparent; cursor: default;
+  transition: background 0.15s;
+}
+.pio-pass {
+  background: rgba(16,185,129,0.08); border-color: rgba(16,185,129,0.2);
+}
+.pio-fail {
+  background: rgba(239,68,68,0.07); border-color: rgba(239,68,68,0.18);
+}
+.pio-icon {
+  font-size: 15px; font-weight: 700; line-height: 1; margin-bottom: 3px;
+}
+.pio-pass .pio-icon { color: #10b981; }
+.pio-fail .pio-icon { color: #ef4444; }
+
+.pio-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+.pio-val   { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* ── Altman Z bar ──────────────────────────────────────────────────────────── */
+.altman-wrap { margin: 4px 0 6px; }
+
+.altman-bar-track {
+  position: relative; height: 10px; border-radius: 5px;
+  overflow: visible; background: var(--bg-secondary);
+}
+
+.az-zone {
+  position: absolute; top: 0; bottom: 0;
+}
+.az-distress { background: rgba(239,68,68,.35);  border-radius: 5px 0 0 5px; }
+.az-grey     { background: rgba(217,119,6,.35); }
+.az-safe     { background: rgba(16,185,129,.3);   border-radius: 0 5px 5px 0; }
+
+.az-threshold {
+  position: absolute; top: 0; height: 100%; display: flex; flex-direction: column;
+  align-items: center;
+}
+.az-thresh-line {
+  width: 2px; height: 100%; background: var(--bg-primary); opacity: 0.7;
+}
+.az-thresh-label {
+  position: absolute; top: 14px;
+  font-size: 9px; color: var(--text-muted); transform: translateX(-50%); white-space: nowrap;
+}
+
+.az-marker {
+  position: absolute; top: -3px;
+  display: flex; flex-direction: column; align-items: center;
+  transform: translateX(-50%);
+}
+.az-marker-pin {
+  width: 6px; height: 16px; border-radius: 3px; margin-bottom: 2px;
+}
+.az-marker-label {
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+  position: absolute; top: 18px; transform: translateX(-50%);
+}
+
+.altman-zone-labels {
+  display: flex; align-items: center; margin-top: 26px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.az-text-distress { color: #ef4444; }
+.az-text-grey     { color: #d97706; margin-left: 12px; }
+.az-text-safe     { color: #10b981; }
+
+.altman-zone-chip {
+  font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.zone-safe      { background: rgba(16,185,129,.15);  color: #10b981; }
+.zone-grey-zone { background: rgba(217,119,6,.15); color: #d97706; }
+.zone-distress  { background: rgba(239,68,68,.13);  color: #ef4444; }
+
+/* ── DuPont ────────────────────────────────────────────────────────────────── */
+.dupont-formula {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+  margin-bottom: 10px;
+}
+.dp-factor {
+  display: flex; flex-direction: column; align-items: center;
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 12px; min-width: 64px;
+}
+.dp-roe {
+  background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.25);
+}
+.dp-value {
+  font-size: 18px; font-weight: 700; color: var(--text-primary); line-height: 1;
+}
+.dp-roe-val { color: #10b981; }
+.dp-factor-label {
+  font-size: 10px; color: var(--text-muted); text-align: center;
+  margin-top: 4px; line-height: 1.3; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.dp-op {
+  font-size: 18px; font-weight: 700; color: var(--text-muted);
+}
+
+.dupont-driver {
+  font-size: 12px; color: var(--text-secondary); margin: 0 0 12px;
+  line-height: 1.4;
+}
+.dupont-driver strong { color: var(--text-primary); }
+
+/* ── DuPont trend table ─────────────────────────────────────────────────────── */
+.dupont-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.dupont-table th {
+  color: var(--text-muted); font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.4px; font-size: 10px;
+  padding: 5px 8px; border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+.dupont-table th:first-child { text-align: left; }
+.dupont-table td {
+  padding: 5px 8px; color: var(--text-secondary); text-align: right;
+  border-bottom: 1px solid rgba(226,232,240,.5);
+}
+.dupont-table td:first-child { text-align: left; color: var(--text-primary); font-weight: 500; }
+.dupont-table tr:last-child td { border-bottom: none; }

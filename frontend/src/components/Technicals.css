@@ -1,0 +1,70 @@
+.trend-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+.trend-positive { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); }
+.trend-negative { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); }
+.trend-neutral { background: rgba(100,116,139,0.1); border: 1px solid var(--border); }
+
+.trend-icon { font-size: 28px; }
+.trend-text { font-size: 18px; font-weight: 700; }
+.trend-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+.tech-ma-section { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+
+.tech-ma-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.tech-ma-label { font-size: 13px; color: var(--text-secondary); font-weight: 500; min-width: 60px; }
+.tech-ma-value { flex: 1; font-size: 14px; font-weight: 600; }
+.tech-ma-diff { font-size: 13px; font-weight: 600; }
+
+.rsi-wrap { margin-top: 4px; }
+.rsi-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.rsi-label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+.rsi-value { font-size: 13px; font-weight: 600; }
+.rsi-overbought { color: var(--accent-red); }
+.rsi-oversold { color: var(--accent-green); }
+.rsi-neutral { color: var(--accent-blue); }
+
+.rsi-bar-bg {
+  position: relative;
+  height: 8px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  overflow: visible;
+  border: 1px solid var(--border);
+}
+.rsi-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.rsi-zone-30, .rsi-zone-70 {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 1px;
+  background: var(--text-muted);
+  opacity: 0.4;
+}
+.rsi-zone-30 { left: 30%; }
+.rsi-zone-70 { left: 70%; }
+
+.rsi-bar-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
