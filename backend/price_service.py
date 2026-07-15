@@ -44,13 +44,22 @@ def _df_to_candles(df) -> list:
     out = []
     for idx, row in df.iterrows():
         try:
+            close = float(row["Close"])
+            if math.isnan(close) or math.isinf(close):
+                continue   # yfinance emits NaN rows (holidays, demergers) — drop them
+            def _px(key):
+                try:
+                    v = float(row[key])
+                    return round(v, 2) if not (math.isnan(v) or math.isinf(v)) else round(close, 2)
+                except Exception:
+                    return round(close, 2)
             vol = row.get("Volume", 0)
             out.append({
                 "date":   idx.strftime("%Y-%m-%d"),
-                "open":   round(float(row["Open"]), 2),
-                "high":   round(float(row["High"]), 2),
-                "low":    round(float(row["Low"]), 2),
-                "close":  round(float(row["Close"]), 2),
+                "open":   _px("Open"),
+                "high":   _px("High"),
+                "low":    _px("Low"),
+                "close":  round(close, 2),
                 "volume": int(vol) if vol is not None and not math.isnan(vol) else 0,
             })
         except Exception:

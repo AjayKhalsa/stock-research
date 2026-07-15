@@ -413,3 +413,121 @@
   background: var(--bg-card);
   cursor: help;
 }
+
+/* ── Bottom Line (verdict synthesis) ────────────────────────────────────── */
+
+.bl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.bl-pattern {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+
+.bl-lenses {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.bl-lens {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: center;
+}
+
+.bl-lens-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.bl-lens-score {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.bl-lens-verdict {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.bl-lens-question {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.bl-lens-detail {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 5px;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.bl-directives {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.bl-directive {
+  display: flex;
+  gap: 14px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.bl-directive + .bl-directive {
+  border-top: 1px solid var(--border);
+}
+
+.bl-directive-label {
+  flex-shrink: 0;
+  width: 170px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-size: 11.5px;
+}
+
+.bl-directive-text {
+  color: var(--text-secondary);
+}
+
+.bl-reconciliation {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  background: var(--bg-inset);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+@media (max-width: 640px) {
+  .bl-directive { flex-direction: column; gap: 3px; }
+  .bl-directive-label { width: auto; }
+}

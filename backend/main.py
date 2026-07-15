@@ -1,7 +1,16 @@
+import os
+from dotenv import load_dotenv
+
+# Load .env from the repo root and backend/ BEFORE importing modules that read
+# env vars at import time (ai_engine reads GEMINI_API_KEY on import).
+_here = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(os.path.dirname(_here), ".env"))
+load_dotenv(os.path.join(_here, ".env"))
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import json, os, asyncio
+import json, asyncio
 from typing import Optional
 import feedparser, httpx
 from bs4 import BeautifulSoup
@@ -398,6 +407,7 @@ async def get_stock_plan(symbol: str, exchange: str = "NSE"):
         plans["dossier"] = conviction_engine.build_dossier(
             hist_data, plans, quant, nifty
         )
+        plans["synthesis"] = conviction_engine.synthesize_verdicts(plans, quant)
     plans["symbol"] = symbol
     plans["exchange"] = exchange
     plans["company_name"] = (screener_data or {}).get("company_name", symbol)
@@ -722,6 +732,12 @@ async def get_stock_alpha(symbol: str, exchange: str = "NSE"):
         trade_plans    = trade_plans,
     )
 
+    # ── Bottom Line: reconcile trade / business / AI lenses ──────────────────
+    if "error" not in trade_plans:
+        trade_plans["synthesis"] = conviction_engine.synthesize_verdicts(
+            trade_plans, quant_scores, ai_thesis
+        )
+
     live_price = (
         ohlc_data.get("last_price")
         or tech.get("current_price")
@@ -785,8 +801,20 @@ async def get_stock_alpha(symbol: str, exchange: str = "NSE"):
 
 # ── Batch swing-trading screener ──────────────────────────────────────────────
 
+def _json_clean(obj):
+    """Replace NaN/Inf with None recursively — json.dumps emits bare NaN
+    (invalid JSON) and the browser's JSON.parse rejects the whole payload."""
+    if isinstance(obj, float):
+        return None if (obj != obj or obj in (float("inf"), float("-inf"))) else obj
+    if isinstance(obj, dict):
+        return {k: _json_clean(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_clean(v) for v in obj]
+    return obj
+
+
 def _sse(obj: dict) -> str:
-    return f"data: {json.dumps(obj)}\n\n"
+    return f"data: {json.dumps(_json_clean(obj))}\n\n"
 
 
 def _screen_row(symbol: str, sdata: dict, quant: dict, pf: dict) -> dict:
