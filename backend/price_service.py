@@ -155,6 +155,38 @@ async def get_ohlc(instrument: str) -> dict:
     return await asyncio.to_thread(_fetch)
 
 
+_INDEX_CACHE: dict = {}   # {symbol: {"at": epoch, "data": [...]}}
+_INDEX_TTL = 1800         # 30 min
+
+
+async def get_index_historical(symbol: str = "^NSEI", days: int = 400) -> list:
+    """
+    Daily candles for a raw Yahoo index symbol (e.g. ^NSEI for NIFTY 50),
+    cached for 30 minutes — the market regime doesn't change per request.
+    """
+    import time as _time
+    cached = _INDEX_CACHE.get(symbol)
+    if cached and _time.time() - cached["at"] < _INDEX_TTL and len(cached["data"]) > 0:
+        return cached["data"]
+
+    def _fetch():
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=days + 15)
+            df = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=False)
+            return _df_to_candles(df)
+        except Exception as e:
+            print(f"[price_service] index historical error {symbol}: {e}")
+            return []
+
+    data = await asyncio.to_thread(_fetch)
+    if data:
+        _INDEX_CACHE[symbol] = {"at": _time.time(), "data": data}
+    elif cached:
+        return cached["data"]   # stale beats nothing
+    return data
+
+
 async def get_historical(instrument: str, days: int = 300) -> list:
     sym = _yf_symbol(instrument)
     def _fetch():

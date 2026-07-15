@@ -10,7 +10,9 @@ import Technicals     from './components/Technicals';
 import AlphaThesis    from './components/AlphaThesis';
 import QuantScores    from './components/QuantScores';
 import Screener       from './components/Screener';
-import { getStock, getAlpha } from './api';
+import TradePlan      from './components/TradePlan';
+import MarketRegime   from './components/MarketRegime';
+import { getStock, getAlpha, getPlan } from './api';
 import './App.css';
 
 export default function App() {
@@ -29,6 +31,11 @@ export default function App() {
   const [alphaLoading, setAlphaLoading] = useState(false);
   const [alphaError,   setAlphaError]   = useState(null);
 
+  // Phase 1.5 — trade decision plan (fires alongside alpha, lands sooner)
+  const [planData,    setPlanData]    = useState(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planHorizon, setPlanHorizon] = useState('swing');
+
   // Stale-request guard: increments on every new symbol load
   const alphaSeqRef = useRef(0);
 
@@ -40,6 +47,7 @@ export default function App() {
     setStockData(null);
     setAlphaData(null);
     setAlphaError(null);
+    setPlanData(null);
 
     // ── Phase 1: base endpoint ─────────────────────────────────────────────
     let baseData;
@@ -54,9 +62,22 @@ export default function App() {
     }
     setLoading(false);
 
-    // ── Phase 2: alpha endpoint (AI + quant, takes 5-15 s) ────────────────
+    // ── Phase 1.5 + 2: trade plan and alpha fire concurrently ─────────────
     const seq = ++alphaSeqRef.current;
     setAlphaLoading(true);
+    setPlanLoading(true);
+
+    const planPromise = (async () => {
+      try {
+        const plan = await getPlan(symbol, exchange);
+        if (alphaSeqRef.current === seq) setPlanData(plan);
+      } catch (e) {
+        console.warn('[plan]', e);
+      } finally {
+        if (alphaSeqRef.current === seq) setPlanLoading(false);
+      }
+    })();
+
     try {
       const alpha = await getAlpha(symbol, exchange);
       if (alphaSeqRef.current === seq) setAlphaData(alpha);
@@ -67,6 +88,7 @@ export default function App() {
     } finally {
       if (alphaSeqRef.current === seq) setAlphaLoading(false);
     }
+    await planPromise;
   }, []);
 
   return (
@@ -111,6 +133,7 @@ export default function App() {
         {/* ── Stock Research view ──────────────────────────────────────────── */}
         {view === 'research' && (
           <>
+            <MarketRegime />
             {!currentSymbol && !loading && (
               <div className="empty-state">
                 <div className="empty-icon">🔍</div>
@@ -135,7 +158,18 @@ export default function App() {
               <div className="dashboard-grid">
 
                 {/* ── Phase-1 panels (always visible once loaded) ── */}
-                <OverviewCard data={stockData} onAddWatchlist={currentSymbol} />
+                <OverviewCard data={stockData} planLevels={planData?.[planHorizon]} />
+
+                {/* ── Phase-1.5: trade decision plan ── */}
+                <TradePlan
+                  data={planData}
+                  loading={planLoading}
+                  horizon={planHorizon}
+                  onHorizonChange={setPlanHorizon}
+                  aiCommentary={alphaData?.alpha_thesis?.plan_commentary}
+                  symbol={currentSymbol?.symbol}
+                  exchange={currentSymbol?.exchange}
+                />
 
                 <div className="grid-row-2">
                   <QuarterlyResults data={stockData.quarterly_results} />

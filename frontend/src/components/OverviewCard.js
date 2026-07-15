@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  ComposedChart, Area, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea,
 } from 'recharts';
 import toast from 'react-hot-toast';
 import { addToWatchlist } from '../api';
@@ -33,27 +33,56 @@ const ChartTooltip = ({ active, payload }) => {
     <div className="pc-tooltip">
       <div className="pc-tooltip-date">{p.date}</div>
       <div className="pc-tooltip-price">₹{Number(p.close).toLocaleString('en-IN')}</div>
+      {p.volume > 0 && (
+        <div style={{ fontSize: 11, color: p.upDay ? '#10b981' : '#ef4444' }}>
+          Vol {p.volume >= 1e7 ? `${(p.volume / 1e7).toFixed(1)} Cr` : `${(p.volume / 1e5).toFixed(1)} L`}
+        </div>
+      )}
     </div>
   );
 };
 
-function PriceChart({ history }) {
+function PriceChart({ history, levels }) {
   const [range, setRange] = useState('6M');
 
-  const { slice, up, changePct } = useMemo(() => {
+  const { slice, up, changePct, hasVolume } = useMemo(() => {
     const days = RANGES.find(r => r.key === range)?.days ?? 126;
-    const s = history.slice(-days);
+    const s = history.slice(-days).map((c, i, arr) => ({
+      ...c,
+      upDay: i === 0 ? true : c.close >= arr[i - 1].close,
+    }));
     const first = s[0]?.close, last = s[s.length - 1]?.close;
     const isUp = last >= first;
     const chg = first ? ((last - first) / first) * 100 : 0;
-    return { slice: s, up: isUp, changePct: chg };
+    const hv = s.some(c => (c.volume || 0) > 0);
+    return { slice: s, up: isUp, changePct: chg, hasVolume: hv };
   }, [history, range]);
+
+  // Trade-plan levels (entry zone / stop / targets) drawn as reference marks.
+  // Extend the y-domain so stop and targets stay visible in context.
+  const { entry, stop, targets, yDomain } = useMemo(() => {
+    const e = levels?.entry, st = levels?.stop, tg = levels?.targets || [];
+    const levelVals = [
+      e?.low, e?.high, st?.price, ...tg.map(t => t.price),
+    ].filter(v => v != null);
+    if (!levelVals.length) return { entry: e, stop: st, targets: tg, yDomain: ['auto', 'auto'] };
+    return {
+      entry: e, stop: st, targets: tg,
+      yDomain: [
+        (dataMin) => Math.min(dataMin, ...levelVals) * 0.995,
+        (dataMax) => Math.max(dataMax, ...levelVals) * 1.005,
+      ],
+    };
+  }, [levels]);
 
   if (!history || history.length < 5) return null;
 
   const color = up ? '#10b981' : '#ef4444';
   const gid = up ? 'pcGradUp' : 'pcGradDown';
   const first = slice[0]?.close;
+  const levelLabel = (text, fill) => ({
+    value: text, position: 'insideTopRight', fill, fontSize: 10, fontWeight: 700,
+  });
 
   return (
     <div className="pc-wrap">
@@ -74,7 +103,7 @@ function PriceChart({ history }) {
       </div>
 
       <ResponsiveContainer width="100%" height={230}>
-        <AreaChart data={slice} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+        <ComposedChart data={slice} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="pcGradUp" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#10b981" stopOpacity={0.28} />
@@ -96,15 +125,50 @@ function PriceChart({ history }) {
             }}
           />
           <YAxis
-            domain={['auto', 'auto']}
+            domain={yDomain}
             tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
             tickLine={false} axisLine={false}
             width={58}
-            tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}
+            tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v)}
           />
+          {hasVolume && (
+            <YAxis
+              yAxisId="vol"
+              orientation="right"
+              domain={[0, (dataMax) => dataMax * 6]}
+              hide
+            />
+          )}
           <Tooltip content={<ChartTooltip />} cursor={{ stroke: 'var(--border-strong)', strokeDasharray: '4 4' }} />
           {first != null && (
             <ReferenceLine y={first} stroke="var(--text-muted)" strokeDasharray="4 6" strokeOpacity={0.5} />
+          )}
+          {entry?.low != null && entry?.high != null && (
+            <ReferenceArea
+              y1={entry.low} y2={entry.high}
+              fill="rgba(99,102,241,0.10)" stroke="rgba(99,102,241,0.35)" strokeDasharray="3 3"
+              label={levelLabel('Entry', '#6366f1')}
+            />
+          )}
+          {stop?.price != null && (
+            <ReferenceLine
+              y={stop.price} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1.5}
+              label={levelLabel(`Stop ${stop.price}`, '#ef4444')}
+            />
+          )}
+          {targets.map(t => t.price != null && (
+            <ReferenceLine
+              key={t.label}
+              y={t.price} stroke="#10b981" strokeDasharray="4 4" strokeWidth={1.5}
+              label={levelLabel(`${t.label} ${t.price}`, '#10b981')}
+            />
+          ))}
+          {hasVolume && (
+            <Bar yAxisId="vol" dataKey="volume" isAnimationActive={false} barSize={3}>
+              {slice.map((c, i) => (
+                <Cell key={i} fill={c.upDay ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.35)'} />
+              ))}
+            </Bar>
           )}
           <Area
             type="monotone"
@@ -116,13 +180,13 @@ function PriceChart({ history }) {
             activeDot={{ r: 5, strokeWidth: 3, stroke: '#fff', fill: color }}
             animationDuration={600}
           />
-        </AreaChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-export default function OverviewCard({ data }) {
+export default function OverviewCard({ data, planLevels }) {
   const [adding, setAdding] = useState(false);
 
   const handleAddWatchlist = async () => {
@@ -179,7 +243,7 @@ export default function OverviewCard({ data }) {
         )}
       </div>
 
-      {data.price_history?.length > 4 && <PriceChart history={data.price_history} />}
+      {data.price_history?.length > 4 && <PriceChart history={data.price_history} levels={planLevels} />}
 
       <div className="ov-range-row">
         {data.open != null && <span>Open <strong>₹{fmt(data.open)}</strong></span>}

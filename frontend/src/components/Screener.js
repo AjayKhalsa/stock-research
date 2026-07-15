@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { API_BASE } from '../api';
+import { API_BASE, resolveSymbols } from '../api';
+import MarketRegime from './MarketRegime';
 
 const STREAM_URL = `${API_BASE}/api/screen-stream`;
 
@@ -17,6 +18,13 @@ function verdictStyle(verdict = '') {
   if (verdict === 'Strong Candidate') return { bg: 'rgba(16,185,129,0.12)', color: '#10b981', border: '#10b981' };
   if (verdict === 'Buy Watch')        return { bg: 'rgba(99,102,241,0.10)', color: '#6366f1', border: '#6366f1' };
   if (verdict === 'Neutral')          return { bg: 'rgba(245,158,11,0.14)', color: '#f59e0b', border: '#f59e0b' };
+  return { bg: 'rgba(239,68,68,0.10)', color: '#ef4444', border: '#ef4444' };
+}
+
+function planVerdictStyle(verdict = '') {
+  if (verdict === 'Buy')        return { bg: 'rgba(16,185,129,0.12)', color: '#10b981', border: '#10b981' };
+  if (verdict === 'Buy on Dip') return { bg: 'rgba(99,102,241,0.10)', color: '#6366f1', border: '#6366f1' };
+  if (verdict === 'Wait')       return { bg: 'rgba(245,158,11,0.14)', color: '#f59e0b', border: '#f59e0b' };
   return { bg: 'rgba(239,68,68,0.10)', color: '#ef4444', border: '#ef4444' };
 }
 
@@ -111,6 +119,19 @@ function ResultRow({ r, onSelectStock, techAvailable }) {
             whiteSpace: 'nowrap',
           }}>{r.verdict}</span>
         </td>
+        <td style={{ padding: '10px 8px' }}>
+          {r.plan_verdict ? (
+            <span
+              title={r.plan_setup_label || ''}
+              style={{
+                padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                background: planVerdictStyle(r.plan_verdict).bg,
+                color: planVerdictStyle(r.plan_verdict).color,
+                border: `1px solid ${planVerdictStyle(r.plan_verdict).border}`,
+                whiteSpace: 'nowrap',
+              }}>{r.plan_verdict}</span>
+          ) : <span style={{ fontSize: 12, color: '#94a3b8' }}>-</span>}
+        </td>
         <td style={{ padding: '10px 8px' }}><ZBar z={r.z_momentum} /></td>
         <td style={{ padding: '10px 8px' }}><ZBar z={r.z_quality} /></td>
         <td style={{ padding: '10px 8px' }}><ZBar z={r.z_value} /></td>
@@ -130,7 +151,7 @@ function ResultRow({ r, onSelectStock, techAvailable }) {
 
       {open && (
         <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
-          <td colSpan={11} style={{ padding: '14px 18px' }}>
+          <td colSpan={12} style={{ padding: '14px 18px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
 
               <div>
@@ -163,11 +184,30 @@ function ResultRow({ r, onSelectStock, techAvailable }) {
 
               {techAvailable && r.price != null && (
                 <div>
-                  <div style={detailHead}>Swing Levels (ATR-based)</div>
+                  <div style={detailHead}>Trade Plan (swing)</div>
                   <DetailLine label="Last price" value={`₹${r.price?.toLocaleString('en-IN')}`} />
-                  <DetailLine label="Stop (2 ATR)" value={r.stop != null ? `₹${r.stop.toLocaleString('en-IN')}` : '-'} color="#ef4444" />
-                  <DetailLine label="Target (3 ATR)" value={r.target != null ? `₹${r.target.toLocaleString('en-IN')}` : '-'} color="#10b981" />
-                  <DetailLine label="Reward : Risk" value="1.5 : 1" />
+                  {r.plan_verdict ? (
+                    <>
+                      <DetailLine label="Verdict" value={r.plan_verdict} color={planVerdictStyle(r.plan_verdict).color} />
+                      {r.plan_setup_label && <DetailLine label="Setup" value={r.plan_setup_label} />}
+                      <DetailLine
+                        label="Entry zone"
+                        value={r.plan_entry_low != null ? `₹${r.plan_entry_low.toLocaleString('en-IN')} – ₹${r.plan_entry_high?.toLocaleString('en-IN')}` : '-'}
+                        color="#6366f1"
+                      />
+                      <DetailLine label="Stop (structure)" value={r.plan_stop != null ? `₹${r.plan_stop.toLocaleString('en-IN')}` : '-'} color="#ef4444" />
+                      <DetailLine label="Target T1" value={r.plan_t1 != null ? `₹${r.plan_t1.toLocaleString('en-IN')}` : '-'} color="#10b981" />
+                      <DetailLine label="Reward : Risk" value={r.plan_rr != null ? `${r.plan_rr} : 1` : '-'} />
+                    </>
+                  ) : (
+                    <>
+                      <DetailLine label="Stop (2 ATR)" value={r.stop != null ? `₹${r.stop.toLocaleString('en-IN')}` : '-'} color="#ef4444" />
+                      <DetailLine label="Target (3 ATR)" value={r.target != null ? `₹${r.target.toLocaleString('en-IN')}` : '-'} color="#10b981" />
+                    </>
+                  )}
+                  <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 6 }}>
+                    Open full research for the complete plan · not investment advice
+                  </div>
                 </div>
               )}
 
@@ -214,14 +254,30 @@ export default function Screener({ onSelectStock }) {
   const [results,    setResults]    = useState(null);
   const [techAvail,  setTechAvail]  = useState(true);
   const [error,      setError]      = useState(null);
+  const [resolving,  setResolving]  = useState(false);
+  const [resolution, setResolution] = useState(null);   // [{query, symbol|null}]
 
   const esRef = useRef(null);
   const fileRef = useRef(null);
 
-  const parseSymbols = (text) =>
-    [...new Set(
-      text.split(/[\s,;\n\r\t]+/).map(s => s.trim().toUpperCase()).filter(Boolean)
-    )];
+  // Split into tokens: newlines/commas/semicolons always separate entries.
+  // A multi-word segment in ALL CAPS is treated as space-separated symbols
+  // (old behavior); anything with lowercase letters is a company name.
+  const parseTokens = (text) => {
+    const out = [];
+    for (const seg of text.split(/[,;\n\r\t]+/)) {
+      const s = seg.trim().replace(/\s+/g, ' ');
+      if (!s) continue;
+      if (s.includes(' ') && /^[A-Z0-9.&\- ]+$/.test(s) && !/\b(LTD|LIMITED)\b/.test(s)) {
+        out.push(...s.split(' '));   // "RELIANCE TCS INFY" on one line
+      } else {
+        out.push(s);                 // symbol or company name
+      }
+    }
+    return [...new Set(out)];
+  };
+
+  const parseSymbols = parseTokens;  // count display reuses the same tokens
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -235,17 +291,42 @@ export default function Screener({ onSelectStock }) {
     e.target.value = '';
   };
 
-  const handleRun = () => {
-    const syms = parseSymbols(input);
-    if (syms.length < 2) {
-      setError('Enter at least 2 symbols to rank them against each other.');
+  const handleRun = async () => {
+    const tokens = parseTokens(input);
+    if (tokens.length < 2) {
+      setError('Enter at least 2 symbols or company names to rank them against each other.');
       return;
     }
-    if (running) return;
+    if (running || resolving) return;
 
     setError(null);
     setResults(null);
+    setResolution(null);
     setLogLines([]);
+
+    // Resolve company names / validate symbols against the NSE directory
+    let syms;
+    setResolving(true);
+    try {
+      const resolved = await resolveSymbols(tokens);
+      setResolution(resolved);
+      syms = [...new Set(resolved.filter(r => r.symbol).map(r => r.symbol))];
+      const unresolved = resolved.filter(r => !r.symbol);
+      if (unresolved.length > 0) {
+        setError(`Could not resolve: ${unresolved.map(r => `"${r.query}"`).join(', ')} — screening the rest.`);
+      }
+    } catch {
+      // Resolution service down: fall back to treating tokens as raw symbols
+      syms = tokens.filter(t => !t.includes(' ')).map(t => t.toUpperCase());
+    } finally {
+      setResolving(false);
+    }
+
+    if (syms.length < 2) {
+      setError('Fewer than 2 entries resolved to NSE symbols — nothing to rank.');
+      return;
+    }
+
     setProgress({ done: 0, total: syms.length });
     setRunning(true);
 
@@ -285,13 +366,16 @@ export default function Screener({ onSelectStock }) {
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 8px' }}>
 
+      <MarketRegime />
+
       {/* header */}
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ margin: '0 0 6px', fontSize: 22, color: '#0f172a' }}>
           Swing Screener
         </h2>
         <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
-          Paste a list of NSE symbols. Every stock gets Piotroski, Altman Z, Beneish M,
+          Paste NSE symbols or full company names (names are auto-resolved to symbols).
+          Every stock gets Piotroski, Altman Z, Beneish M,
           earnings yield, multi-horizon momentum, RSI, ATR volatility and trend - then all
           are ranked against each other with winsorized z-score composites weighted for swing trading
           (Momentum 35% · Quality 30% · Value 20% · Low-Risk 15%).
@@ -306,7 +390,7 @@ export default function Screener({ onSelectStock }) {
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder={`Symbols separated by comma, space or newline, e.g.\n${EXAMPLE}`}
+          placeholder={`NSE symbols or full company names (one name per line), e.g.\n${EXAMPLE}\nAegis Logistics Ltd\nWelspun Living Ltd`}
           rows={3}
           style={{
             width: '100%', boxSizing: 'border-box', resize: 'vertical',
@@ -319,25 +403,27 @@ export default function Screener({ onSelectStock }) {
         <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             onClick={handleRun}
-            disabled={running}
+            disabled={running || resolving}
             style={{
               display: 'flex', alignItems: 'center', gap: 8,
               padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: running ? 'not-allowed' : 'pointer',
-              background: running ? 'var(--bg-hover)' : 'linear-gradient(135deg, #2f6feb, #5b4ee9)',
-              border: running ? '1px solid var(--border-strong)' : '1px solid transparent',
-              boxShadow: running ? 'none' : '0 2px 12px rgba(47,111,235,0.4)',
-              color: running ? '#64748b' : '#fff',
+              cursor: (running || resolving) ? 'not-allowed' : 'pointer',
+              background: (running || resolving) ? 'var(--bg-hover)' : 'linear-gradient(135deg, #2f6feb, #5b4ee9)',
+              border: (running || resolving) ? '1px solid var(--border-strong)' : '1px solid transparent',
+              boxShadow: (running || resolving) ? 'none' : '0 2px 12px rgba(47,111,235,0.4)',
+              color: (running || resolving) ? '#64748b' : '#fff',
             }}
           >
-            {running
-              ? <><Spinner /> Screening {progress.done}/{progress.total}...</>
-              : 'Run Screen'}
+            {resolving
+              ? <><Spinner /> Resolving names...</>
+              : running
+                ? <><Spinner /> Screening {progress.done}/{progress.total}...</>
+                : 'Run Screen'}
           </button>
 
           <button
             onClick={() => fileRef.current?.click()}
-            disabled={running}
+            disabled={running || resolving}
             style={{
               padding: '8px 14px', borderRadius: 8, fontSize: 13,
               cursor: running ? 'not-allowed' : 'pointer',
@@ -390,6 +476,26 @@ export default function Screener({ onSelectStock }) {
             {error}
           </div>
         )}
+
+        {/* name → symbol resolution mapping */}
+        {resolution && resolution.some(r => r.method !== 'symbol') && (
+          <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {resolution.map((r, i) => (
+              <span key={i} style={{
+                fontSize: 11, padding: '3px 10px', borderRadius: 999,
+                background: r.symbol ? 'var(--bg-inset)' : 'rgba(239,68,68,0.08)',
+                border: `1px solid ${r.symbol ? 'var(--border)' : 'rgba(239,68,68,0.4)'}`,
+                color: r.symbol ? '#64748b' : '#ef4444',
+              }} title={r.name || ''}>
+                {r.method === 'symbol'
+                  ? <strong style={{ color: '#0f172a' }}>{r.symbol}</strong>
+                  : r.symbol
+                    ? <>{r.query} → <strong style={{ color: '#0f172a' }}>{r.symbol}</strong></>
+                    : <>{r.query} — not found</>}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* results */}
@@ -424,6 +530,7 @@ export default function Screener({ onSelectStock }) {
                     { h: 'Symbol' },
                     { h: 'Score', tip: 'Composite rank score (0-100) vs the other stocks in your list: Momentum 35% + Quality 30% + Value 20% + Low-Risk 15%. 70+ = top of your list.' },
                     { h: 'Verdict', tip: 'Overall call. Strong Candidate needs score 70+, an uptrend and Piotroski 6+. Manipulation or distress flags force Avoid regardless of score.' },
+                    { h: 'Plan', tip: 'Trade Decision Engine swing verdict: Buy (setup active, price in entry zone), Buy on Dip (wait for pullback to the entry band), Wait, or Avoid. Expand the row for entry/stop/target levels.' },
                     { h: 'Momentum', tip: 'Price-strength z-score vs your list: 3M/6M returns, 12-1 momentum, 52-week-high proximity, risk-adjusted return. Positive = stronger than the group.' },
                     { h: 'Quality', tip: 'Fundamental-strength z-score vs your list: Piotroski, Altman Z, ROE, ROCE. Positive = higher quality than the group.' },
                     { h: 'Value', tip: 'Cheapness z-score vs your list: earnings yield, inverse P/E, inverse P/B, dividend yield. Positive = cheaper than the group.' },

@@ -10,6 +10,10 @@ import quant_engine
 import qualitative_engine
 import ai_engine
 import swing_engine
+import decision_engine
+import alert_store
+import symbol_resolver
+import conviction_engine
 
 app = FastAPI(title="Stock Research API", version="1.0.0")
 
@@ -291,7 +295,30 @@ async def fetch_news(symbol: str, company_name: str = "") -> list:
 
 @app.get("/api/search")
 async def search(q: str, limit: int = 15):
-    return await price.search_instruments(q, limit)
+    """
+    Autocomplete: NSE directory matches first (fast, full company names),
+    then Yahoo Finance results for anything the local list misses.
+    """
+    local, yahoo = await asyncio.gather(
+        symbol_resolver.search_local(q, limit=8),
+        price.search_instruments(q, limit),
+    )
+    seen = {item["symbol"] for item in local}
+    merged = local + [y for y in yahoo if y["symbol"] not in seen]
+    return merged[:limit]
+
+
+@app.post("/api/resolve")
+async def resolve_symbols(item: dict):
+    """
+    Resolve free-text queries (company names or symbols) to NSE symbols.
+    Body: {"queries": ["Aegis Logistics Ltd", "DELHIVERY", ...]}
+    Returns [{"query", "symbol"|null, "name", "exchange", "method"}].
+    """
+    queries = item.get("queries")
+    if not isinstance(queries, list) or not queries:
+        raise HTTPException(status_code=400, detail="queries (non-empty list) required")
+    return await symbol_resolver.resolve_many([str(q) for q in queries[:80]])
 
 
 @app.get("/api/stock/{symbol}")
@@ -346,6 +373,44 @@ async def get_stock(symbol: str, exchange: str = "NSE"):
     }
 
 
+@app.get("/api/stock/{symbol}/plan")
+async def get_stock_plan(symbol: str, exchange: str = "NSE"):
+    """
+    Trade Decision Engine: swing + positional trade plans (verdict, entry zone,
+    stop, targets, R:R) anchored to chart structure, plus the conviction
+    dossier — historical base rates of the detected setup on this stock's own
+    ~5y history, expected value, NIFTY regime, relative strength, trend
+    template, and the weighted bull/bear evidence ledger. Degrades gracefully —
+    errors return {"error": ...} with HTTP 200.
+    """
+    symbol = symbol.upper().strip()
+    instrument = f"{exchange}:{symbol}"
+
+    screener_data, hist_data, nifty = await asyncio.gather(
+        fetch_screener_full(symbol),
+        price.get_historical(instrument, days=1250),   # ~5y for base rates
+        price.get_index_historical("^NSEI", days=400),
+    )
+
+    quant = quant_engine.compute_all(screener_data) if screener_data else None
+    plans = decision_engine.build_trade_plans(hist_data, screener_data, quant)
+    if "error" not in plans:
+        plans["dossier"] = conviction_engine.build_dossier(
+            hist_data, plans, quant, nifty
+        )
+    plans["symbol"] = symbol
+    plans["exchange"] = exchange
+    plans["company_name"] = (screener_data or {}).get("company_name", symbol)
+    return plans
+
+
+@app.get("/api/market-regime")
+async def get_market_regime():
+    """NIFTY tape check: Risk-On / Neutral / Risk-Off with guidance (cached 30m)."""
+    nifty = await price.get_index_historical("^NSEI", days=400)
+    return conviction_engine.market_regime(nifty)
+
+
 @app.get("/api/ltp/{symbol}")
 async def ltp(symbol: str, exchange: str = "NSE"):
     return await price.get_ltp(f"{exchange}:{symbol.upper()}")
@@ -381,6 +446,76 @@ async def watchlist_prices():
         return {}
     instruments = [f"{w['exchange']}:{w['symbol']}" for w in wl]
     return await price.get_ltp_multiple(instruments)
+
+
+# ── alerts ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/alerts")
+async def get_alerts(symbol: Optional[str] = None):
+    alerts = alert_store.load_alerts()
+    if symbol:
+        alerts = [a for a in alerts if a["symbol"] == symbol.upper()]
+    return alerts
+
+
+@app.post("/api/alerts")
+async def create_alert(item: dict):
+    sym = item.get("symbol", "").upper().strip()
+    level = item.get("level")
+    direction = item.get("direction")
+    if not sym or level is None or direction not in ("above", "below"):
+        raise HTTPException(status_code=400,
+                            detail="symbol, level and direction ('above'|'below') required")
+    return alert_store.create_custom(
+        sym, item.get("exchange", "NSE"), level, direction, item.get("label", "")
+    )
+
+
+@app.post("/api/alerts/from-plan")
+async def create_alerts_from_plan(item: dict):
+    sym = item.get("symbol", "").upper().strip()
+    horizon = item.get("horizon")
+    plan = item.get("plan")
+    if not sym or horizon not in ("swing", "positional") or not isinstance(plan, dict):
+        raise HTTPException(status_code=400,
+                            detail="symbol, horizon ('swing'|'positional') and plan required")
+    return alert_store.create_from_plan(sym, item.get("exchange", "NSE"), horizon, plan)
+
+
+@app.delete("/api/alerts/{alert_id}")
+async def remove_alert(alert_id: str):
+    if not alert_store.delete_alert(alert_id):
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"ok": True}
+
+
+@app.post("/api/alerts/{alert_id}/ack")
+async def ack_alert(alert_id: str):
+    if not alert_store.acknowledge(alert_id):
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"ok": True}
+
+
+@app.get("/api/watchlist/pulse")
+async def watchlist_pulse():
+    """
+    Watchlist prices + alert check in one call (polled by the sidebar every
+    30s). Fetches LTPs for watchlist symbols plus any symbol with an active
+    alert, flips crossed alerts, and returns the newly-triggered ones.
+    Alerts run on delayed Yahoo Finance data — advisory only.
+    """
+    wl = load_json(WATCHLIST_FILE, [])
+    instruments = {f"{w['exchange']}:{w['symbol']}" for w in wl}
+    instruments |= {f"{exc}:{sym}" for sym, exc in alert_store.symbols_with_active_alerts()}
+
+    prices = await price.get_ltp_multiple(sorted(instruments)) if instruments else {}
+    newly_triggered = alert_store.check_alerts(prices)
+
+    return {
+        "prices": prices,
+        "newly_triggered": newly_triggered,
+        "alerts_by_symbol": alert_store.summary_by_symbol(),
+    }
 
 
 # ── Annual data scraping (for /alpha endpoint) ────────────────────────────────
@@ -535,11 +670,13 @@ async def get_stock_alpha(symbol: str, exchange: str = "NSE"):
         hist_data,
         ohlc_data,
         bse_announcements,
+        nifty_data,
     ) = await asyncio.gather(
         fetch_screener_full(symbol),
-        price.get_historical(instrument, days=300),
+        price.get_historical(instrument, days=1250),
         price.get_ohlc(instrument),
         qualitative_engine.get_bse_announcements(symbol),
+        price.get_index_historical("^NSEI", days=400),
     )
 
     company_name = screener_data.get("company_name", symbol)
@@ -552,6 +689,15 @@ async def get_stock_alpha(symbol: str, exchange: str = "NSE"):
 
     # ── Quant scores ──────────────────────────────────────────────────────────
     quant_scores = quant_engine.compute_all(screener_data)
+
+    # ── Trade decision plans (swing + positional) + conviction dossier ───────
+    trade_plans = decision_engine.build_trade_plans(
+        hist_data, screener_data, quant_scores
+    )
+    if "error" not in trade_plans:
+        trade_plans["dossier"] = conviction_engine.build_dossier(
+            hist_data, trade_plans, quant_scores, nifty_data
+        )
 
     # ── Sentiment: merge news + BSE announcements ─────────────────────────────
     # Normalise BSE announcements so score_corpus can read "title" or "headline"
@@ -573,6 +719,7 @@ async def get_stock_alpha(symbol: str, exchange: str = "NSE"):
         raw_financials = screener_data,
         quant_scores   = quant_scores,
         sentiment_data = sentiment_data,
+        trade_plans    = trade_plans,
     )
 
     live_price = (
@@ -623,6 +770,9 @@ async def get_stock_alpha(symbol: str, exchange: str = "NSE"):
 
         # ── quantitative scores ───────────────────────────────────────────────
         "quant": quant_scores,
+
+        # ── trade decision plans ──────────────────────────────────────────────
+        "trade_plans": trade_plans,
 
         # ── qualitative / sentiment ───────────────────────────────────────────
         "bse_announcements": bse_scored,
@@ -682,6 +832,25 @@ def _screen_row(symbol: str, sdata: dict, quant: dict, pf: dict) -> dict:
     }
 
 
+def _plan_summary(plans: dict) -> dict:
+    """Flatten the swing trade plan into screener-row columns."""
+    sw = plans.get("swing") if isinstance(plans, dict) else None
+    if not sw:
+        return {"plan_verdict": None}
+    entry = sw.get("entry") or {}
+    stop  = sw.get("stop") or {}
+    targets = sw.get("targets") or []
+    return {
+        "plan_verdict":     sw.get("verdict"),
+        "plan_setup_label": sw.get("setup_label"),
+        "plan_entry_low":   entry.get("low"),
+        "plan_entry_high":  entry.get("high"),
+        "plan_stop":        stop.get("price"),
+        "plan_t1":          targets[0]["price"] if targets else None,
+        "plan_rr":          sw.get("risk_reward"),
+    }
+
+
 @app.get("/api/screen-stream")
 async def screen_stream(symbols: str):
     """
@@ -721,7 +890,9 @@ async def screen_stream(symbols: str):
             try:
                 quant = quant_engine.compute_all(sdata)
                 pf    = swing_engine.compute_price_factors(hist)
-                rows.append(_screen_row(sym, sdata, quant, pf))
+                plans = decision_engine.build_trade_plans(hist, sdata, quant)
+                rows.append({**_screen_row(sym, sdata, quant, pf),
+                             **_plan_summary(plans)})
                 pio = quant["piotroski"].get("score")
                 z   = quant["altman"].get("z_score")
                 yield _sse({"type": "log",
