@@ -76,3 +76,101 @@
 }
 .wl-item:hover .wl-remove { opacity: 1; }
 .wl-remove:hover { color: var(--accent-red); transform: scale(1.15); }
+
+/* ── alerts ─────────────────────────────────────────────────────────────── */
+
+.wl-alert-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.wl-alert-badge.hot { color: var(--accent-red); }
+
+.wl-alerts-section {
+  border-top: 1px solid var(--border);
+  padding: 8px 8px 12px;
+  flex-shrink: 0;
+}
+
+.wl-alerts-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-muted);
+  padding: 6px 10px;
+}
+.wl-alerts-toggle:hover { color: var(--text-secondary); }
+
+.wl-alerts-hot-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-red);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.wl-alerts-meta {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.wl-alerts-list { max-height: 220px; overflow-y: auto; padding: 2px 2px 0; }
+
+.wl-alerts-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 10px 0;
+}
+
+.wl-alert-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  margin: 2px 0;
+  border: 1px solid transparent;
+}
+.wl-alert-item:hover { background: var(--bg-hover); }
+.wl-alert-item.triggered { border-color: rgba(245, 158, 11, 0.3); background: rgba(245, 158, 11, 0.05); }
+
+.wl-alert-main { min-width: 0; cursor: pointer; flex: 1; }
+.wl-alert-sym { font-size: 11px; font-weight: 700; color: var(--text-primary); margin-right: 6px; }
+.wl-alert-label { display: block; font-size: 10.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-alert-level { font-size: 10.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+.wl-alert-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.wl-alert-actions button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.wl-alert-actions button:hover { color: var(--text-primary); }
+
+.wl-alerts-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding: 8px 10px 0;
+}

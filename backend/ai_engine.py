@@ -56,6 +56,7 @@ def _build_prompt(
     raw:           dict,
     quant_scores:  dict,
     sentiment:     dict,
+    trade_plans:   Optional[dict] = None,
 ) -> str:
     """Assemble the rich analysis prompt from all data layers."""
 
@@ -142,6 +143,51 @@ def _build_prompt(
         "recent_headlines": top_headlines,
     }
 
+    # ── Computed trade plans (compact: verdicts + levels only) ────────────────
+    plans_block = None
+    if trade_plans and "error" not in trade_plans:
+        def _plan_brief(p: dict) -> dict:
+            if not p:
+                return {}
+            return {
+                "verdict":      p.get("verdict"),
+                "setup":        p.get("setup_label"),
+                "entry_zone":   p.get("entry"),
+                "stop":         (p.get("stop") or {}).get("price"),
+                "targets":      [{t.get("label"): t.get("price")} for t in p.get("targets", [])],
+                "risk_reward":  p.get("risk_reward"),
+                "confidence":   p.get("confidence"),
+            }
+        plans_block = {
+            "price":      trade_plans.get("price"),
+            "swing":      _plan_brief(trade_plans.get("swing")),
+            "positional": _plan_brief(trade_plans.get("positional")),
+        }
+        dossier = trade_plans.get("dossier")
+        if dossier:
+            case = dossier.get("case", {})
+            pa_sig = dossier.get("price_action") or {}
+            plans_block["evidence"] = {
+                "price_action": {
+                    "market_structure": (pa_sig.get("structure") or {}).get("state"),
+                    "obv": (pa_sig.get("obv") or {}).get("state"),
+                    "distribution_days_25d": pa_sig.get("distribution_days"),
+                    "up_down_volume_ratio_50d": pa_sig.get("up_down_volume_ratio"),
+                    "recent_pocket_pivots": len(pa_sig.get("pocket_pivots") or []),
+                    "pullback_volume": (pa_sig.get("pullback_volume") or {}).get("state"),
+                },
+                "market_regime":   (dossier.get("regime") or {}).get("label"),
+                "regime_guidance": (dossier.get("regime") or {}).get("guidance"),
+                "relative_strength": (dossier.get("relative_strength") or {}).get("label"),
+                "trend_template":  f"{(dossier.get('trend_template') or {}).get('score')}"
+                                   f"/{(dossier.get('trend_template') or {}).get('max_score')}",
+                "setup_base_rates": (dossier.get("base_rates") or {}).get("note"),
+                "conviction":      case.get("conviction"),
+                "final_call":      case.get("final_call"),
+                "top_evidence":    [f"[{e['side']}] {e['text']}"
+                                    for e in case.get("ledger", [])[:6]],
+            }
+
     prompt = f"""Analyse {ticker} ({company_name}) for an Indian equity investor today.
 
 === KEY RATIOS ===
@@ -161,6 +207,9 @@ def _build_prompt(
 
 === NEWS & ANNOUNCEMENT SENTIMENT ===
 {json.dumps(sentiment_block, indent=2)}
+
+=== COMPUTED TRADE PLANS (rule-based technical levels) ===
+{json.dumps(plans_block, indent=2) if plans_block else "unavailable"}
 
 === INSTRUCTIONS ===
 1. Synthesise ALL layers above into a comprehensive, data-driven investment thesis.
@@ -190,6 +239,7 @@ Return EXACTLY this JSON object (no markdown, no extra keys):
   "valuation_view": "<cheap | fair | expensive vs historical/peers — 1–2 sentences>",
   "risk_reward": "<asymmetric upside vs downside assessment — 1 sentence>",
   "suggested_action": "<Buy on dips | Accumulate | Hold | Reduce | Avoid — with a specific condition>",
+  "plan_commentary": "<1-2 sentences: do you agree or disagree with the computed trade plans and evidence stack above (base rates, regime, relative strength)? Cite the single strongest piece of evidence for or against. If plans are unavailable, say so.>",
   "data_confidence": "<high|medium|low — based on completeness of data provided>"
 }}"""
 
@@ -214,6 +264,7 @@ def _no_key_response() -> dict:
         "valuation_view":   None,
         "risk_reward":      None,
         "suggested_action": None,
+        "plan_commentary":  None,
         "data_confidence":  "n/a",
     }
 
@@ -232,6 +283,7 @@ async def generate_alpha_thesis(
     raw_financials: dict,
     quant_scores: dict,
     sentiment_data: dict,
+    trade_plans:  Optional[dict] = None,
 ) -> dict:
     """
     Call Gemini and return a structured alpha thesis dict.
@@ -243,7 +295,8 @@ async def generate_alpha_thesis(
     company_name = raw_financials.get("company_name", ticker)
 
     prompt = _build_prompt(
-        ticker, company_name, raw_financials, quant_scores, sentiment_data
+        ticker, company_name, raw_financials, quant_scores, sentiment_data,
+        trade_plans,
     )
 
     payload = {
@@ -336,6 +389,7 @@ async def generate_alpha_thesis(
         thesis.setdefault("valuation_view",    "")
         thesis.setdefault("risk_reward",       "")
         thesis.setdefault("suggested_action",  "Hold")
+        thesis.setdefault("plan_commentary",   "")
         thesis.setdefault("data_confidence",   "medium")
 
         # Clamp conviction score

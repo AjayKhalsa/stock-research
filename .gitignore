@@ -11,3 +11,8 @@ frontend/build/
 
 # Local data (watchlist etc.)
 backend/data/
+
+# Secrets & local tooling state
+.env
+.claude/*
+!.claude/launch.json

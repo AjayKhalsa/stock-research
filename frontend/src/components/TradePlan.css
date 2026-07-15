@@ -1,0 +1,415 @@
+.trade-plan .tp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.tp-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tp-horizon-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.tp-horizon-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tp-horizon-tab.active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(139, 92, 246, 0.16));
+  color: var(--accent-blue);
+}
+
+.tp-verdict-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  border: 1px solid;
+}
+
+.tp-verdict {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.tp-setup-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.tp-confidence {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tp-conf-track {
+  width: 90px;
+  height: 7px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tp-conf-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.tp-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.tp-evidence-chip {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.tp-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.tp-level {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.tp-level-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+}
+
+.tp-level-price {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-level-basis {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 5px;
+  line-height: 1.45;
+}
+
+.tp-stats-row {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.tp-stats-row strong {
+  color: var(--text-primary);
+}
+
+.tp-invalidation {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.tp-gate {
+  font-size: 12px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  line-height: 1.5;
+}
+
+.tp-gate.pass       { background: rgba(16, 185, 129, 0.07); color: var(--accent-green); border: 1px solid rgba(16, 185, 129, 0.25); }
+.tp-gate.soft_fail  { background: rgba(245, 158, 11, 0.08); color: var(--accent-orange); border: 1px solid rgba(245, 158, 11, 0.3); }
+.tp-gate.hard_fail  { background: rgba(239, 68, 68, 0.08); color: var(--accent-red); border: 1px solid rgba(239, 68, 68, 0.3); }
+.tp-gate.unavailable { background: var(--bg-inset); color: var(--text-muted); border: 1px solid var(--border); }
+
+.tp-notes {
+  margin: 0 0 12px;
+  padding: 0 0 0 18px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.tp-flag {
+  color: var(--accent-orange);
+}
+
+.tp-ai-note {
+  border-left: 3px solid var(--accent-purple);
+  background: var(--bg-inset);
+  border-radius: 0 8px 8px 0;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.55;
+}
+
+.tp-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.tp-monitor-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, #2f6feb, #5b4ee9);
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(47, 111, 235, 0.35);
+  transition: opacity 0.15s ease;
+}
+
+.tp-monitor-btn:disabled {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.tp-disclaimer {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-width: 480px;
+}
+
+.tp-skeleton-row {
+  display: flex;
+  gap: 12px;
+}
+
+/* ── The Case (evidence dossier) ────────────────────────────────────────── */
+
+.tp-case {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: var(--bg-inset);
+}
+
+.tp-case-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.tp-case-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.tp-case-final {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tp-case-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--border);
+}
+.tp-case-bar-bull { background: #10b981; }
+.tp-case-bar-bear { background: #ef4444; }
+
+.tp-case-bar-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  margin: 4px 0 12px;
+}
+
+.tp-baserates {
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+}
+.tp-baserates.good { border-color: rgba(16,185,129,0.35); }
+.tp-baserates.bad  { border-color: rgba(239,68,68,0.4); }
+
+.tp-baserates-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  margin-bottom: 7px;
+}
+
+.tp-baserates-stats {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.tp-baserates-stats strong { color: var(--text-primary); font-size: 15px; }
+.tp-baserates.good .tp-baserates-stats strong { color: #10b981; }
+.tp-baserates.bad  .tp-baserates-stats strong { color: #ef4444; }
+
+.tp-baserates-note { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+.tp-ledger { margin-bottom: 10px; }
+
+.tp-ledger-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.tp-ledger-pts {
+  flex-shrink: 0;
+  min-width: 38px;
+  font-weight: 700;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.tp-ledger-pts.bull { color: #10b981; }
+.tp-ledger-pts.bear { color: #ef4444; }
+
+.tp-ledger-text { color: var(--text-secondary); }
+
+.tp-checklist { margin-bottom: 8px; }
+
+.tp-checklist-toggle {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-blue);
+}
+
+.tp-checklist-item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 3px 0 3px 6px;
+}
+
+.tp-checklist-detail {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+.tp-rs-line {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.tp-pa-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tp-pa-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+
+.tp-pa-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid;
+  background: var(--bg-card);
+  cursor: help;
+}
