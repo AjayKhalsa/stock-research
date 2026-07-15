@@ -47,6 +47,10 @@ export const METRIC_INFO = {
   trend:
     'Trend classification from price vs 50 & 200 DMA alignment. Uptrend: price > 50 DMA > 200 DMA. Swing trades work best WITH the trend, not against it.',
 
+  // ── Beta ───────────────────────────────────────────────────────────────────
+  beta:
+    'Beta vs NIFTY: how much the stock moves per 1% move in the index (1-year daily returns). 1.0 = moves with the market, >1.3 = amplified swings both ways, <0.8 = defensive.',
+
   // ── Screener columns ───────────────────────────────────────────────────────
   score:
     'Composite rank score (0-100) vs the other stocks in your list: Momentum 35% + Quality 30% + Value 20% + Low-Risk 15%, from winsorized z-scores. 70+ = top of your list.',
@@ -56,4 +60,37 @@ export const METRIC_INFO = {
     'Quality vs your list: Piotroski, Altman Z, ROE and ROCE combined. Positive = fundamentally stronger than the group.',
   value_z:
     'Value vs your list: earnings yield, inverse P/E, inverse P/B, dividend yield. Positive = cheaper than the group.',
+};
+
+/**
+ * Glass-box metric metadata: exact industry term + functional subtitle +
+ * two-tier tooltip (TL;DR for the read, The Math for the audit).
+ * Nothing is renamed or dumbed down — the formula is always one hover away.
+ */
+export const GLASS_METRICS = {
+  altman: {
+    subtitle: 'Bankruptcy & Solvency Risk',
+    tldr: 'Predicts the probability of financial distress. A composite score above 2.99 positions the firm solidly inside the "Safe Zone"; below 1.81 flags distress risk within ~2 years.',
+    math: 'Z = 1.2·X₁ + 1.4·X₂ + 3.3·X₃ + 0.6·X₄ + 0.999·X₅  where X₁ = Working Capital/Total Assets, X₂ = Retained Earnings/TA, X₃ = EBIT/TA, X₄ = Market Value of Equity/Total Liabilities, X₅ = Net Sales/TA',
+  },
+  piotroski: {
+    subtitle: 'Operational Efficiency Health',
+    tldr: 'A 9-point checklist testing the absolute operational trajectory across profitability, capital-structure liquidity, and operating efficiency. 8-9 = excellent, ≤3 = deteriorating. Click any ✗ badge for the exact data behind the failure.',
+    math: 'F = Σ of 9 binary signals: ROA>0, CFO>0, ΔROA↑, CFO/TA>ROA (accruals), Δleverage↓, Δcurrent ratio↑, no dilution, Δgross margin↑, Δasset turnover↑',
+  },
+  dupont: {
+    subtitle: 'ROE Profitability Drivers',
+    tldr: 'Deconstructs Return on Equity into three clean variables to show exactly how the business generates its returns — pricing power, asset efficiency, or leverage (the fragile kind).',
+    math: 'ROE = Net Profit Margin × Asset Turnover × Financial Leverage = (NI/Sales) × (Sales/TA) × (TA/Equity)',
+  },
+  rsi: {
+    subtitle: 'Momentum Speedometer',
+    tldr: 'Measures the velocity and magnitude of recent price shifts. Sustained above 70 flags an Overbought condition where price is running historically hot; below 30 = Oversold.',
+    math: 'RSI = 100 − [100 / (1 + RS)]  where RS = avg gain / avg loss over a 14-period Wilder-smoothed lookback',
+  },
+  beneish: {
+    subtitle: 'Earnings Manipulation Screen',
+    tldr: 'Statistical forensic test for cooked books. Above −1.78 = the accounting profile resembles known manipulators; treat reported profits with suspicion.',
+    math: 'M = −4.84 + 0.92·DSRI + 0.528·GMI + 0.404·AQI + 0.892·SGI + 0.115·DEPI − 0.172·SGAI + 4.679·TATA − 0.327·LVGI',
+  },
 };

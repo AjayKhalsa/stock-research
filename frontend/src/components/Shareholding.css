@@ -67,3 +67,41 @@
 @media (max-width: 500px) {
   .sh-body { flex-direction: column; }
 }
+
+/* ── Institutional footprint ── */
+.sh-footprint {
+  border-top: 1px solid var(--border);
+  padding: 14px 22px 18px;
+}
+.sh-footprint-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.sh-deals { max-height: 150px; overflow-y: auto; }
+.sh-deal-row {
+  display: flex;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 11.5px;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--border);
+}
+.sh-deal-row:hover .sh-deal-text { color: var(--accent-blue); }
+.sh-deal-date { color: var(--text-muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.sh-deal-text {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sh-footprint-empty { font-size: 11.5px; color: var(--text-muted); }
+.sh-footprint-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  font-style: italic;
+}
