@@ -534,6 +534,182 @@ def build_case(plan: dict, quant: Optional[dict], base_rates: dict,
     }
 
 
+def synthesize_verdicts(trade_plans: dict, quant: Optional[dict],
+                        ai_thesis: Optional[dict] = None) -> dict:
+    """
+    The Bottom Line: reconcile the three lenses — trade setup (chart,
+    days-weeks), business quality (financials, quarters-years), and the AI
+    analyst (blended narrative) — into a named disagreement pattern and one
+    plain-language directive per horizon. Disagreement between lenses is
+    information: they answer DIFFERENT questions, and the pattern of who
+    says what IS the playbook.
+    """
+    swing = trade_plans.get("swing") or {}
+    positional = trade_plans.get("positional") or {}
+    case = (trade_plans.get("dossier") or {}).get("case") or {}
+    quant = quant or {}
+
+    trade_score = case.get("conviction")
+    trade_verdict = swing.get("verdict", "Wait")
+
+    business_score = quant.get("composite_quality_score")
+    pio = (quant.get("piotroski") or {}).get("score")
+    alt = quant.get("altman") or {}
+    ben = quant.get("beneish") or {}
+    gate = positional.get("fundamentals_gate") or {}
+    biz_bits = []
+    if pio is not None:
+        biz_bits.append(f"Piotroski {pio}/9")
+    if alt.get("zone"):
+        biz_bits.append(f"Altman {alt['zone']}")
+    if gate.get("status"):
+        biz_bits.append(f"gate: {gate['status'].replace('_', ' ')}")
+
+    ai_score = (ai_thesis or {}).get("conviction_score")
+    ai_label = (ai_thesis or {}).get("conviction_label")
+    ai_comment = (ai_thesis or {}).get("plan_commentary") or ""
+    ai_available = ai_score is not None
+    ai_pending = ai_thesis is None   # /plan endpoint: alpha hasn't run yet
+
+    lenses = [
+        {"key": "trade", "label": "Trade Setup", "score": trade_score,
+         "verdict": trade_verdict, "horizon": "days–weeks",
+         "question": "Is this a good trade right now?",
+         "detail": swing.get("setup_label", "")},
+        {"key": "business", "label": "Business Quality", "score": business_score,
+         "verdict": ("Strong" if (business_score or 0) >= 65 else
+                     "Weak" if business_score is not None and business_score < 45 else
+                     "Average" if business_score is not None else "Unknown"),
+         "horizon": "quarters–years",
+         "question": "Is this a good business to own?",
+         "detail": ", ".join(biz_bits) if biz_bits else "fundamental data unavailable"},
+        {"key": "ai", "label": "AI Analyst", "score": ai_score,
+         "verdict": ai_label if ai_available else ("pending" if ai_pending else "unavailable"),
+         "horizon": "blended",
+         "question": "Narrative judge weighing everything",
+         "detail": ai_comment[:180] if ai_comment else ""},
+    ]
+
+    t = trade_score if trade_score is not None else 0
+    b = business_score if business_score is not None else 50   # unknown = neutral
+
+    hard_fail = (alt.get("zone") == "Distress" or
+                 (ben.get("m_score") is not None and ben["m_score"] > -1.78))
+
+    entry, stop = swing.get("entry") or {}, swing.get("stop") or {}
+    targets = swing.get("targets") or []
+    t1 = targets[0]["price"] if targets else None
+    plan_line = ""
+    if entry.get("low") is not None:
+        plan_line = (f"entry {entry['low']}–{entry['high']}, stop {stop.get('price')}"
+                     + (f", T1 {t1}" if t1 else ""))
+
+    gate_reason = "; ".join(gate.get("reasons", [])[:1]) or "weak fundamentals"
+
+    # ── pattern playbook (priority order) ─────────────────────────────────────
+    if hard_fail:
+        which = ("Beneish manipulation risk" if ben.get("m_score") is not None
+                 and ben["m_score"] > -1.78 else "Altman distress zone")
+        pattern, pattern_label = "hard_disqualified", f"Disqualified — {which}"
+        directives = {
+            "swing": "Do not trade. Accounting red flags make even the chart untrustworthy — "
+                     "stops don't protect against fraud gaps.",
+            "positional": f"Do not own. {which} is a hard disqualifier "
+                          "(caveat: Altman is unreliable for banks/NBFCs — verify sector).",
+            "long_term": "Not investable until the red flag clears in fresh annual numbers.",
+        }
+        reconciliation = (f"Whatever the chart ({t}) or narrative says, the forensic "
+                          f"accounting layer failed ({which}). Institutions never override "
+                          f"a forensic red flag with a technical signal.")
+    elif t >= 65 and b >= 60 and gate.get("status") in ("pass", "unavailable", None):
+        pattern, pattern_label = "aligned_bull", "Aligned — chart and business agree"
+        directives = {
+            "swing": f"Take the trade per the plan{': ' + plan_line if plan_line else ''}. "
+                     f"Conviction {t}.",
+            "positional": (f"Cleared to build: {positional.get('verdict', 'see plan')} — "
+                           + (positional.get('entry', {}) or {}).get('rationale', 'see positional plan.')
+                           if positional.get("verdict") in ("Buy", "Buy on Dip")
+                           else f"Positional plan says {positional.get('verdict', 'Wait')} — "
+                                f"follow its entry band rather than chasing."),
+            "long_term": f"Quality {business_score}/100 supports holding winners — "
+                         f"let the positional exit rule (not impatience) take you out.",
+        }
+        reconciliation = (f"Rare alignment: the chart ({t}) and the business ({business_score}) "
+                          f"point the same way. These are the setups to be aggressive on — "
+                          f"subject to the market regime.")
+    elif t >= 65 and (b < 55 or gate.get("status") == "soft_fail"):
+        pattern, pattern_label = "momentum_trade", "Momentum trade — rent it, don't own it"
+        directives = {
+            "swing": f"Take the swing trade per the plan{': ' + plan_line if plan_line else ''}. "
+                     f"The chart earns it (conviction {t}).",
+            "positional": f"Do not build a position — {gate_reason}. "
+                          f"The positional plan is capped at {positional.get('verdict', 'Wait')} for a reason.",
+            "long_term": f"Not an investment at current quality ({business_score if business_score is not None else '?'}/100). "
+                         f"Exit at targets or stop — never average down, never 'convert' a failed trade into a hold.",
+        }
+        reconciliation = (f"These scores don't contradict — they answer different questions. "
+                          f"The chart ({t}) says buyers control the next few weeks; the financials "
+                          f"({business_score if business_score is not None else 'unknown'}, {gate_reason}) say the business "
+                          f"hasn't earned a long-term hold. Classic momentum trade: strict stops, "
+                          f"take profits at targets, no emotional attachment.")
+    elif t < 45 and b >= 65:
+        pattern, pattern_label = "quality_watch", "Good business, bad chart — stalk it"
+        directives = {
+            "swing": "No trade — there is no setup to attach a stop to. Buying quality into a "
+                     "falling chart is how drawdowns compound.",
+            "positional": "Arm an entry alert at the plan's accumulation band and wait for the "
+                          "chart to base (reclaim the 200-DMA / form higher lows).",
+            "long_term": f"Quality {business_score}/100 justifies patient interest — the edge is in "
+                         f"WAITING for the technical turn, not anticipating it.",
+        }
+        reconciliation = (f"The business ({business_score}) is better than the chart ({t}). "
+                          f"Institutions handle this by stalking, not buying: quality names go on "
+                          f"the watchlist and get bought when the chart confirms, because 'cheap "
+                          f"and falling' usually gets cheaper first.")
+    elif t < 45 and b < 55:
+        pattern, pattern_label = "no_edge", "No edge — avoid"
+        directives = {
+            "swing": "No setup, no trade.",
+            "positional": "Nothing to accumulate — both the chart and the business argue against it.",
+            "long_term": "Not a candidate. Spend your attention on stocks where at least one lens is strong.",
+        }
+        reconciliation = (f"Chart ({t}) and business ({business_score if business_score is not None else 'unknown'}) "
+                          f"both weak — there is no disagreement to resolve and no edge to argue about.")
+    else:
+        pattern, pattern_label = "mixed", "Marginal edge — let the regime decide"
+        directives = {
+            "swing": f"Only in a Risk-On tape, at reduced size{': ' + plan_line if plan_line else ''}. "
+                     f"Marginal setups need a market tailwind to be worth the risk.",
+            "positional": f"Positional plan says {positional.get('verdict', 'Wait')} — no urgency either way.",
+            "long_term": "Neither strong enough to own nor weak enough to dismiss — revisit next quarter.",
+        }
+        reconciliation = (f"Neither lens is decisive (chart {t}, business "
+                          f"{business_score if business_score is not None else 'unknown'}). When your own signals "
+                          f"are lukewarm, the market regime is the tiebreaker — take marginal trades "
+                          f"only with the tape at your back.")
+
+    # ── AI dissent: surfaced, never silently overriding ───────────────────────
+    dissent = None
+    if ai_available and trade_score is not None and abs(ai_score - trade_score) >= 20:
+        reason = ai_comment or ((ai_thesis or {}).get("bear_case") or "").split(". ")[0]
+        dissent = {
+            "who": "ai",
+            "gap": abs(ai_score - trade_score),
+            "reason": (f"The AI analyst scores this {ai_score} vs the trade engine's {trade_score}. "
+                       + (f"Its reasoning: {reason}" if reason else
+                          "It weighs the fundamental/narrative risks more heavily than the chart."))
+        }
+
+    return {
+        "lenses": lenses,
+        "pattern": pattern,
+        "pattern_label": pattern_label,
+        "directives": directives,
+        "reconciliation": reconciliation,
+        "dissent": dissent,
+    }
+
+
 def build_dossier(candles: list, plan_envelope: dict, quant: Optional[dict],
                   index_candles: list, factors: Optional[dict] = None) -> dict:
     """

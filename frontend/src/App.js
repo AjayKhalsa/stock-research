@@ -11,6 +11,7 @@ import AlphaThesis    from './components/AlphaThesis';
 import QuantScores    from './components/QuantScores';
 import Screener       from './components/Screener';
 import TradePlan      from './components/TradePlan';
+import BottomLine     from './components/BottomLine';
 import MarketRegime   from './components/MarketRegime';
 import { getStock, getAlpha, getPlan } from './api';
 import './App.css';
@@ -159,6 +160,13 @@ export default function App() {
 
                 {/* ── Phase-1 panels (always visible once loaded) ── */}
                 <OverviewCard data={stockData} planLevels={planData?.[planHorizon]} />
+
+                {/* ── Bottom Line: reconciled verdict across all lenses ── */}
+                <BottomLine
+                  synthesis={alphaData?.trade_plans?.synthesis || planData?.synthesis}
+                  loading={planLoading}
+                  alphaLoading={alphaLoading}
+                />
 
                 {/* ── Phase-1.5: trade decision plan ── */}
                 <TradePlan
