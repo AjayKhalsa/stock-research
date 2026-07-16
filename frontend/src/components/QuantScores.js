@@ -50,11 +50,11 @@ function piotroskiColor(score) {
 
 /* ── Altman Z bar ──────────────────────────────────────────────────────────── */
 function AltmanBar({ z, zone }) {
-  // Clamp display to 0–12 scale
-  const MAX = 12;
-  const pct  = Math.min(z / MAX, 1) * 100;
-  const distressPct = (1.81 / MAX) * 100;   // ~15.1%
-  const greyPct     = (2.99 / MAX) * 100;   // ~24.9%
+  // Z''-score (emerging-market model) scale. Distress ≤1.1, grey 1.1–2.6, safe >2.6.
+  const MAX = 10;
+  const pct  = Math.min(Math.max(z, 0) / MAX, 1) * 100;
+  const distressPct = (1.1 / MAX) * 100;
+  const greyPct     = (2.6 / MAX) * 100;
 
   const markerColor = zone === 'Safe' ? '#10b981' : zone === 'Grey Zone' ? '#d97706' : '#ef4444';
 
@@ -70,11 +70,11 @@ function AltmanBar({ z, zone }) {
         {/* threshold lines */}
         <div className="az-threshold" style={{ left: `${distressPct}%` }}>
           <div className="az-thresh-line" />
-          <div className="az-thresh-label">1.81</div>
+          <div className="az-thresh-label">1.1</div>
         </div>
         <div className="az-threshold" style={{ left: `${greyPct}%` }}>
           <div className="az-thresh-line" />
-          <div className="az-thresh-label">2.99</div>
+          <div className="az-thresh-label">2.6</div>
         </div>
         {/* score marker */}
         <div className="az-marker" style={{ left: `${pct}%` }}>
