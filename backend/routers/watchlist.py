@@ -7,38 +7,33 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 import alert_store
+import db
 import price_service as price
-from storage import WATCHLIST_FILE, load_json, save_json
 
 router = APIRouter()
 
 
 @router.get("/api/watchlist")
 async def get_watchlist():
-    return load_json(WATCHLIST_FILE, [])
+    return db.watchlist_all()
 
 
 @router.post("/api/watchlist")
 async def add_watchlist(item: dict):
-    wl = load_json(WATCHLIST_FILE, [])
     sym = item.get("symbol", "").upper()
-    exc = item.get("exchange", "NSE")
-    if sym and not any(w["symbol"] == sym for w in wl):
-        wl.append({"symbol": sym, "exchange": exc, "name": item.get("name", sym)})
-        save_json(WATCHLIST_FILE, wl)
-    return wl
+    if not sym:
+        return db.watchlist_all()
+    return db.watchlist_add(sym, item.get("exchange", "NSE"), item.get("name", sym))
 
 
 @router.delete("/api/watchlist/{symbol}")
 async def remove_watchlist(symbol: str):
-    wl = [w for w in load_json(WATCHLIST_FILE, []) if w["symbol"] != symbol.upper()]
-    save_json(WATCHLIST_FILE, wl)
-    return wl
+    return db.watchlist_remove(symbol)
 
 
 @router.get("/api/watchlist/prices")
 async def watchlist_prices():
-    wl = load_json(WATCHLIST_FILE, [])
+    wl = db.watchlist_all()
     if not wl:
         return {}
     instruments = [f"{w['exchange']}:{w['symbol']}" for w in wl]
@@ -101,7 +96,7 @@ async def watchlist_pulse():
     alert, flips crossed alerts, and returns the newly-triggered ones.
     Alerts run on delayed Yahoo Finance data — advisory only.
     """
-    wl = load_json(WATCHLIST_FILE, [])
+    wl = db.watchlist_all()
     instruments = {f"{w['exchange']}:{w['symbol']}" for w in wl}
     instruments |= {f"{exc}:{sym}" for sym, exc in alert_store.symbols_with_active_alerts()}
 

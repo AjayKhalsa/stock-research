@@ -200,6 +200,32 @@ function PriceChart({ history, levels }) {
   );
 }
 
+/* Fundamentals freshness chip: where the numbers came from and how old they are */
+function FundamentalsFreshness({ dq }) {
+  const f = dq?.fundamentals;
+  if (!f || f.served_from == null) return null;
+  const age = f.age_minutes;
+  const ageStr = age == null ? '' :
+    age < 90 ? `${Math.round(age)}m old` : `${(age / 60).toFixed(1)}h old`;
+  const stale = !!f.stale;
+  const label = stale
+    ? `⚠️ Fundamentals: stale cache (${ageStr}) — live fetch failed`
+    : f.served_from === 'cache'
+      ? `🗃️ Fundamentals: cached ${ageStr} · ${f.source}`
+      : `✨ Fundamentals: live · ${f.source}`;
+  return (
+    <span style={{
+      fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+      whiteSpace: 'nowrap', alignSelf: 'center',
+      background: stale ? 'rgba(239,68,68,0.10)' : 'var(--bg-inset)',
+      border: `1px solid ${stale ? 'rgba(239,68,68,0.45)' : 'var(--border-strong)'}`,
+      color: stale ? '#dc2626' : 'var(--text-secondary)',
+    }} title={`Fundamentals served from ${f.served_from}; origin: ${f.source}; refreshed every ${f.ttl_hours ?? 4}h. Stale means the live source failed and you are seeing the last good copy.`}>
+      {label}
+    </span>
+  );
+}
+
 function convictionColor(s) {
   if (s == null) return '#94a3b8';
   if (s >= 70) return '#10b981';
@@ -301,6 +327,7 @@ export default function OverviewCard({ data, planLevels, synthesis, demo = false
         }} title="Quotes come from Yahoo Finance and lag the exchange by ~15 minutes. Verify live LTP on your broker before acting.">
           ⚠️ Delayed Data: Yahoo Finance (~15m lag)
         </span>
+        <FundamentalsFreshness dq={data.data_quality} />
       </div>
 
       <DualConviction synthesis={synthesis} />

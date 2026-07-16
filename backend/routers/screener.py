@@ -12,7 +12,7 @@ import quant_engine
 import swing_engine
 import decision_engine
 import price_service as price
-from screener_scraper import fetch_screener_full
+import data_cache
 from stock_service import _plan_summary, _screen_row
 
 router = APIRouter()
@@ -59,7 +59,7 @@ async def screen_stream(symbols: str):
 
         async def fetch_one(sym: str):
             async with sem:
-                sdata = await fetch_screener_full(sym)
+                sdata, _meta = await data_cache.get_fundamentals(sym)
                 hist  = await price.get_historical(f"NSE:{sym}", days=450)
                 return sym, sdata, hist
 

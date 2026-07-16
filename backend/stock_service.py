@@ -16,12 +16,9 @@ import ai_engine
 import swing_engine
 import decision_engine
 import conviction_engine
+import data_cache
 from indicators import rsi as calc_rsi, sma as _sma
-from screener_scraper import (
-    fetch_news,
-    fetch_screener,
-    fetch_screener_full,
-)
+from screener_scraper import fetch_news
 
 
 def calc_ma(prices: list, period: int) -> Optional[float]:
@@ -53,7 +50,8 @@ def _compute_technicals(hist_data: list) -> dict:
     return tech
 
 
-def _data_quality(screener_data: dict, ohlc_data: dict, hist_data: list) -> dict:
+def _data_quality(screener_data: dict, ohlc_data: dict, hist_data: list,
+                  fund_meta: Optional[dict] = None) -> dict:
     """Per-layer freshness and source labels for the UI."""
     screener_ok = bool(
         screener_data.get("quarterly_results")
@@ -65,117 +63,42 @@ def _data_quality(screener_data: dict, ohlc_data: dict, hist_data: list) -> dict
         or (hist_data and hist_data[-1].get("close") is not None)
     )
     bars = len(hist_data) if hist_data else 0
+    fundamentals = {
+        "source": "unavailable" if not screener_ok else "Screener.in",
+        "ok": screener_ok,
+    }
+    if fund_meta:
+        fundamentals.update({
+            # cache | live | stale_cache — where THIS response came from
+            "served_from": fund_meta.get("source"),
+            # yfinance+screener | screener — where the numbers originated
+            "source": fund_meta.get("origin", fundamentals["source"]),
+            "fetched_at": fund_meta.get("fetched_at"),
+            "age_minutes": fund_meta.get("age_minutes"),
+            "ttl_hours": fund_meta.get("ttl_hours"),
+            "stale": fund_meta.get("stale", False),
+            "ok": screener_ok,
+        })
     return {
         "price": {
             "source": "Yahoo Finance",
             "freshness": "~15 min delayed",
             "ok": price_ok,
         },
-        "fundamentals": {
-            "source": "Screener.in" if screener_ok else "unavailable",
-            "ok": screener_ok,
-        },
+        "fundamentals": fundamentals,
         "history_bars": bars,
         "history_ok": bars >= 60,
     }
-
-
-# Fields where yfinance's *reported* statement value is more trustworthy than
-# Screener's scraped/proxied one. Overlaid onto the matching year's entry.
-_YF_BS_OVERLAY = ["total_assets", "current_assets", "current_liabilities",
-                  "borrowings", "reserves", "equity_capital", "fixed_assets",
-                  "total_equity"]
-_YF_PL_OVERLAY = ["revenue", "net_profit", "ebitda", "ebit", "profit_before_tax",
-                  "interest", "depreciation"]
-_YF_CF_OVERLAY = ["cfo", "cfi", "cff"]
-
-
-def _year_of(label) -> Optional[int]:
-    """Extract a 4-digit year from a Screener period label like 'Mar 2024'."""
-    if not label:
-        return None
-    m = re.search(r"(19|20)\d{2}", str(label))
-    return int(m.group(0)) if m else None
-
-
-def _overlay_years(entries: list, by_year: dict, keys: list) -> int:
-    """
-    Overlay reported yfinance values onto Screener annual entries, matching on
-    calendar year. yfinance wins for the listed keys when it has a value.
-    Returns the number of entries that received at least one overlaid field.
-    """
-    touched = 0
-    for entry in entries:
-        yr = _year_of(entry.get("year"))
-        if yr is None:
-            continue
-        yf_row = by_year.get(yr)
-        if not yf_row:
-            continue
-        hit = False
-        for k in keys:
-            v = yf_row.get(k)
-            if v is not None:
-                entry[k] = v
-                hit = True
-        if hit:
-            touched += 1
-    return touched
-
-
-def enrich_with_yf_fundamentals(screener_data: dict, yf_funds: dict) -> dict:
-    """
-    Overlay yfinance's reported financial statements onto the Screener annual
-    data in-place. This replaces Screener's 'Other Assets'/'Other Liabilities'
-    proxies with true current assets/liabilities and adds a reported EBIT and
-    total book equity — the inputs Altman/Piotroski/Beneish/DuPont depend on.
-    Screener remains the fallback for any year/field yfinance doesn't cover.
-    """
-    if not screener_data or not yf_funds:
-        return screener_data
-
-    bs_by = yf_funds.get("bs_by_year") or {}
-    pl_by = yf_funds.get("pl_by_year") or {}
-    cf_by = yf_funds.get("cf_by_year") or {}
-    if not (bs_by or pl_by or cf_by):
-        return screener_data
-
-    pl = screener_data.get("annual_pl") or []
-    bs = screener_data.get("annual_bs") or []
-    cf = screener_data.get("annual_cf") or []
-
-    # If Screener had no annual tables at all, seed lists from yfinance years.
-    if not bs and bs_by:
-        bs = [{"year": str(y)} for y in sorted(bs_by)]
-        screener_data["annual_bs"] = bs
-    if not pl and pl_by:
-        pl = [{"year": str(y)} for y in sorted(pl_by)]
-        screener_data["annual_pl"] = pl
-    if not cf and cf_by:
-        cf = [{"year": str(y)} for y in sorted(cf_by)]
-        screener_data["annual_cf"] = cf
-
-    n = 0
-    n += _overlay_years(bs, bs_by, _YF_BS_OVERLAY)
-    n += _overlay_years(pl, pl_by, _YF_PL_OVERLAY)
-    n += _overlay_years(cf, cf_by, _YF_CF_OVERLAY)
-
-    screener_data["fundamentals_source"] = (
-        "yfinance+screener" if n else "screener"
-    )
-    return screener_data
 
 
 async def build_stock_payload(symbol: str, exchange: str = "NSE"):
     symbol = symbol.upper().strip()
     instrument = f"{exchange}:{symbol}"
 
-    screener_task = fetch_screener(symbol)
-    hist_task = price.get_historical(instrument, days=300)
-    ohlc_task = price.get_ohlc(instrument)
-
-    screener_data, hist_data, ohlc_data = await asyncio.gather(
-        screener_task, hist_task, ohlc_task
+    (screener_data, fund_meta), hist_data, ohlc_data = await asyncio.gather(
+        data_cache.get_fundamentals(symbol, exchange),
+        price.get_historical(instrument, days=300),
+        price.get_ohlc(instrument),
     )
 
     company_name = screener_data.get("company_name", symbol)
@@ -214,7 +137,7 @@ async def build_stock_payload(symbol: str, exchange: str = "NSE"):
         "shareholding": screener_data.get("shareholding", {}),
         "technicals": tech,
         "news": news,
-        "data_quality": _data_quality(screener_data, ohlc_data, hist_data),
+        "data_quality": _data_quality(screener_data, ohlc_data, hist_data, fund_meta),
     }
 
 
@@ -230,14 +153,12 @@ async def build_plan_payload(symbol: str, exchange: str = "NSE"):
     symbol = symbol.upper().strip()
     instrument = f"{exchange}:{symbol}"
 
-    screener_data, hist_data, nifty, yf_funds = await asyncio.gather(
-        fetch_screener_full(symbol),
+    (screener_data, fund_meta), hist_data, nifty = await asyncio.gather(
+        data_cache.get_fundamentals(symbol, exchange),
         price.get_historical(instrument, days=1250),   # ~5y for base rates
         price.get_index_historical("^NSEI", days=400),
-        price.get_fundamentals(instrument),
     )
 
-    screener_data = enrich_with_yf_fundamentals(screener_data, yf_funds)
     quant = quant_engine.compute_all(screener_data) if screener_data else None
     plans = decision_engine.build_trade_plans(hist_data, screener_data, quant)
     if "error" not in plans:
@@ -248,6 +169,12 @@ async def build_plan_payload(symbol: str, exchange: str = "NSE"):
     plans["symbol"] = symbol
     plans["exchange"] = exchange
     plans["company_name"] = (screener_data or {}).get("company_name", symbol)
+    plans["data_quality"] = {"fundamentals": {
+        "served_from": fund_meta.get("source"),
+        "source": fund_meta.get("origin"),
+        "age_minutes": fund_meta.get("age_minutes"),
+        "stale": fund_meta.get("stale", False),
+    }}
     return plans
 
 
@@ -265,22 +192,19 @@ async def build_alpha_payload(symbol: str, exchange: str = "NSE"):
 
     # ── Parallel I/O (all independent) ───────────────────────────────────────
     (
-        screener_data,
+        (screener_data, fund_meta),
         hist_data,
         ohlc_data,
         bse_announcements,
         nifty_data,
-        yf_funds,
     ) = await asyncio.gather(
-        fetch_screener_full(symbol),
+        data_cache.get_fundamentals(symbol, exchange),
         price.get_historical(instrument, days=1250),
         price.get_ohlc(instrument),
         qualitative_engine.get_bse_announcements(symbol),
         price.get_index_historical("^NSEI", days=400),
-        price.get_fundamentals(instrument),
     )
 
-    screener_data = enrich_with_yf_fundamentals(screener_data, yf_funds)
     company_name = screener_data.get("company_name", symbol)
 
     # ── News ──────────────────────────────────────────────────────────────────
@@ -379,6 +303,7 @@ async def build_alpha_payload(symbol: str, exchange: str = "NSE"):
         # ── quantitative scores ───────────────────────────────────────────────
         "quant": quant_scores,
         "fundamentals_source": screener_data.get("fundamentals_source", "screener"),
+        "data_quality": _data_quality(screener_data, ohlc_data, hist_data, fund_meta),
 
         # ── trade decision plans ──────────────────────────────────────────────
         "trade_plans": trade_plans,
