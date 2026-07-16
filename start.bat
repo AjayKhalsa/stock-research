@@ -86,10 +86,19 @@ if not exist "%BDIR%\venv\Scripts\python.exe" (
     echo.
 )
 
-:: ── API credentials ──────────────────────────────────────────────────────────
-set GEMINI_API_KEY=AIzaSyBeZRLzGn_OXmERvmQ7WwGPxUj0sZMUKJ8
-:: set KITE_API_KEY=your_api_key_here
-:: set KITE_ACCESS_TOKEN=your_access_token_here
+:: ── Load .env (repo root) — copy .env.example to .env and set GEMINI_API_KEY ─
+if exist "%ROOT%.env" (
+    echo Loading environment from .env...
+    for /f "usebackq eol=# tokens=1,* delims==" %%a in ("%ROOT%.env") do (
+        if not "%%a"=="" if not "%%b"=="" set "%%a=%%b"
+    )
+) else (
+    echo [NOTE] No .env file found. Copy .env.example to .env and set GEMINI_API_KEY.
+    echo        AI thesis will be unavailable until a key is set.
+)
+if "%GEMINI_API_KEY%"=="" (
+    echo [NOTE] GEMINI_API_KEY not set — AI thesis layer disabled.
+)
 
 :: ── Launch Backend ───────────────────────────────────────────────────────────
 :: /D sets working directory so uvicorn path stays relative (no spaces issue)

@@ -214,7 +214,7 @@ function TheCase({ dossier }) {
   );
 }
 
-export default function TradePlan({ data, loading, horizon, onHorizonChange, aiCommentary, symbol, exchange }) {
+export default function TradePlan({ data, loading, horizon, onHorizonChange, aiCommentary, symbol, exchange, readOnly = false }) {
   const [arming, setArming] = useState(false);
 
   if (loading && !data) {
@@ -383,9 +383,10 @@ export default function TradePlan({ data, loading, horizon, onHorizonChange, aiC
       <div className="tp-footer">
         <button
           className="tp-monitor-btn"
-          onClick={handleMonitor}
-          disabled={arming || !hasLevels}
-          title={hasLevels ? 'Create alerts for entry, stop and targets' : 'No levels to monitor'}
+          onClick={readOnly ? undefined : handleMonitor}
+          disabled={readOnly || arming || !hasLevels}
+          title={readOnly ? 'Disabled in the guide — on a real stock this arms entry/stop/target alerts'
+                 : hasLevels ? 'Create alerts for entry, stop and targets' : 'No levels to monitor'}
         >
           {arming ? 'Arming…' : '🔔 Monitor this plan'}
         </button>

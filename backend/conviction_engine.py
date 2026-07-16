@@ -137,6 +137,35 @@ def _setup_signal(kind: str, i: int, closes, highs, vols,
     return False
 
 
+# ── setup base rates (event study) ────────────────────────────────────────────
+
+def _sample_confidence(n: int) -> dict:
+    """How much to trust base-rate stats given occurrence count."""
+    if n < 5:
+        return {
+            "tier": "insufficient",
+            "label": "Too few historical setups — do not rely on win rate",
+            "warning": True,
+        }
+    if n < 15:
+        return {
+            "tier": "low",
+            "label": f"Low sample (n={n}) — directional only, not statistically robust",
+            "warning": True,
+        }
+    if n < 30:
+        return {
+            "tier": "moderate",
+            "label": f"Moderate sample (n={n}) — usable but still noisy",
+            "warning": False,
+        }
+    return {
+        "tier": "high",
+        "label": f"Robust sample (n={n})",
+        "warning": False,
+    }
+
+
 def setup_base_rates(candles: list, setup_kind: str,
                      stop_atr: float = 2.0, target_r: float = 1.5,
                      max_hold: int = 40, min_gap: int = 10) -> dict:
@@ -150,6 +179,7 @@ def setup_base_rates(candles: list, setup_kind: str,
     """
     empty = {"n": 0, "wins": None, "win_rate": None, "avg_r": None,
              "expected_r": None, "median_hold": None,
+             "sample_confidence": _sample_confidence(0),
              "note": "No comparable historical setups found on this stock."}
     if setup_kind not in ("trend_continuation", "pullback", "breakout"):
         return {**empty, "note": "Base rates need an active setup (none detected)."}
@@ -198,9 +228,11 @@ def setup_base_rates(candles: list, setup_kind: str,
         holds.append(hold)
 
     if len(results) < 5:
+        n = len(results)
         return {**empty,
-                "n": len(results),
-                "note": f"Only {len(results)} comparable setups since "
+                "n": n,
+                "sample_confidence": _sample_confidence(n),
+                "note": f"Only {n} comparable setups since "
                         f"{candles[0].get('date', '?')} — too few to trust."}
 
     wins = sum(1 for r in results if r > 0)
@@ -215,6 +247,7 @@ def setup_base_rates(candles: list, setup_kind: str,
         "expected_r": round(avg_r, 2),          # avg R IS the per-trade EV
         "median_hold": holds[len(holds) // 2],
         "since": candles[0].get("date"),
+        "sample_confidence": _sample_confidence(len(results)),
         "note": (f"{len(results)} comparable {setup_kind.replace('_', ' ')} setups "
                  f"since {candles[0].get('date', '?')[:4]}: {wins} winners "
                  f"({round(win_rate * 100)}%), average {avg_r:+.2f}R per trade "

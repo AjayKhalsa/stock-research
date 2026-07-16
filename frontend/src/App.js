@@ -15,6 +15,7 @@ import MarketRegime   from './components/MarketRegime';
 import Gatekeeper     from './components/Gatekeeper';
 import FactorReportCard from './components/FactorReportCard';
 import AuditTabs      from './components/AuditTabs';
+import GuideView      from './components/GuideView';
 import { getStock, getAlpha, getPlan } from './api';
 import './App.css';
 
@@ -23,6 +24,8 @@ export default function App() {
 
   // Master screener panel (collapsible left workspace)
   const [isMasterOpen, setIsMasterOpen] = useState(true);
+  // In-app guide: fictional stock walkthrough explaining every metric
+  const [showGuide, setShowGuide] = useState(false);
   // The screener row for the selected stock (carries cross-sectional z-scores)
   const [selectedRow, setSelectedRow] = useState(null);
 
@@ -148,6 +151,10 @@ export default function App() {
         </div>
 
         <div className="detail-scroll">
+          {showGuide && <GuideView onClose={() => setShowGuide(false)} />}
+
+          {!showGuide && (
+          <>
           <div style={{ padding: '14px 28px 0' }}>
             <MarketRegime />
           </div>
@@ -228,8 +235,19 @@ export default function App() {
               />
             </>
           )}
+          </>
+          )}
         </div>
       </main>
+
+      {/* ── floating guide button ── */}
+      <button
+        className={`guide-fab ${showGuide ? 'active' : ''}`}
+        onClick={() => setShowGuide(g => !g)}
+        title={showGuide ? 'Exit the guide' : 'How StockLens works — guided walkthrough with a demo stock'}
+      >
+        {showGuide ? '✕' : '❓'}
+      </button>
     </div>
   );
 }

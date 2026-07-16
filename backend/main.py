@@ -156,6 +156,33 @@ def _compute_technicals(hist_data: list) -> dict:
     return tech
 
 
+def _data_quality(screener_data: dict, ohlc_data: dict, hist_data: list) -> dict:
+    """Per-layer freshness and source labels for the UI."""
+    screener_ok = bool(
+        screener_data.get("quarterly_results")
+        or screener_data.get("pe_ratio") is not None
+        or screener_data.get("company_name")
+    )
+    price_ok = bool(
+        ohlc_data.get("last_price")
+        or (hist_data and hist_data[-1].get("close") is not None)
+    )
+    bars = len(hist_data) if hist_data else 0
+    return {
+        "price": {
+            "source": "Yahoo Finance",
+            "freshness": "~15 min delayed",
+            "ok": price_ok,
+        },
+        "fundamentals": {
+            "source": "Screener.in" if screener_ok else "unavailable",
+            "ok": screener_ok,
+        },
+        "history_bars": bars,
+        "history_ok": bars >= 60,
+    }
+
+
 def parse_screener(html: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
     d = {}
@@ -386,6 +413,7 @@ async def get_stock(symbol: str, exchange: str = "NSE"):
         "shareholding": screener_data.get("shareholding", {}),
         "technicals": tech,
         "news": news,
+        "data_quality": _data_quality(screener_data, ohlc_data, hist_data),
     }
 
 
