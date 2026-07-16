@@ -29,7 +29,7 @@ export const METRIC_INFO = {
   piotroski:
     'Piotroski F-Score (0-9): nine yes/no checks of improving fundamentals — profitability, leverage, and efficiency. 8-9 = excellent, 6-7 = good, below 4 = weak. Stocks scoring high have historically beaten low scorers.',
   altman:
-    'Altman Z-Score: bankruptcy-risk model combining working capital, retained earnings, profits, market value and sales. Above 2.99 = safe zone, 1.81-2.99 = grey zone, below 1.81 = distress risk within ~2 years.',
+    'Altman Z″-Score (emerging-market model): bankruptcy-risk score from working capital, retained earnings, EBIT and book equity vs liabilities. Above 2.6 = safe zone, 1.1-2.6 = grey zone, below 1.1 = distress risk within ~2 years. Not meaningful for banks/NBFCs.',
   beneish:
     'Beneish M-Score: detects likely earnings manipulation from 8 accounting ratios. Below -2.22 = clean. Above -1.78 = statistically resembles known manipulators — treat reported profits with suspicion.',
   dupont:
@@ -70,8 +70,8 @@ export const METRIC_INFO = {
 export const GLASS_METRICS = {
   altman: {
     subtitle: 'Bankruptcy & Solvency Risk',
-    tldr: 'Predicts the probability of financial distress. A composite score above 2.99 positions the firm solidly inside the "Safe Zone"; below 1.81 flags distress risk within ~2 years.',
-    math: 'Z = 1.2·X₁ + 1.4·X₂ + 3.3·X₃ + 0.6·X₄ + 0.999·X₅  where X₁ = Working Capital/Total Assets, X₂ = Retained Earnings/TA, X₃ = EBIT/TA, X₄ = Market Value of Equity/Total Liabilities, X₅ = Net Sales/TA',
+    tldr: 'Predicts the probability of financial distress. A score above 2.6 positions the firm inside the "Safe Zone"; below 1.1 flags distress risk within ~2 years. Uses the emerging-market Z″ model — industry-neutral, but not valid for banks/NBFCs.',
+    math: 'Z″ = 6.56·X₁ + 3.26·X₂ + 6.72·X₃ + 1.05·X₄  where X₁ = Working Capital/Total Assets, X₂ = Retained Earnings/TA, X₃ = EBIT/TA, X₄ = Book Value of Equity/Total Liabilities. Zones: >2.6 Safe · 1.1–2.6 Grey · ≤1.1 Distress',
   },
   piotroski: {
     subtitle: 'Operational Efficiency Health',

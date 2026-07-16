@@ -312,8 +312,8 @@ def cross_sectional_rank(rows: list[dict]) -> list[dict]:
         rsi = r.get("rsi")
         if ben is not None and ben > -1.78:
             flags.append("Manipulation risk (Beneish M > -1.78)")
-        if alt is not None and alt < 1.81:
-            flags.append("Financial distress (Altman Z < 1.81)")
+        if alt is not None and alt <= 1.1:
+            flags.append("Financial distress (Altman Z″ ≤ 1.1)")
         if pio is not None and pio <= 3:
             flags.append("Weak fundamentals (Piotroski <= 3)")
         if rsi is not None and rsi > 75:

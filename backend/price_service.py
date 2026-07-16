@@ -182,7 +182,7 @@ async def get_index_historical(symbol: str = "^NSEI", days: int = 400) -> list:
         try:
             end = datetime.now()
             start = end - timedelta(days=days + 15)
-            df = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=False)
+            df = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
             return _df_to_candles(df)
         except Exception as e:
             print(f"[price_service] index historical error {symbol}: {e}")
@@ -202,9 +202,132 @@ async def get_historical(instrument: str, days: int = 300) -> list:
         try:
             end   = datetime.now()
             start = end - timedelta(days=days + 15)   # pad for weekends/holidays
-            df    = yf.Ticker(sym).history(start=start, end=end, interval="1d", auto_adjust=False)
+            # Yahoo's raw daily series is already split/bonus-adjusted;
+            # auto_adjust=True additionally folds dividends in (total-return
+            # series) so ex-dividend price gaps don't distort MAs/RSI/ATR or
+            # falsely trigger stops in the base-rate backtest. The latest
+            # candle always equals the actual traded price.
+            df    = yf.Ticker(sym).history(start=start, end=end, interval="1d", auto_adjust=True)
             return _df_to_candles(df)
         except Exception as e:
             print(f"[price_service] historical error {sym}: {e}")
             return []
+    return await asyncio.to_thread(_fetch)
+
+
+# ── fundamentals (reported financial statements) ──────────────────────────────
+#
+# yfinance exposes the actual reported balance sheet / income statement / cash
+# flow. Values are in absolute rupees, so we convert to ₹ crore (÷ 1e7) to match
+# Screener's scale. Label matching is alias-based (case-insensitive substring)
+# because Yahoo's row names drift across versions and companies.
+
+_CR = 1e7  # 1 crore = 10,000,000
+
+# output_key -> list of candidate Yahoo row labels (first match wins, tolerant)
+_BS_LABELS = {
+    "total_assets":        ["total assets"],
+    "current_assets":      ["current assets"],
+    "current_liabilities": ["current liabilities"],
+    "total_equity":        ["stockholders equity", "total equity gross minority", "common stock equity"],
+    "reserves":            ["retained earnings"],
+    "equity_capital":      ["capital stock", "common stock"],
+    "borrowings":          ["total debt", "long term debt"],
+    "fixed_assets":        ["net ppe", "net property", "gross ppe"],
+}
+_PL_LABELS = {
+    "revenue":            ["total revenue", "operating revenue"],
+    "net_profit":         ["net income continuous", "net income"],
+    "ebitda":             ["ebitda", "normalized ebitda"],
+    "ebit":               ["ebit", "operating income"],
+    "profit_before_tax":  ["pretax income", "profit before tax"],
+    "interest":           ["interest expense"],
+    "depreciation":       ["reconciled depreciation", "depreciation amortization"],
+    "eps":                ["diluted eps", "basic eps"],
+}
+_CF_LABELS = {
+    "cfo": ["operating cash flow", "cash flow from continuing operating"],
+    "cfi": ["investing cash flow", "cash flow from continuing investing"],
+    "cff": ["financing cash flow", "cash flow from continuing financing"],
+}
+
+
+def _pick_row(df, labels: list):
+    """First DataFrame row whose (lowercased) index label matches an alias."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    idx_lower = {str(i).lower(): i for i in df.index}
+    # exact match first, then substring
+    for lab in labels:
+        if lab in idx_lower:
+            return df.loc[idx_lower[lab]]
+    for lab in labels:
+        for low, orig in idx_lower.items():
+            if lab in low:
+                return df.loc[orig]
+    return None
+
+
+def _extract_by_year(df, label_map: dict, scale_keys: set) -> dict:
+    """
+    Build {year_int: {output_key: value}} from a yfinance statement DataFrame.
+    Columns are period-end dates; values in `scale_keys` are converted to crore.
+    """
+    out: dict = {}
+    if df is None or getattr(df, "empty", True):
+        return out
+    rows = {k: _pick_row(df, labs) for k, labs in label_map.items()}
+    for col in df.columns:
+        try:
+            year = col.year
+        except Exception:
+            continue
+        entry: dict = {}
+        for key, row in rows.items():
+            if row is None:
+                continue
+            try:
+                val = row[col]
+            except Exception:
+                continue
+            if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
+                continue
+            val = float(val)
+            if key in scale_keys:
+                val = round(val / _CR, 2)
+            entry[key] = val
+        if entry:
+            out[year] = entry
+    return out
+
+
+async def get_fundamentals(instrument: str) -> dict:
+    """
+    Reported annual financial statements from yfinance, keyed by calendar year:
+        {"pl_by_year": {...}, "bs_by_year": {...}, "cf_by_year": {...},
+         "source": "yfinance"}
+    Returns empty dicts on any failure so the caller can fall back to Screener.
+    All monetary values are in ₹ crore (EPS is left per-share).
+    """
+    sym = _yf_symbol(instrument)
+
+    def _fetch():
+        try:
+            t = yf.Ticker(sym)
+            bs  = t.balance_sheet
+            inc = t.income_stmt
+            cf  = t.cashflow
+            bs_scale = set(_BS_LABELS) - set()               # all BS values are ₹ → crore
+            pl_scale = set(_PL_LABELS) - {"eps"}             # everything except EPS
+            cf_scale = set(_CF_LABELS)                       # all cash flows → crore
+            return {
+                "bs_by_year": _extract_by_year(bs,  _BS_LABELS, bs_scale),
+                "pl_by_year": _extract_by_year(inc, _PL_LABELS, pl_scale),
+                "cf_by_year": _extract_by_year(cf,  _CF_LABELS, cf_scale),
+                "source": "yfinance",
+            }
+        except Exception as e:
+            print(f"[price_service] fundamentals error {sym}: {e}")
+            return {"bs_by_year": {}, "pl_by_year": {}, "cf_by_year": {}, "source": "yfinance"}
+
     return await asyncio.to_thread(_fetch)

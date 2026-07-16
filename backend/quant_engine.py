@@ -60,6 +60,43 @@ def _parse_mc_cr(mc_str) -> Optional[float]:
     except Exception:
         return None
 
+def _ebit(pl: dict) -> Optional[float]:
+    """
+    True EBIT (Earnings Before Interest & Tax) from a Screener P&L row.
+      Preferred : reported 'ebit' field (from yfinance overlay)
+      Then      : PBT + Interest        (exact accounting definition)
+      Fallback  : Operating Profit − Depreciation   (EBITDA − D&A)
+      Last resort: Operating Profit (EBITDA)         (overstates by D&A)
+    Previously the code used EBITDA directly as EBIT, inflating Altman X3.
+    """
+    reported = _sf(pl.get("ebit"))
+    if reported is not None:
+        return reported
+    pbt   = _sf(pl.get("profit_before_tax"))
+    intr  = _sf(pl.get("interest"))
+    if pbt is not None and intr is not None:
+        return pbt + intr
+    ebitda = _sf(pl.get("ebitda"))
+    dep    = _sf(pl.get("depreciation"))
+    if ebitda is not None and dep is not None:
+        return ebitda - dep
+    return ebitda
+
+
+def _book_equity(bs: dict) -> Optional[float]:
+    """
+    Book value of shareholders' equity.
+      Preferred : reported 'total_equity' (from yfinance overlay)
+      Fallback  : Equity Capital + Reserves (Screener)
+    """
+    te = _sf(bs.get("total_equity"))
+    if te is not None:
+        return te
+    eq_c = _sf(bs.get("equity_capital"))
+    res  = _sf(bs.get("reserves"))
+    if eq_c is None and res is None:
+        return None
+    return (eq_c or 0) + (res or 0)
 
 # ── Piotroski F-Score (0–9) ───────────────────────────────────────────────────
 
@@ -255,11 +292,29 @@ def compute_piotroski(data: dict) -> dict:
 
 def compute_altman_z(data: dict) -> dict:
     """
-    Classic 5-factor Altman Z-Score (1968) + modified Z' for service firms.
+    Altman Z''-Score — the emerging-market / non-manufacturing model (Altman 1995,
+    2005), the correct variant for Indian equities across sectors.
 
-    Safe zone  : Z > 2.99
-    Grey zone  : 1.81 < Z ≤ 2.99
-    Distress   : Z ≤ 1.81
+        Z'' = 6.56·X1 + 3.26·X2 + 6.72·X3 + 1.05·X4
+
+    (The +3.25 constant belongs to the bond-rating-mapped EM-Score variant,
+    whose zones are ~5.85/4.35 — mixing it with the 2.6/1.1 zones below would
+    inflate every score by 3.25 and mark distressed firms "Safe".)
+
+        X1 = Working Capital / Total Assets
+        X2 = Retained Earnings / Total Assets
+        X3 = EBIT / Total Assets                 (true EBIT, not EBITDA)
+        X4 = Book Value of Equity / Total Liabilities
+
+    It drops X5 (Sales/Assets), which was calibrated only on US manufacturers,
+    so it is industry-neutral.
+
+        Safe zone : Z'' > 2.6
+        Grey zone : 1.1 < Z'' ≤ 2.6
+        Distress  : Z'' ≤ 1.1
+
+    The classic 1968 Z (market-value X4 + X5) is still returned as `z_classic`
+    for reference. Both are unreliable for banks/NBFCs (no working-capital cycle).
     """
     annual_pl = data.get("annual_pl", [])
     annual_bs = data.get("annual_bs", [])
@@ -274,42 +329,47 @@ def compute_altman_z(data: dict) -> dict:
     res   = _sf(bs.get("reserves"))
     eq_c  = _sf(bs.get("equity_capital"))
     rev   = _sf(pl.get("revenue"))
-    ebit  = _sf(pl.get("ebitda"))     # EBITDA as EBIT proxy
-    ni    = _sf(pl.get("net_profit"))
+    ebit  = _ebit(pl)                 # true EBIT (PBT+Interest, or EBITDA−Dep)
     mc_cr = _parse_mc_cr(data.get("market_cap"))
 
     if not ta or ta == 0:
         return {
-            "z_score": None, "z_prime": None,
+            "z_score": None, "z_prime": None, "z_classic": None,
             "zone": "Unknown", "zone_color": "grey",
             "interpretation": "Insufficient balance sheet data — cannot compute Z-Score.",
             "components": {}, "data_quality": "low",
         }
 
-    equity_book = (eq_c or 0) + (res or 0)
-    wc           = (ca or 0) - (cl or 0)
-    re_earnings  = res or 0                                   # retained earnings ≈ reserves
-    total_liab   = ta - equity_book if equity_book else ta    # book liabilities
+    equity_book = _book_equity(bs) or 0
+    wc          = (ca or 0) - (cl or 0)
+    re_earnings = res or 0                                    # retained earnings ≈ reserves
+    total_liab  = ta - equity_book if equity_book else ta     # book liabilities
 
-    # Market cap in same unit (Cr); if unavailable fall back to book equity
-    mve = mc_cr if mc_cr else equity_book
-
-    # Avoid division by zero on total_liab
+    # X4 uses BOOK equity / book liabilities. Guard a degenerate denominator
+    # (no/negative liabilities → very safe) by capping instead of exploding.
     if total_liab <= 0:
-        total_liab = ta * 0.01   # trivial denominator so X4 stays large
+        X4 = 8.0
+    else:
+        X4 = min(_div(equity_book, total_liab, 0), 8.0)
 
-    X1 = _div(wc, ta, 0)                    # Working capital / Assets
-    X2 = _div(re_earnings, ta, 0)           # Retained earnings / Assets
-    X3 = _div(ebit or 0, ta, 0)             # EBIT / Assets
-    X4 = _div(mve, total_liab, 0)           # MktCap / Book Liabilities
-    X5 = _div(rev or 0, ta, 0)             # Revenue / Assets
+    X1 = _div(wc, ta, 0)                     # Working capital / Assets
+    X2 = _div(re_earnings, ta, 0)            # Retained earnings / Assets
+    X3 = _div(ebit or 0, ta, 0)              # EBIT / Assets
+    X5 = _div(rev or 0, ta, 0)               # Revenue / Assets (classic model only)
 
-    z       = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 1.0*X5
-    z_prime = 6.56*X1 + 3.26*X2 + 6.72*X3 + 1.05*X4   # non-manufacturing variant
+    # Primary model: Z'' emerging-market / non-manufacturing (no +3.25 —
+    # that constant belongs to the rating-mapped EMS variant with ~5.85/4.35
+    # zones; with the 2.6/1.1 zones used here it would inflate every score)
+    z = 6.56*X1 + 3.26*X2 + 6.72*X3 + 1.05*X4
 
-    if   z > 2.99: zone, color = "Safe",      "green"
-    elif z > 1.81: zone, color = "Grey Zone", "yellow"
-    else:          zone, color = "Distress",  "red"
+    # Reference: classic 1968 Z with market-value X4 (falls back to book equity)
+    mve      = mc_cr if mc_cr else equity_book
+    X4_mkt   = min(_div(mve, total_liab, 0) if total_liab > 0 else 8.0, 12.0)
+    z_classic = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4_mkt + 1.0*X5
+
+    if   z > 2.6: zone, color = "Safe",      "green"
+    elif z > 1.1: zone, color = "Grey Zone", "yellow"
+    else:         zone, color = "Distress",  "red"
 
     interp_map = {
         "Safe":      "Low probability of financial distress in the next 2 years.",
@@ -317,23 +377,25 @@ def compute_altman_z(data: dict) -> dict:
         "Distress":  "High probability of financial distress — deep due diligence required.",
     }
 
-    dq = "high" if (ta and ca and cl and borr and rev) else \
+    dq = "high" if (ta and ca and cl and ebit is not None and equity_book) else \
          "partial" if ta else "low"
 
     return {
         "z_score": round(z, 2),
-        "z_prime": round(z_prime, 2),
+        "z_prime": round(z, 2),          # back-compat alias (primary model)
+        "z_classic": round(z_classic, 2),
         "zone": zone,
         "zone_color": color,
+        "model": "Z''-score (emerging markets)",
         "interpretation": interp_map[zone],
         "components": {
             "X1_working_capital_ratio": round(X1, 4),
             "X2_retained_earnings_ratio": round(X2, 4),
             "X3_ebit_to_assets": round(X3, 4),
-            "X4_market_vs_liabilities": round(X4, 4),
+            "X4_equity_vs_liabilities": round(X4, 4),
             "X5_asset_turnover": round(X5, 4),
         },
-        "thresholds": {"safe_above": 2.99, "grey_above": 1.81},
+        "thresholds": {"safe_above": 2.6, "grey_above": 1.1},
         "data_quality": dq,
     }
 
@@ -356,11 +418,9 @@ def compute_dupont(data: dict) -> dict:
     rev  = _sf(pl.get("revenue"))
     ni   = _sf(pl.get("net_profit"))
     ta   = _sf(bs.get("total_assets"))
-    eq_c = _sf(bs.get("equity_capital"))
-    res  = _sf(bs.get("reserves"))
 
-    equity = (eq_c or 0) + (res or 0)
-    if equity <= 0:
+    equity = _book_equity(bs)
+    if equity is not None and equity <= 0:
         equity = None
 
     npm = _div(ni, rev)       # Net Profit Margin
@@ -374,8 +434,7 @@ def compute_dupont(data: dict) -> dict:
     for p, b in zip(annual_pl, annual_bs):
         r = _sf(p.get("revenue"));  n  = _sf(p.get("net_profit"))
         t = _sf(b.get("total_assets"))
-        ec = _sf(b.get("equity_capital")); rs = _sf(b.get("reserves"))
-        eq = (ec or 0) + (rs or 0) or None
+        eq = _book_equity(b) or None
         _npm = _div(n, r, 0);  _at = _div(r, t, 0);  _em = _div(t, eq, 0)
         trend.append({
             "year":             p.get("year") or b.get("year", ""),
@@ -449,12 +508,14 @@ def compute_beneish_m(data: dict) -> dict:
     ta_p   = _sf(bs_p.get("total_assets"))
     ca_t   = _sf(bs_t.get("current_assets"))
     ca_p   = _sf(bs_p.get("current_assets"))
-    fa_t   = _sf(bs_t.get("fixed_assets") or bs_t.get("equity_capital"))
-    fa_p   = _sf(bs_p.get("fixed_assets") or bs_p.get("equity_capital"))
+    fa_t   = _sf(bs_t.get("fixed_assets"))
+    fa_p   = _sf(bs_p.get("fixed_assets"))
     br_t   = _sf(bs_t.get("borrowings"))
     br_p   = _sf(bs_p.get("borrowings"))
     cl_t   = _sf(bs_t.get("current_liabilities"))
     cl_p   = _sf(bs_p.get("current_liabilities"))
+    dep_t  = _sf(pl_t.get("depreciation"))
+    dep_p  = _sf(pl_p.get("depreciation"))
     cfo_t  = _sf(cf_t.get("cfo")) if cf_t else None
 
     # DSRI — Days Sales Receivables Index (current assets / rev as proxy)
@@ -475,8 +536,16 @@ def compute_beneish_m(data: dict) -> dict:
     # SGI — Sales Growth Index
     SGI  = _div(rev_t, rev_p, 1.0) or 1.0
 
-    # DEPI — not separately available; use neutral
-    DEPI = 1.0
+    # DEPI — Depreciation Index. Real value when depreciation + net PPE exist:
+    #   rate = Dep / (Dep + Net Fixed Assets);  DEPI = rate_prior / rate_current.
+    #   >1 → depreciation rate slowed (possible capitalising/earnings inflation).
+    depi_ok = None not in (dep_t, dep_p, fa_t, fa_p)
+    if depi_ok:
+        rate_t = _div(dep_t, (dep_t or 0) + (fa_t or 0), None)
+        rate_p = _div(dep_p, (dep_p or 0) + (fa_p or 0), None)
+        DEPI   = _div(rate_p, rate_t, 1.0) or 1.0
+    else:
+        DEPI = 1.0
 
     # SGAI — SG&A not broken out by Screener; use neutral
     SGAI = 1.0
@@ -506,7 +575,8 @@ def compute_beneish_m(data: dict) -> dict:
     elif m > -2.22: interp = "Grey zone — inconclusive, scrutinise closely"
     else:           interp = "Non-manipulator — no strong manipulation signals"
 
-    dq = "partial"  # DEPI + SGAI defaulted to neutral
+    # DSRI/AQI are balance-sheet proxies and SGAI is neutralised (no SG&A line).
+    dq = "partial" if depi_ok else "low"
 
     return {
         "m_score":      round(m, 3),
@@ -581,7 +651,9 @@ def compute_all(data: dict) -> dict:
     if piotroski["score"] is not None:
         pts += int(piotroski["score"] / 9 * 40)   # 40 pts
     if altman["z_score"] is not None:
-        pts += int(min(altman["z_score"] / 5.0, 1.0) * 30)  # 30 pts
+        # Z''-score scale: distress ≤1.1, safe >2.6, healthy ~6+.
+        z_norm = min(max((altman["z_score"] - 1.1) / (6.0 - 1.1), 0.0), 1.0)
+        pts += int(z_norm * 30)                    # 30 pts
     roe = _sf(data.get("roe"))
     if roe:
         pts += int(min(roe / 30.0, 1.0) * 30)     # 30 pts

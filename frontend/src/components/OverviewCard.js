@@ -237,7 +237,7 @@ function DualConviction({ synthesis }) {
   );
 }
 
-export default function OverviewCard({ data, planLevels, synthesis }) {
+export default function OverviewCard({ data, planLevels, synthesis, demo = false }) {
   const [adding, setAdding] = useState(false);
 
   const handleAddWatchlist = async () => {
@@ -278,9 +278,11 @@ export default function OverviewCard({ data, planLevels, synthesis }) {
             <span className="ov-exchange">{data.exchange}</span>
           </div>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={handleAddWatchlist} disabled={adding}>
-          {adding ? '...' : '+ Watchlist'}
-        </button>
+        {!demo && (
+          <button className="btn btn-ghost btn-sm" onClick={handleAddWatchlist} disabled={adding}>
+            {adding ? '...' : '+ Watchlist'}
+          </button>
+        )}
       </div>
 
       <div className="ov-price-row">

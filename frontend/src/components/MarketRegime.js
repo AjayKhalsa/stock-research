@@ -7,15 +7,18 @@ const STYLES = {
   risk_off: { bg: 'rgba(239,68,68,0.07)',   border: 'rgba(239,68,68,0.35)',   color: '#ef4444', icon: '🔴' },
 };
 
-export default function MarketRegime() {
-  const [regime, setRegime] = useState(null);
+export default function MarketRegime({ regime: regimeProp }) {
+  const [fetched, setFetched] = useState(null);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
+    if (regimeProp) return undefined;   // static mode (guide) — no fetch
     let alive = true;
-    getMarketRegime().then(r => { if (alive) setRegime(r); }).catch(() => {});
+    getMarketRegime().then(r => { if (alive) setFetched(r); }).catch(() => {});
     return () => { alive = false; };
-  }, []);
+  }, [regimeProp]);
+
+  const regime = regimeProp || fetched;
 
   if (!regime || regime.regime === 'Unknown') return null;
   const s = STYLES[regime.regime] || STYLES.neutral;
