@@ -11,10 +11,9 @@ import AlphaThesis    from './components/AlphaThesis';
 import QuantScores    from './components/QuantScores';
 import Screener       from './components/Screener';
 import TradePlan      from './components/TradePlan';
-import BottomLine     from './components/BottomLine';
 import MarketRegime   from './components/MarketRegime';
 import Gatekeeper     from './components/Gatekeeper';
-import KiteGTT        from './components/KiteGTT';
+import TradeSetup     from './components/TradeSetup';
 import FactorReportCard from './components/FactorReportCard';
 import AuditTabs      from './components/AuditTabs';
 import { getStock, getAlpha, getPlan } from './api';
@@ -94,7 +93,7 @@ export default function App() {
       if (alphaSeqRef.current === seq) setAlphaData(alpha);
     } catch (e) {
       if (alphaSeqRef.current === seq)
-        setAlphaError('AI analysis unavailable — check backend or Gemini API key.');
+        setAlphaError('AI Analysis temporarily unavailable. Please try again in a moment.');
       console.warn('[alpha]', e);
     } finally {
       if (alphaSeqRef.current === seq) setAlphaLoading(false);
@@ -186,22 +185,18 @@ export default function App() {
                   synthesis={alphaData?.trade_plans?.synthesis || planData?.synthesis}
                 />
 
-                {/* ── Bottom Line: reconciled verdict across all lenses ── */}
-                <BottomLine
-                  synthesis={alphaData?.trade_plans?.synthesis || planData?.synthesis}
-                  loading={planLoading}
-                  alphaLoading={alphaLoading}
-                />
-
                 {/* ── Gatekeeper override OR the active trade workspace ── */}
                 {gatekeeperActive ? (
                   <Gatekeeper planData={planData} />
                 ) : (
                   <>
+                    <TradeSetup
+                      plan={swing}
+                      dossier={planData?.dossier}
+                      livePrice={stockData.live_price}
+                      loading={planLoading}
+                    />
                     {selectedRow && <FactorReportCard row={selectedRow} />}
-                    {planData && !planData.error && swing?.entry && (
-                      <KiteGTT plan={swing} livePrice={stockData.live_price} symbol={currentSymbol?.symbol} />
-                    )}
                     <TradePlan
                       data={planData}
                       loading={planLoading}
