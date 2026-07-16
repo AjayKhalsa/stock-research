@@ -28,83 +28,15 @@ from typing import Optional
 
 import price_action
 
-# ── rolling indicator series (aligned to candles; None until warm-up) ─────────
+# ── rolling indicator series (canonical implementations in indicators.py) ────
 
-def _sma_series(vals: list, period: int) -> list:
-    out = [None] * len(vals)
-    s = 0.0
-    for i, v in enumerate(vals):
-        s += v
-        if i >= period:
-            s -= vals[i - period]
-        if i >= period - 1:
-            out[i] = s / period
-    return out
-
-
-def _rsi_series(closes: list, period: int = 14) -> list:
-    n = len(closes)
-    out = [None] * n
-    if n < period + 1:
-        return out
-    gains = losses = 0.0
-    for i in range(1, period + 1):
-        d = closes[i] - closes[i - 1]
-        gains += max(d, 0.0)
-        losses += max(-d, 0.0)
-    ag, al = gains / period, losses / period
-    out[period] = 100.0 if al == 0 else 100 - 100 / (1 + ag / al)
-    for i in range(period + 1, n):
-        d = closes[i] - closes[i - 1]
-        ag = (ag * (period - 1) + max(d, 0.0)) / period
-        al = (al * (period - 1) + max(-d, 0.0)) / period
-        out[i] = 100.0 if al == 0 else 100 - 100 / (1 + ag / al)
-    return out
-
-
-def _atr_series(highs: list, lows: list, closes: list, period: int = 14) -> list:
-    n = len(closes)
-    out = [None] * n
-    if n < period + 1:
-        return out
-    trs = [max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]),
-               abs(lows[i] - closes[i - 1])) for i in range(1, n)]
-    atr = sum(trs[:period]) / period
-    out[period] = atr
-    for i in range(period, len(trs)):
-        atr = (atr * (period - 1) + trs[i]) / period
-        out[i + 1] = atr
-    return out
-
-
-def _ema_series(vals: list, period: int) -> list:
-    n = len(vals)
-    out = [None] * n
-    if n < period:
-        return out
-    k = 2.0 / (period + 1)
-    ema = sum(vals[:period]) / period
-    out[period - 1] = ema
-    for i in range(period, n):
-        ema = vals[i] * k + ema * (1 - k)
-        out[i] = ema
-    return out
-
-
-def _macd_hist_series(closes: list) -> list:
-    n = len(closes)
-    e12, e26 = _ema_series(closes, 12), _ema_series(closes, 26)
-    macd = [None if (e12[i] is None or e26[i] is None) else e12[i] - e26[i]
-            for i in range(n)]
-    first = next((i for i, v in enumerate(macd) if v is not None), None)
-    out = [None] * n
-    if first is None or n - first < 9:
-        return out
-    sig = _ema_series([v for v in macd[first:]], 9)
-    for j, s in enumerate(sig):
-        if s is not None:
-            out[first + j] = macd[first + j] - s
-    return out
+from indicators import (
+    sma_series as _sma_series,
+    ema_series as _ema_series,
+    rsi_series as _rsi_series,
+    atr_series as _atr_series,
+    macd_hist_series as _macd_hist_series,
+)
 
 
 # ── setup detection masks (must mirror decision_engine.detect_setup rules) ────

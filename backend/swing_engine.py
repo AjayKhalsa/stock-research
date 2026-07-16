@@ -28,64 +28,13 @@ from typing import Optional
 D_1M, D_3M, D_6M, D_12M = 21, 63, 126, 252
 
 
-# ── low-level indicator math ──────────────────────────────────────────────────
+# ── low-level indicator math (canonical implementations in indicators.py) ────
 
-def _ema(values: list, period: int) -> Optional[list]:
-    if len(values) < period:
-        return None
-    k = 2.0 / (period + 1)
-    out = [sum(values[:period]) / period]
-    for v in values[period:]:
-        out.append(v * k + out[-1] * (1 - k))
-    return out
-
-
-def _rsi(closes: list, period: int = 14) -> Optional[float]:
-    if len(closes) < period + 1:
-        return None
-    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-    gains  = [d if d > 0 else 0.0 for d in deltas]
-    losses = [-d if d < 0 else 0.0 for d in deltas]
-    # Wilder smoothing
-    ag = sum(gains[:period]) / period
-    al = sum(losses[:period]) / period
-    for i in range(period, len(deltas)):
-        ag = (ag * (period - 1) + gains[i]) / period
-        al = (al * (period - 1) + losses[i]) / period
-    if al == 0:
-        return 100.0
-    return round(100 - 100 / (1 + ag / al), 2)
-
-
-def _atr(highs: list, lows: list, closes: list, period: int = 14) -> Optional[float]:
-    n = len(closes)
-    if n < period + 1:
-        return None
-    trs = []
-    for i in range(1, n):
-        trs.append(max(
-            highs[i] - lows[i],
-            abs(highs[i] - closes[i - 1]),
-            abs(lows[i] - closes[i - 1]),
-        ))
-    atr = sum(trs[:period]) / period
-    for tr in trs[period:]:
-        atr = (atr * (period - 1) + tr) / period
-    return atr
-
-
-def _macd_hist(closes: list) -> Optional[float]:
-    """Latest MACD histogram value (MACD line - signal line)."""
-    if len(closes) < 26 + 9:
-        return None
-    ema12 = _ema(closes, 12)
-    ema26 = _ema(closes, 26)
-    # Align: ema26 starts 14 elements later than ema12
-    macd_line = [a - b for a, b in zip(ema12[14:], ema26)]
-    signal = _ema(macd_line, 9)
-    if not signal:
-        return None
-    return macd_line[-1] - signal[-1]
+from indicators import (
+    rsi as _rsi,
+    atr as _atr,
+    macd_hist as _macd_hist,
+)
 
 
 def _ret(closes: list, lookback: int) -> Optional[float]:

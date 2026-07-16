@@ -18,8 +18,7 @@ from typing import Optional
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL:   str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+from config import GEMINI_API_KEY, GEMINI_MODEL
 
 def _gemini_url() -> str:
     """Build URL at call time so GEMINI_MODEL overrides are respected."""
