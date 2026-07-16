@@ -71,7 +71,7 @@ export const GLASS_METRICS = {
   altman: {
     subtitle: 'Bankruptcy & Solvency Risk',
     tldr: 'Predicts the probability of financial distress. A score above 2.6 positions the firm inside the "Safe Zone"; below 1.1 flags distress risk within ~2 years. Uses the emerging-market Z″ model — industry-neutral, but not valid for banks/NBFCs.',
-    math: 'Z″ = 3.25 + 6.56·X₁ + 3.26·X₂ + 6.72·X₃ + 1.05·X₄  where X₁ = Working Capital/Total Assets, X₂ = Retained Earnings/TA, X₃ = EBIT/TA, X₄ = Book Value of Equity/Total Liabilities',
+    math: 'Z″ = 6.56·X₁ + 3.26·X₂ + 6.72·X₃ + 1.05·X₄  where X₁ = Working Capital/Total Assets, X₂ = Retained Earnings/TA, X₃ = EBIT/TA, X₄ = Book Value of Equity/Total Liabilities. Zones: >2.6 Safe · 1.1–2.6 Grey · ≤1.1 Distress',
   },
   piotroski: {
     subtitle: 'Operational Efficiency Health',

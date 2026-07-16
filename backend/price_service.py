@@ -202,8 +202,11 @@ async def get_historical(instrument: str, days: int = 300) -> list:
         try:
             end   = datetime.now()
             start = end - timedelta(days=days + 15)   # pad for weekends/holidays
-            # auto_adjust=True → split/bonus-adjusted OHLC so MAs, RSI, ATR,
-            # breakouts and the base-rate backtest aren't broken by corporate actions.
+            # Yahoo's raw daily series is already split/bonus-adjusted;
+            # auto_adjust=True additionally folds dividends in (total-return
+            # series) so ex-dividend price gaps don't distort MAs/RSI/ATR or
+            # falsely trigger stops in the base-rate backtest. The latest
+            # candle always equals the actual traded price.
             df    = yf.Ticker(sym).history(start=start, end=end, interval="1d", auto_adjust=True)
             return _df_to_candles(df)
         except Exception as e:

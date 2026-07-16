@@ -295,7 +295,11 @@ def compute_altman_z(data: dict) -> dict:
     Altman Z''-Score — the emerging-market / non-manufacturing model (Altman 1995,
     2005), the correct variant for Indian equities across sectors.
 
-        Z'' = 3.25 + 6.56·X1 + 3.26·X2 + 6.72·X3 + 1.05·X4
+        Z'' = 6.56·X1 + 3.26·X2 + 6.72·X3 + 1.05·X4
+
+    (The +3.25 constant belongs to the bond-rating-mapped EM-Score variant,
+    whose zones are ~5.85/4.35 — mixing it with the 2.6/1.1 zones below would
+    inflate every score by 3.25 and mark distressed firms "Safe".)
 
         X1 = Working Capital / Total Assets
         X2 = Retained Earnings / Total Assets
@@ -353,8 +357,10 @@ def compute_altman_z(data: dict) -> dict:
     X3 = _div(ebit or 0, ta, 0)              # EBIT / Assets
     X5 = _div(rev or 0, ta, 0)               # Revenue / Assets (classic model only)
 
-    # Primary model: Z'' emerging-market / non-manufacturing
-    z = 3.25 + 6.56*X1 + 3.26*X2 + 6.72*X3 + 1.05*X4
+    # Primary model: Z'' emerging-market / non-manufacturing (no +3.25 —
+    # that constant belongs to the rating-mapped EMS variant with ~5.85/4.35
+    # zones; with the 2.6/1.1 zones used here it would inflate every score)
+    z = 6.56*X1 + 3.26*X2 + 6.72*X3 + 1.05*X4
 
     # Reference: classic 1968 Z with market-value X4 (falls back to book equity)
     mve      = mc_cr if mc_cr else equity_book
