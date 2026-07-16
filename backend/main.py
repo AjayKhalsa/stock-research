@@ -10,7 +10,7 @@ load_dotenv(os.path.join(_here, ".env"))
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import json, asyncio
+import json, asyncio, re
 from typing import Optional
 import feedparser, httpx
 from bs4 import BeautifulSoup
@@ -90,13 +90,17 @@ def analyze_sentiment(text: str):
 
 
 def calc_rsi(prices: list, period=14) -> Optional[float]:
+    # Wilder's smoothed RSI (matches swing_engine / conviction_engine).
     if len(prices) < period + 1:
         return None
     deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-    gains = [d if d > 0 else 0 for d in deltas[-period:]]
-    losses = [-d if d < 0 else 0 for d in deltas[-period:]]
-    ag = sum(gains) / period
-    al = sum(losses) / period
+    gains  = [d if d > 0 else 0.0 for d in deltas]
+    losses = [-d if d < 0 else 0.0 for d in deltas]
+    ag = sum(gains[:period]) / period
+    al = sum(losses[:period]) / period
+    for i in range(period, len(deltas)):
+        ag = (ag * (period - 1) + gains[i]) / period
+        al = (al * (period - 1) + losses[i]) / period
     if al == 0:
         return 100.0
     return round(100 - 100 / (1 + ag / al), 2)
@@ -398,12 +402,14 @@ async def get_stock_plan(symbol: str, exchange: str = "NSE"):
     symbol = symbol.upper().strip()
     instrument = f"{exchange}:{symbol}"
 
-    screener_data, hist_data, nifty = await asyncio.gather(
+    screener_data, hist_data, nifty, yf_funds = await asyncio.gather(
         fetch_screener_full(symbol),
         price.get_historical(instrument, days=1250),   # ~5y for base rates
         price.get_index_historical("^NSEI", days=400),
+        price.get_fundamentals(instrument),
     )
 
+    screener_data = enrich_with_yf_fundamentals(screener_data, yf_funds)
     quant = quant_engine.compute_all(screener_data) if screener_data else None
     plans = decision_engine.build_trade_plans(hist_data, screener_data, quant)
     if "error" not in plans:
@@ -606,6 +612,10 @@ def parse_screener_annual(html: str) -> dict:
             "revenue":    ["sales", "revenue"],
             "net_profit": ["net profit", "profit after tax", "pat"],
             "ebitda":     ["operating profit", "ebitda"],
+            "other_income": ["other income"],
+            "interest":   ["interest"],
+            "depreciation": ["depreciation"],
+            "profit_before_tax": ["profit before tax"],
             "eps":        ["eps in rs", "basic eps", "eps"],
         },
     )
@@ -623,6 +633,7 @@ def parse_screener_annual(html: str) -> dict:
             "reserves":             ["reserves"],
             "borrowings":           ["borrowings"],
             "current_liabilities":  ["other liabilities"],  # Screener proxy
+            "fixed_assets":         ["fixed assets"],
             "total_assets":         ["total assets"],
             "current_assets":       ["other assets"],       # Screener proxy
         },
@@ -664,6 +675,92 @@ async def fetch_screener_full(symbol: str) -> dict:
     return {}
 
 
+# Fields where yfinance's *reported* statement value is more trustworthy than
+# Screener's scraped/proxied one. Overlaid onto the matching year's entry.
+_YF_BS_OVERLAY = ["total_assets", "current_assets", "current_liabilities",
+                  "borrowings", "reserves", "equity_capital", "fixed_assets",
+                  "total_equity"]
+_YF_PL_OVERLAY = ["revenue", "net_profit", "ebitda", "ebit", "profit_before_tax",
+                  "interest", "depreciation"]
+_YF_CF_OVERLAY = ["cfo", "cfi", "cff"]
+
+
+def _year_of(label) -> Optional[int]:
+    """Extract a 4-digit year from a Screener period label like 'Mar 2024'."""
+    if not label:
+        return None
+    m = re.search(r"(19|20)\d{2}", str(label))
+    return int(m.group(0)) if m else None
+
+
+def _overlay_years(entries: list, by_year: dict, keys: list) -> int:
+    """
+    Overlay reported yfinance values onto Screener annual entries, matching on
+    calendar year. yfinance wins for the listed keys when it has a value.
+    Returns the number of entries that received at least one overlaid field.
+    """
+    touched = 0
+    for entry in entries:
+        yr = _year_of(entry.get("year"))
+        if yr is None:
+            continue
+        yf_row = by_year.get(yr)
+        if not yf_row:
+            continue
+        hit = False
+        for k in keys:
+            v = yf_row.get(k)
+            if v is not None:
+                entry[k] = v
+                hit = True
+        if hit:
+            touched += 1
+    return touched
+
+
+def enrich_with_yf_fundamentals(screener_data: dict, yf_funds: dict) -> dict:
+    """
+    Overlay yfinance's reported financial statements onto the Screener annual
+    data in-place. This replaces Screener's 'Other Assets'/'Other Liabilities'
+    proxies with true current assets/liabilities and adds a reported EBIT and
+    total book equity — the inputs Altman/Piotroski/Beneish/DuPont depend on.
+    Screener remains the fallback for any year/field yfinance doesn't cover.
+    """
+    if not screener_data or not yf_funds:
+        return screener_data
+
+    bs_by = yf_funds.get("bs_by_year") or {}
+    pl_by = yf_funds.get("pl_by_year") or {}
+    cf_by = yf_funds.get("cf_by_year") or {}
+    if not (bs_by or pl_by or cf_by):
+        return screener_data
+
+    pl = screener_data.get("annual_pl") or []
+    bs = screener_data.get("annual_bs") or []
+    cf = screener_data.get("annual_cf") or []
+
+    # If Screener had no annual tables at all, seed lists from yfinance years.
+    if not bs and bs_by:
+        bs = [{"year": str(y)} for y in sorted(bs_by)]
+        screener_data["annual_bs"] = bs
+    if not pl and pl_by:
+        pl = [{"year": str(y)} for y in sorted(pl_by)]
+        screener_data["annual_pl"] = pl
+    if not cf and cf_by:
+        cf = [{"year": str(y)} for y in sorted(cf_by)]
+        screener_data["annual_cf"] = cf
+
+    n = 0
+    n += _overlay_years(bs, bs_by, _YF_BS_OVERLAY)
+    n += _overlay_years(pl, pl_by, _YF_PL_OVERLAY)
+    n += _overlay_years(cf, cf_by, _YF_CF_OVERLAY)
+
+    screener_data["fundamentals_source"] = (
+        "yfinance+screener" if n else "screener"
+    )
+    return screener_data
+
+
 # ── /api/stock/{symbol}/alpha  ────────────────────────────────────────────────
 
 @app.get("/api/stock/{symbol}/alpha")
@@ -686,14 +783,17 @@ async def get_stock_alpha(symbol: str, exchange: str = "NSE"):
         ohlc_data,
         bse_announcements,
         nifty_data,
+        yf_funds,
     ) = await asyncio.gather(
         fetch_screener_full(symbol),
         price.get_historical(instrument, days=1250),
         price.get_ohlc(instrument),
         qualitative_engine.get_bse_announcements(symbol),
         price.get_index_historical("^NSEI", days=400),
+        price.get_fundamentals(instrument),
     )
 
+    screener_data = enrich_with_yf_fundamentals(screener_data, yf_funds)
     company_name = screener_data.get("company_name", symbol)
 
     # ── News ──────────────────────────────────────────────────────────────────
@@ -791,6 +891,7 @@ async def get_stock_alpha(symbol: str, exchange: str = "NSE"):
 
         # ── quantitative scores ───────────────────────────────────────────────
         "quant": quant_scores,
+        "fundamentals_source": screener_data.get("fundamentals_source", "screener"),
 
         # ── trade decision plans ──────────────────────────────────────────────
         "trade_plans": trade_plans,
@@ -831,7 +932,7 @@ def _screen_row(symbol: str, sdata: dict, quant: dict, pf: dict) -> dict:
 
     sf   = quant_engine._sf
     mcap = quant_engine._parse_mc_cr(sdata.get("market_cap"))
-    ebit = sf(pl.get("ebitda"))
+    ebit = quant_engine._ebit(pl)
     borr = sf(bs.get("borrowings"))
 
     # Earnings yield = EBIT / EV (EV = market cap + debt)
