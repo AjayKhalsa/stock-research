@@ -13,7 +13,6 @@ import Screener       from './components/Screener';
 import TradePlan      from './components/TradePlan';
 import MarketRegime   from './components/MarketRegime';
 import Gatekeeper     from './components/Gatekeeper';
-import TradeSetup     from './components/TradeSetup';
 import FactorReportCard from './components/FactorReportCard';
 import AuditTabs      from './components/AuditTabs';
 import { getStock, getAlpha, getPlan } from './api';
@@ -190,12 +189,6 @@ export default function App() {
                   <Gatekeeper planData={planData} />
                 ) : (
                   <>
-                    <TradeSetup
-                      plan={swing}
-                      dossier={planData?.dossier}
-                      livePrice={stockData.live_price}
-                      loading={planLoading}
-                    />
                     {selectedRow && <FactorReportCard row={selectedRow} />}
                     <TradePlan
                       data={planData}
