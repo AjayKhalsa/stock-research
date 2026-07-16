@@ -1,6 +1,5 @@
 import React, { useRef, useState } from 'react';
 import { API_BASE, resolveSymbols } from '../api';
-import MarketRegime from './MarketRegime';
 
 const STREAM_URL = `${API_BASE}/api/screen-stream`;
 
@@ -28,24 +27,6 @@ function planVerdictStyle(verdict = '') {
   return { bg: 'rgba(239,68,68,0.10)', color: '#ef4444', border: '#ef4444' };
 }
 
-function pct(v, digits = 1) {
-  if (v == null) return '-';
-  return `${(v * 100).toFixed(digits)}%`;
-}
-
-function num(v, digits = 2) {
-  if (v == null) return '-';
-  return Number(v).toFixed(digits);
-}
-
-function trendLabel(t) {
-  if (t === 2)  return { txt: 'Strong Up', color: '#10b981' };
-  if (t === 1)  return { txt: 'Up',        color: '#34d399' };
-  if (t === -1) return { txt: 'Down',      color: '#ea580c' };
-  if (t === -2) return { txt: 'Strong Dn', color: '#ef4444' };
-  return { txt: 'Flat', color: '#64748b' };
-}
-
 function Spinner({ color = '#f59e0b', size = 14 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16"
@@ -58,235 +39,120 @@ function Spinner({ color = '#f59e0b', size = 14 }) {
   );
 }
 
-function ZBar({ z }) {
-  // z in roughly [-2.5, +2.5]; render a centered bar
-  if (z == null) return <span style={{ color: '#94a3b8', fontSize: 12 }}>-</span>;
-  const clamped = Math.max(-2.5, Math.min(2.5, z));
+/* Tiny centered z-score bar for the compact master rows */
+function MiniZ({ z, label }) {
+  const clamped = z == null ? 0 : Math.max(-2.5, Math.min(2.5, z));
   const pctW = Math.abs(clamped) / 2.5 * 50;
   const pos = clamped >= 0;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <div style={{ position: 'relative', width: 70, height: 8, background: 'var(--border)', borderRadius: 4 }}>
-        <div style={{
-          position: 'absolute', top: 0, height: 8, borderRadius: 4,
-          left: pos ? '50%' : `${50 - pctW}%`, width: `${pctW}%`,
-          background: pos ? '#10b981' : '#ef4444',
-        }} />
-        <div style={{ position: 'absolute', left: '50%', top: -1, width: 1, height: 10, background: '#94a3b8' }} />
+    <div title={`${label}: ${z == null ? '-' : (z > 0 ? '+' : '') + z.toFixed(2)}`}
+         style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <span style={{ fontSize: 9, color: '#94a3b8', width: 10 }}>{label}</span>
+      <div style={{ position: 'relative', width: 44, height: 5, background: 'var(--border)', borderRadius: 3 }}>
+        {z != null && (
+          <div style={{
+            position: 'absolute', top: 0, height: 5, borderRadius: 3,
+            left: pos ? '50%' : `${50 - pctW}%`, width: `${pctW}%`,
+            background: pos ? '#10b981' : '#ef4444',
+          }} />
+        )}
+        <div style={{ position: 'absolute', left: '50%', top: -1, width: 1, height: 7, background: '#cbd5e1' }} />
       </div>
-      <span style={{ fontSize: 11, color: pos ? '#10b981' : '#ef4444', minWidth: 32 }}>
-        {z > 0 ? '+' : ''}{z.toFixed(2)}
-      </span>
     </div>
   );
 }
 
-// ── result row ────────────────────────────────────────────────────────────────
+// ── compact master row ────────────────────────────────────────────────────────
 
-function ResultRow({ r, onSelectStock, techAvailable }) {
-  const [open, setOpen] = useState(false);
+function MasterRow({ r, active, onSelect }) {
   const vs = verdictStyle(r.verdict);
-  const trend = trendLabel(r.trend_score);
-
+  const ps = planVerdictStyle(r.plan_verdict);
   return (
-    <>
-      <tr
-        onClick={() => setOpen(o => !o)}
-        style={{ cursor: 'pointer', borderBottom: '1px solid var(--border)', background: open ? 'var(--bg-hover)' : 'transparent' }}
-      >
-        <td style={{ padding: '10px 8px', color: '#64748b', fontSize: 13 }}>{r.rank}</td>
-        <td style={{ padding: '10px 8px' }}>
-          <button
-            onClick={(e) => { e.stopPropagation(); onSelectStock(r.symbol); }}
-            style={{
-              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-              color: '#6366f1', fontSize: 14, fontWeight: 700, textDecoration: 'underline',
-            }}
-          >{r.symbol}</button>
-          <div style={{ fontSize: 11, color: '#64748b', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {r.company_name}
-          </div>
-        </td>
-        <td style={{ padding: '10px 8px' }}>
-          <span style={{
-            fontSize: 16, fontWeight: 700, color: scoreColor(r.score),
-          }}>{r.score != null ? r.score : '-'}</span>
-        </td>
-        <td style={{ padding: '10px 8px' }}>
-          <span style={{
-            padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700,
-            background: vs.bg, color: vs.color, border: `1px solid ${vs.border}`,
-            whiteSpace: 'nowrap',
-          }}>{r.verdict}</span>
-        </td>
-        <td style={{ padding: '10px 8px' }}>
-          {r.plan_verdict ? (
-            <span
-              title={r.plan_setup_label || ''}
-              style={{
-                padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700,
-                background: planVerdictStyle(r.plan_verdict).bg,
-                color: planVerdictStyle(r.plan_verdict).color,
-                border: `1px solid ${planVerdictStyle(r.plan_verdict).border}`,
-                whiteSpace: 'nowrap',
-              }}>{r.plan_verdict}</span>
-          ) : <span style={{ fontSize: 12, color: '#94a3b8' }}>-</span>}
-        </td>
-        <td style={{ padding: '10px 8px' }}><ZBar z={r.z_momentum} /></td>
-        <td style={{ padding: '10px 8px' }}><ZBar z={r.z_quality} /></td>
-        <td style={{ padding: '10px 8px' }}><ZBar z={r.z_value} /></td>
-        <td style={{ padding: '10px 8px', fontSize: 12, color: r.ret_3m > 0 ? '#10b981' : '#ef4444' }}>
-          {pct(r.ret_3m)}
-        </td>
-        <td style={{ padding: '10px 8px', fontSize: 12, color: trend.color, whiteSpace: 'nowrap' }}>{trend.txt}</td>
-        <td style={{ padding: '10px 8px', fontSize: 12, color: '#0f172a' }}>
-          {r.piotroski_score != null ? `${r.piotroski_score}/9` : '-'}
-        </td>
-        <td style={{ padding: '10px 8px' }}>
-          {r.flags?.length > 0
-            ? <span style={{ fontSize: 12, color: '#ea580c' }} title={r.flags.join('\n')}>{r.flags.length} flag{r.flags.length > 1 ? 's' : ''}</span>
-            : <span style={{ fontSize: 12, color: '#10b981' }}>clean</span>}
-        </td>
-      </tr>
-
-      {open && (
-        <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
-          <td colSpan={12} style={{ padding: '14px 18px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
-
-              <div>
-                <div style={detailHead}>Momentum</div>
-                <DetailLine label="1M / 3M / 6M" value={`${pct(r.ret_1m)} / ${pct(r.ret_3m)} / ${pct(r.ret_6m)}`} />
-                <DetailLine label="12-1 momentum" value={pct(r.mom_12_1)} />
-                <DetailLine label="52w-high proximity" value={r.prox_52w != null ? `${(r.prox_52w * 100).toFixed(0)}%` : '-'} />
-                <DetailLine label="Risk-adj momentum" value={num(r.risk_adj_mom)} />
-                <DetailLine label="Volume surge (20/60d)" value={r.vol_ratio != null ? `${r.vol_ratio}x` : '-'} />
-              </div>
-
-              <div>
-                <div style={detailHead}>Technicals</div>
-                <DetailLine label="RSI(14)" value={num(r.rsi, 1)} />
-                <DetailLine label="MACD histogram" value={num(r.macd_hist, 2)} />
-                <DetailLine label="ATR %" value={r.atr_pct != null ? `${r.atr_pct}%` : '-'} />
-                <DetailLine label="Ann. volatility" value={pct(r.vol_ann, 0)} />
-              </div>
-
-              <div>
-                <div style={detailHead}>Fundamentals</div>
-                <DetailLine label="Piotroski" value={r.piotroski_score != null ? `${r.piotroski_score}/9` : '-'} />
-                <DetailLine label="Altman Z" value={`${num(r.altman_z)} (${r.altman_zone || '-'})`} />
-                <DetailLine label="Beneish M" value={num(r.beneish_m, 3)} />
-                <DetailLine label="ROE / ROCE" value={`${num(r.roe, 1)}% / ${num(r.roce, 1)}%`} />
-                <DetailLine label="P/E / P/B" value={`${num(r.pe_ratio, 1)} / ${num(r.pb_ratio, 1)}`} />
-                <DetailLine label="Earnings yield" value={pct(r.earnings_yield)} />
-                <DetailLine label="D/E" value={num(r.debt_to_equity)} />
-              </div>
-
-              {techAvailable && r.price != null && (
-                <div>
-                  <div style={detailHead}>Trade Plan (swing)</div>
-                  <DetailLine label="Last price" value={`₹${r.price?.toLocaleString('en-IN')}`} />
-                  {r.plan_verdict ? (
-                    <>
-                      <DetailLine label="Verdict" value={r.plan_verdict} color={planVerdictStyle(r.plan_verdict).color} />
-                      {r.plan_setup_label && <DetailLine label="Setup" value={r.plan_setup_label} />}
-                      <DetailLine
-                        label="Entry zone"
-                        value={r.plan_entry_low != null ? `₹${r.plan_entry_low.toLocaleString('en-IN')} – ₹${r.plan_entry_high?.toLocaleString('en-IN')}` : '-'}
-                        color="#6366f1"
-                      />
-                      <DetailLine label="Stop (structure)" value={r.plan_stop != null ? `₹${r.plan_stop.toLocaleString('en-IN')}` : '-'} color="#ef4444" />
-                      <DetailLine label="Target T1" value={r.plan_t1 != null ? `₹${r.plan_t1.toLocaleString('en-IN')}` : '-'} color="#10b981" />
-                      <DetailLine label="Reward : Risk" value={r.plan_rr != null ? `${r.plan_rr} : 1` : '-'} />
-                    </>
-                  ) : (
-                    <>
-                      <DetailLine label="Stop (2 ATR)" value={r.stop != null ? `₹${r.stop.toLocaleString('en-IN')}` : '-'} color="#ef4444" />
-                      <DetailLine label="Target (3 ATR)" value={r.target != null ? `₹${r.target.toLocaleString('en-IN')}` : '-'} color="#10b981" />
-                    </>
-                  )}
-                  <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 6 }}>
-                    Open full research for the complete plan · not investment advice
-                  </div>
-                </div>
-              )}
-
-            </div>
-
-            {r.flags?.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ ...detailHead, color: '#ea580c' }}>Flags</div>
-                {r.flags.map((f, i) => (
-                  <div key={i} style={{ fontSize: 12, color: '#ea580c', marginBottom: 3 }}>! {f}</div>
-                ))}
-              </div>
-            )}
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-const detailHead = {
-  fontSize: 11, fontWeight: 700, color: '#6366f1',
-  textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6,
-};
-
-function DetailLine({ label, value, color }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, marginBottom: 3 }}>
-      <span style={{ color: '#64748b' }}>{label}</span>
-      <span style={{ color: color || '#0f172a', fontWeight: 500 }}>{value}</span>
+    <div
+      onClick={() => onSelect(r.symbol, r)}
+      style={{
+        display: 'flex', flexDirection: 'column', gap: 6,
+        padding: '9px 12px', cursor: 'pointer',
+        borderBottom: '1px solid var(--border)',
+        background: active ? 'linear-gradient(135deg, rgba(99,102,241,0.10), rgba(139,92,246,0.06))' : 'transparent',
+        borderLeft: active ? '3px solid #6366f1' : '3px solid transparent',
+        transition: 'background 0.15s ease',
+      }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--bg-hover)'; }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 11, color: '#94a3b8', width: 18 }}>{r.rank}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: active ? '#6366f1' : '#0f172a' }}>{r.symbol}</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: scoreColor(r.score), marginLeft: 'auto' }}>
+          {r.score != null ? r.score : '-'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{
+          padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 700,
+          background: vs.bg, color: vs.color, border: `1px solid ${vs.border}`, whiteSpace: 'nowrap',
+        }}>{r.verdict}</span>
+        {r.plan_verdict && (
+          <span title={r.plan_setup_label || ''} style={{
+            padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 700,
+            background: ps.bg, color: ps.color, border: `1px solid ${ps.border}`, whiteSpace: 'nowrap',
+          }}>Plan: {r.plan_verdict}</span>
+        )}
+        {r.flags?.length > 0 && (
+          <span title={r.flags.join('\n')} style={{ fontSize: 10, color: '#ea580c', marginLeft: 'auto' }}>
+            ⚑ {r.flags.length}
+          </span>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <MiniZ z={r.z_momentum} label="M" />
+        <MiniZ z={r.z_quality} label="Q" />
+        <MiniZ z={r.z_value} label="V" />
+      </div>
     </div>
   );
 }
 
-// ── main component ────────────────────────────────────────────────────────────
+// ── main master-panel component ───────────────────────────────────────────────
 
-const EXAMPLE = 'RELIANCE, TCS, INFY, HDFCBANK, TATAMOTORS, ITC, LT, SUNPHARMA';
+const EXAMPLE = 'RELIANCE, TCS, INFY, HDFCBANK, ITC, LT, SUNPHARMA';
 
-export default function Screener({ onSelectStock }) {
+export default function Screener({ onSelectStock, activeSymbol }) {
   const [input,      setInput]      = useState('');
   const [running,    setRunning]    = useState(false);
   const [logLines,   setLogLines]   = useState([]);
   const [progress,   setProgress]   = useState({ done: 0, total: 0 });
   const [results,    setResults]    = useState(null);
-  const [techAvail,  setTechAvail]  = useState(true);
   const [error,      setError]      = useState(null);
   const [resolving,  setResolving]  = useState(false);
-  const [resolution, setResolution] = useState(null);   // [{query, symbol|null}]
+  const [resolution, setResolution] = useState(null);
+  const [showInput,  setShowInput]  = useState(true);
 
   const esRef = useRef(null);
   const fileRef = useRef(null);
 
-  // Split into tokens: newlines/commas/semicolons always separate entries.
-  // A multi-word segment in ALL CAPS is treated as space-separated symbols
-  // (old behavior); anything with lowercase letters is a company name.
+  // Newlines/commas/semicolons separate entries; ALL-CAPS multi-word segments
+  // are space-separated symbols (old behavior); lowercase = company name.
   const parseTokens = (text) => {
     const out = [];
     for (const seg of text.split(/[,;\n\r\t]+/)) {
       const s = seg.trim().replace(/\s+/g, ' ');
       if (!s) continue;
       if (s.includes(' ') && /^[A-Z0-9.&\- ]+$/.test(s) && !/\b(LTD|LIMITED)\b/.test(s)) {
-        out.push(...s.split(' '));   // "RELIANCE TCS INFY" on one line
+        out.push(...s.split(' '));
       } else {
-        out.push(s);                 // symbol or company name
+        out.push(s);
       }
     }
     return [...new Set(out)];
   };
 
-  const parseSymbols = parseTokens;  // count display reuses the same tokens
-
   const handleFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      const syms = parseSymbols(String(reader.result));
-      setInput(syms.join(', '));
-    };
+    reader.onload = () => setInput(parseTokens(String(reader.result)).join('\n'));
     reader.readAsText(file);
     e.target.value = '';
   };
@@ -300,11 +166,9 @@ export default function Screener({ onSelectStock }) {
     if (running || resolving) return;
 
     setError(null);
-    setResults(null);
     setResolution(null);
     setLogLines([]);
 
-    // Resolve company names / validate symbols against the NSE directory
     let syms;
     setResolving(true);
     try {
@@ -316,7 +180,6 @@ export default function Screener({ onSelectStock }) {
         setError(`Could not resolve: ${unresolved.map(r => `"${r.query}"`).join(', ')} — screening the rest.`);
       }
     } catch {
-      // Resolution service down: fall back to treating tokens as raw symbols
       syms = tokens.filter(t => !t.includes(' ')).map(t => t.toUpperCase());
     } finally {
       setResolving(false);
@@ -327,6 +190,7 @@ export default function Screener({ onSelectStock }) {
       return;
     }
 
+    setResults(null);
     setProgress({ done: 0, total: syms.length });
     setRunning(true);
 
@@ -342,7 +206,7 @@ export default function Screener({ onSelectStock }) {
           if (m) setProgress({ done: parseInt(m[1], 10), total: parseInt(m[2], 10) });
         } else if (msg.type === 'result') {
           setResults(msg.data);
-          setTechAvail(msg.technicals_available);
+          setShowInput(false);   // collapse input to give the list room
         } else if (msg.type === 'done') {
           setRunning(false);
           es.close(); esRef.current = null;
@@ -351,7 +215,9 @@ export default function Screener({ onSelectStock }) {
           setRunning(false);
           es.close(); esRef.current = null;
         }
-      } catch (_) {}
+      } catch (err) {
+        console.error('[screener] bad SSE payload', err);
+      }
     };
 
     es.onerror = () => {
@@ -363,217 +229,131 @@ export default function Screener({ onSelectStock }) {
     };
   };
 
+  const busy = running || resolving;
+
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 8px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
 
-      <MarketRegime />
-
-      {/* header */}
-      <div style={{ marginBottom: 16 }}>
-        <h2 style={{ margin: '0 0 6px', fontSize: 22, color: '#0f172a' }}>
-          Swing Screener
-        </h2>
-        <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
-          Paste NSE symbols or full company names (names are auto-resolved to symbols).
-          Every stock gets Piotroski, Altman Z, Beneish M,
-          earnings yield, multi-horizon momentum, RSI, ATR volatility and trend - then all
-          are ranked against each other with winsorized z-score composites weighted for swing trading
-          (Momentum 35% · Quality 30% · Value 20% · Low-Risk 15%).
-        </p>
-      </div>
-
-      {/* input panel */}
+      {/* panel header */}
       <div style={{
-        background: 'var(--bg-card)', border: '1px solid var(--border)',
-        borderRadius: 14, padding: 16, marginBottom: 20,
+        padding: '14px 14px 10px', borderBottom: '1px solid var(--border)',
+        display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
       }}>
-        <textarea
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          placeholder={`NSE symbols or full company names (one name per line), e.g.\n${EXAMPLE}\nAegis Logistics Ltd\nWelspun Living Ltd`}
-          rows={3}
+        <span style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>📊 Master Screener</span>
+        {results && (
+          <span style={{ fontSize: 11, color: '#94a3b8' }}>{results.length} ranked</span>
+        )}
+        <button
+          onClick={() => setShowInput(s => !s)}
           style={{
-            width: '100%', boxSizing: 'border-box', resize: 'vertical',
-            background: 'var(--bg-inset)', color: '#0f172a',
-            border: '1px solid var(--border-strong)', borderRadius: 8,
-            padding: '10px 12px', fontSize: 13,
-            fontFamily: 'var(--font-mono)',
+            marginLeft: 'auto', background: 'none', border: '1px solid var(--border-strong)',
+            borderRadius: 6, fontSize: 11, color: '#64748b', cursor: 'pointer', padding: '3px 9px',
           }}
-        />
-        <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleRun}
-            disabled={running || resolving}
+        >{showInput ? 'Hide input' : 'New screen'}</button>
+      </div>
+
+      {/* input area (collapsible) */}
+      {showInput && (
+        <div style={{ padding: 12, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder={`NSE symbols or company names\n(one name per line), e.g.\n${EXAMPLE}`}
+            rows={3}
             style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: (running || resolving) ? 'not-allowed' : 'pointer',
-              background: (running || resolving) ? 'var(--bg-hover)' : 'linear-gradient(135deg, #2f6feb, #5b4ee9)',
-              border: (running || resolving) ? '1px solid var(--border-strong)' : '1px solid transparent',
-              boxShadow: (running || resolving) ? 'none' : '0 2px 12px rgba(47,111,235,0.4)',
-              color: (running || resolving) ? '#64748b' : '#fff',
+              width: '100%', boxSizing: 'border-box', resize: 'vertical',
+              background: 'var(--bg-inset)', color: '#0f172a',
+              border: '1px solid var(--border-strong)', borderRadius: 8,
+              padding: '8px 10px', fontSize: 12, fontFamily: 'var(--font-mono)',
             }}
-          >
-            {resolving
-              ? <><Spinner /> Resolving names...</>
-              : running
-                ? <><Spinner /> Screening {progress.done}/{progress.total}...</>
+          />
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={handleRun}
+              disabled={busy}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+                cursor: busy ? 'not-allowed' : 'pointer',
+                background: busy ? 'var(--bg-hover)' : 'linear-gradient(135deg, #2f6feb, #5b4ee9)',
+                border: busy ? '1px solid var(--border-strong)' : '1px solid transparent',
+                color: busy ? '#64748b' : '#fff',
+              }}
+            >
+              {resolving ? <><Spinner /> Resolving…</>
+                : running ? <><Spinner /> {progress.done}/{progress.total}…</>
                 : 'Run Screen'}
-          </button>
+            </button>
+            <button onClick={() => fileRef.current?.click()} disabled={busy}
+              style={{ padding: '6px 10px', borderRadius: 7, fontSize: 11, cursor: busy ? 'not-allowed' : 'pointer',
+                       background: 'var(--bg-hover)', border: '1px solid var(--border-strong)', color: '#64748b' }}>
+              Upload
+            </button>
+            <input ref={fileRef} type="file" accept=".txt,.csv" onChange={handleFile} style={{ display: 'none' }} />
+            <button onClick={() => setInput(EXAMPLE)} disabled={busy}
+              style={{ padding: '6px 10px', borderRadius: 7, fontSize: 11, cursor: 'pointer',
+                       background: 'none', border: '1px dashed var(--border-strong)', color: '#94a3b8' }}>
+              Example
+            </button>
+            <span style={{ fontSize: 10.5, color: '#94a3b8', marginLeft: 'auto' }}>
+              {parseTokens(input).length}/60
+            </span>
+          </div>
 
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={running || resolving}
-            style={{
-              padding: '8px 14px', borderRadius: 8, fontSize: 13,
-              cursor: running ? 'not-allowed' : 'pointer',
-              background: 'var(--bg-hover)', border: '1px solid var(--border-strong)', color: '#64748b',
-            }}
-          >
-            Upload .txt / .csv
-          </button>
-          <input ref={fileRef} type="file" accept=".txt,.csv" onChange={handleFile} style={{ display: 'none' }} />
-
-          <button
-            onClick={() => setInput(EXAMPLE)}
-            disabled={running}
-            style={{
-              padding: '8px 14px', borderRadius: 8, fontSize: 13,
-              cursor: 'pointer', background: 'none',
-              border: '1px dashed var(--border-strong)', color: '#94a3b8',
-            }}
-          >
-            Try example
-          </button>
-
-          <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>
-            {parseSymbols(input).length} symbols · max 60
-          </span>
-        </div>
-
-        {/* progress bar + last log line while running */}
-        {running && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+          {running && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{
+                  height: 5, borderRadius: 3, background: 'linear-gradient(90deg, #2f6feb, #a78bfa)',
+                  width: `${progress.total ? progress.done / progress.total * 100 : 0}%`,
+                  transition: 'width 0.3s',
+                }} />
+              </div>
               <div style={{
-                height: 6, borderRadius: 3, background: 'linear-gradient(90deg, #2f6feb, #a78bfa)',
-                width: `${progress.total ? progress.done / progress.total * 100 : 0}%`,
-                transition: 'width 0.3s',
-              }} />
+                marginTop: 6, fontSize: 10.5, color: '#64748b', fontFamily: 'var(--font-mono)',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                {logLines[logLines.length - 1] || 'Starting...'}
+              </div>
             </div>
-            <div style={{
-              marginTop: 8, fontSize: 12, color: '#64748b',
-              fontFamily: 'var(--font-mono)',
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>
-              {logLines[logLines.length - 1] || 'Starting...'}
+          )}
+
+          {error && <div style={{ marginTop: 8, fontSize: 11.5, color: '#ef4444' }}>{error}</div>}
+
+          {resolution && resolution.some(r => r.method !== 'symbol') && (
+            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 90, overflowY: 'auto' }}>
+              {resolution.map((r, i) => (
+                <span key={i} title={r.name || ''} style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 999,
+                  background: r.symbol ? 'var(--bg-inset)' : 'rgba(239,68,68,0.08)',
+                  border: `1px solid ${r.symbol ? 'var(--border)' : 'rgba(239,68,68,0.4)'}`,
+                  color: r.symbol ? '#64748b' : '#ef4444',
+                }}>
+                  {r.method === 'symbol'
+                    ? <strong style={{ color: '#0f172a' }}>{r.symbol}</strong>
+                    : r.symbol
+                      ? <>{r.query.slice(0, 22)} → <strong style={{ color: '#0f172a' }}>{r.symbol}</strong></>
+                      : <>{r.query.slice(0, 26)} ✗</>}
+                </span>
+              ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      )}
 
-        {error && (
-          <div style={{ marginTop: 10, fontSize: 13, color: '#ef4444' }}>
-            {error}
-          </div>
-        )}
-
-        {/* name → symbol resolution mapping */}
-        {resolution && resolution.some(r => r.method !== 'symbol') && (
-          <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {resolution.map((r, i) => (
-              <span key={i} style={{
-                fontSize: 11, padding: '3px 10px', borderRadius: 999,
-                background: r.symbol ? 'var(--bg-inset)' : 'rgba(239,68,68,0.08)',
-                border: `1px solid ${r.symbol ? 'var(--border)' : 'rgba(239,68,68,0.4)'}`,
-                color: r.symbol ? '#64748b' : '#ef4444',
-              }} title={r.name || ''}>
-                {r.method === 'symbol'
-                  ? <strong style={{ color: '#0f172a' }}>{r.symbol}</strong>
-                  : r.symbol
-                    ? <>{r.query} → <strong style={{ color: '#0f172a' }}>{r.symbol}</strong></>
-                    : <>{r.query} — not found</>}
-              </span>
-            ))}
+      {/* ranked list — its own scroll container so selection never resets scroll */}
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        {results?.map(r => (
+          <MasterRow key={r.symbol} r={r} active={r.symbol === activeSymbol} onSelect={onSelectStock} />
+        ))}
+        {!results && !running && (
+          <div style={{ padding: '36px 18px', textAlign: 'center', color: '#94a3b8', fontSize: 12, lineHeight: 1.7 }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+            Run a screen to rank stocks here.<br />
+            Click any result to open its full analysis →
           </div>
         )}
       </div>
-
-      {/* results */}
-      {results && (
-        <div style={{
-          background: 'var(--bg-card)', border: '1px solid var(--border)',
-          borderRadius: 14, overflow: 'hidden',
-        }}>
-          <div style={{
-            padding: '12px 16px', borderBottom: '1px solid var(--border)',
-            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-          }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>
-              {results.length} stocks ranked
-            </span>
-            {!techAvail && (
-              <span style={{ fontSize: 12, color: '#f59e0b' }}>
-                Kite not connected - ranked on fundamentals only (no momentum/technicals)
-              </span>
-            )}
-            <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>
-              Click a row for details · click a symbol to open full research
-            </span>
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-strong)' }}>
-                  {[
-                    { h: '#' },
-                    { h: 'Symbol' },
-                    { h: 'Score', tip: 'Composite rank score (0-100) vs the other stocks in your list: Momentum 35% + Quality 30% + Value 20% + Low-Risk 15%. 70+ = top of your list.' },
-                    { h: 'Verdict', tip: 'Overall call. Strong Candidate needs score 70+, an uptrend and Piotroski 6+. Manipulation or distress flags force Avoid regardless of score.' },
-                    { h: 'Plan', tip: 'Trade Decision Engine swing verdict: Buy (setup active, price in entry zone), Buy on Dip (wait for pullback to the entry band), Wait, or Avoid. Expand the row for entry/stop/target levels.' },
-                    { h: 'Momentum', tip: 'Price-strength z-score vs your list: 3M/6M returns, 12-1 momentum, 52-week-high proximity, risk-adjusted return. Positive = stronger than the group.' },
-                    { h: 'Quality', tip: 'Fundamental-strength z-score vs your list: Piotroski, Altman Z, ROE, ROCE. Positive = higher quality than the group.' },
-                    { h: 'Value', tip: 'Cheapness z-score vs your list: earnings yield, inverse P/E, inverse P/B, dividend yield. Positive = cheaper than the group.' },
-                    { h: '3M Ret', tip: 'Total price return over the last 3 months (63 trading days).' },
-                    { h: 'Trend', tip: 'Price vs 50 & 200-day moving averages. Strong Up = price > 50 DMA > 200 DMA. Swing trades work best with the trend.' },
-                    { h: 'Pio', tip: 'Piotroski F-Score (0-9): nine checks of improving fundamentals. 8-9 excellent, 6-7 good, below 4 weak.' },
-                    { h: 'Flags', tip: 'Hard warnings: Beneish manipulation risk, Altman distress zone, weak Piotroski, overbought RSI, or trading below the 200 DMA.' },
-                  ].map(({ h, tip }) => (
-                    <th key={h} title={tip} style={{
-                      padding: '10px 8px', textAlign: 'left', fontSize: 11,
-                      fontWeight: 600, color: '#64748b',
-                      textTransform: 'uppercase', letterSpacing: 0.5,
-                      cursor: tip ? 'help' : 'default',
-                      textDecoration: tip ? 'underline dotted rgba(100,116,139,0.5)' : 'none',
-                      textUnderlineOffset: 3,
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {results.map(r => (
-                  <ResultRow key={r.symbol} r={r} onSelectStock={onSelectStock} techAvailable={techAvail} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* empty state */}
-      {!results && !running && (
-        <div style={{
-          background: 'var(--bg-card)', border: '1px solid var(--border)',
-          borderRadius: 14, padding: '40px 24px', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: 36, marginBottom: 12 }}>📊</div>
-          <h3 style={{ color: '#0f172a', margin: '0 0 8px' }}>No screen run yet</h3>
-          <p style={{ color: '#64748b', margin: 0, fontSize: 13 }}>
-            Paste your stock list above and hit <strong style={{ color: '#0f172a' }}>Run Screen</strong>.
-            Takes ~2-4 seconds per stock.
-          </p>
-        </div>
-      )}
     </div>
   );
 }

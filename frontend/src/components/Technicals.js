@@ -1,6 +1,6 @@
 import React from 'react';
 import InfoTip from './InfoTip';
-import { METRIC_INFO } from '../metricInfo';
+import { METRIC_INFO, GLASS_METRICS } from '../metricInfo';
 import './Technicals.css';
 
 function PriceVsMA({ label, price, ma, info }) {
@@ -31,7 +31,14 @@ function RSIGauge({ rsi }) {
   return (
     <div className="rsi-wrap">
       <div className="rsi-header">
-        <span className="rsi-label">RSI (14)<InfoTip text={METRIC_INFO.rsi} /></span>
+        <span className="rsi-label" style={{ display: 'inline-flex', flexDirection: 'column' }}>
+          <span>RSI (Relative Strength Index)
+            <InfoTip text={GLASS_METRICS.rsi.tldr} math={GLASS_METRICS.rsi.math} width={290} />
+          </span>
+          <span style={{ fontSize: 10, fontWeight: 500, color: 'var(--text-muted)' }}>
+            {GLASS_METRICS.rsi.subtitle}
+          </span>
+        </span>
         <span className={`rsi-value rsi-${zone}`}>{rsi} — {label}</span>
       </div>
       <div className="rsi-bar-bg">
@@ -47,7 +54,7 @@ function RSIGauge({ rsi }) {
   );
 }
 
-export default function Technicals({ data, livePrice }) {
+export default function Technicals({ data, livePrice, dossier }) {
   if (!data || Object.keys(data).length === 0) {
     return (
       <div className="card">
@@ -85,6 +92,16 @@ export default function Technicals({ data, livePrice }) {
         <div className="tech-ma-section">
           <PriceVsMA label="50 DMA" price={price} ma={data.ma50} info={METRIC_INFO.ma50} />
           <PriceVsMA label="200 DMA" price={price} ma={data.ma200} info={METRIC_INFO.ma200} />
+          {dossier?.relative_strength?.beta != null && (
+            <div className="tech-ma-row">
+              <span className="tech-ma-label">Beta vs NIFTY<InfoTip text={METRIC_INFO.beta} /></span>
+              <span className="tech-ma-value">{dossier.relative_strength.beta}×</span>
+              <span className={`tech-ma-diff ${dossier.relative_strength.beta > 1.3 ? 'negative' : 'neutral'}`}>
+                {dossier.relative_strength.beta > 1.3 ? 'amplified' :
+                 dossier.relative_strength.beta < 0.8 ? 'defensive' : 'market-like'}
+              </span>
+            </div>
+          )}
         </div>
 
         <RSIGauge rsi={data.rsi} />

@@ -28,6 +28,49 @@ const HORIZONS = [
   { key: 'positional', label: 'Positional (weeks–months)' },
 ];
 
+async function copyValue(value, label) {
+  try {
+    await navigator.clipboard.writeText(String(value));
+    toast.success(`${label} copied: ${value}`, { duration: 1600 });
+  } catch {
+    toast.error('Clipboard unavailable');
+  }
+}
+
+/* Absolute price (click-to-copy) + GTT offset % chip vs the delayed close */
+function PriceWithOffset({ price, refPrice, label }) {
+  const offset = refPrice > 0 && price != null
+    ? ((price - refPrice) / refPrice * 100) : null;
+  const offsetStr = offset != null ? `${offset >= 0 ? '+' : ''}${offset.toFixed(2)}` : null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span
+        className="tp-level-price"
+        style={{ cursor: 'pointer' }}
+        title={`Click to copy ${label} price`}
+        onClick={() => price != null && copyValue(price, `${label} price`)}
+      >
+        {fmtINR(price)} <span style={{ fontSize: 11, opacity: 0.6 }}>📋</span>
+      </span>
+      {offsetStr != null && (
+        <span
+          onClick={() => copyValue(offsetStr, `${label} GTT offset %`)}
+          title={`GTT offset vs delayed close — click to copy ${offsetStr}%`}
+          style={{
+            fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+            cursor: 'pointer', border: '1px solid',
+            color: offset >= 0 ? '#10b981' : '#ef4444',
+            borderColor: offset >= 0 ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)',
+            background: offset >= 0 ? 'rgba(16,185,129,0.07)' : 'rgba(239,68,68,0.06)',
+          }}
+        >
+          GTT {offsetStr}%
+        </span>
+      )}
+    </div>
+  );
+}
+
 function paChips(pa) {
   if (!pa) return [];
   const chips = [];
@@ -265,7 +308,7 @@ export default function TradePlan({ data, loading, horizon, onHorizonChange, aiC
             </div>
             <div className="tp-level">
               <div className="tp-level-label" style={{ color: '#ef4444' }}>Stop Loss</div>
-              <div className="tp-level-price">{fmtINR(plan.stop?.price)}</div>
+              <PriceWithOffset price={plan.stop?.price} refPrice={data.price} label="Stop" />
               <div className="tp-level-basis">
                 {plan.stop?.rationale}
                 {plan.stop?.risk_pct != null && ` · risk ${plan.stop.risk_pct}% from entry`}
@@ -274,13 +317,17 @@ export default function TradePlan({ data, loading, horizon, onHorizonChange, aiC
             {plan.targets?.map(t => (
               <div className="tp-level" key={t.label}>
                 <div className="tp-level-label" style={{ color: '#10b981' }}>Target {t.label}</div>
-                <div className="tp-level-price">{fmtINR(t.price)}</div>
+                <PriceWithOffset price={t.price} refPrice={data.price} label={t.label} />
                 <div className="tp-level-basis">{t.basis}{t.rr != null && !/\dR\b/.test(t.basis) && ` · ${t.rr}R`}</div>
               </div>
             ))}
           </div>
 
           <div className="tp-stats-row">
+            {data.dossier?.case?.conviction != null && (
+              <span>Setup Strength <strong style={{ color: confColor(data.dossier.case.conviction) }}>
+                {data.dossier.case.conviction}/100</strong></span>
+            )}
             {plan.risk_reward != null && (
               <span>Risk : Reward <strong>1 : {plan.risk_reward}</strong></span>
             )}
@@ -295,6 +342,11 @@ export default function TradePlan({ data, loading, horizon, onHorizonChange, aiC
               <span>{plan.invalidation}</span>
             </div>
           )}
+
+          <div style={{ fontSize: 11, fontStyle: 'italic', color: 'var(--text-muted)', marginBottom: 12 }}>
+            *GTT offsets are computed against the delayed close ({fmtINR(data.price)}) —
+            verify live LTP on Kite before placing orders.
+          </div>
         </>
       ) : (
         <div className="tp-invalidation">

@@ -1,7 +1,25 @@
-import React from 'react';
+import React, { useState } from 'react';
 import InfoTip from './InfoTip';
-import { METRIC_INFO } from '../metricInfo';
+import { METRIC_INFO, GLASS_METRICS } from '../metricInfo';
 import './QuantScores.css';
+
+/* Dual-layer glass-box header: exact industry term + functional subtitle */
+function GlassTitle({ term, glass }) {
+  return (
+    <span className="qs-section-title" style={{ display: 'inline-flex', flexDirection: 'column', gap: 1 }}>
+      <span>
+        {term}
+        <InfoTip text={glass?.tldr} math={glass?.math} width={300} />
+      </span>
+      {glass?.subtitle && (
+        <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--text-muted)',
+                       textTransform: 'none', letterSpacing: 0.2 }}>
+          {glass.subtitle}
+        </span>
+      )}
+    </span>
+  );
+}
 
 /* ── Piotroski signal metadata ─────────────────────────────────────────────── */
 const SIGNAL_META = {
@@ -124,6 +142,7 @@ function QuantSkeleton() {
 
 /* ── main component ────────────────────────────────────────────────────────── */
 export default function QuantScores({ data, loading }) {
+  const [expandedSignal, setExpandedSignal] = useState(null);
   if (loading) return <QuantSkeleton />;
   if (!data)   return null;
 
@@ -148,7 +167,7 @@ export default function QuantScores({ data, loading }) {
       <div className="quant-section">
         <div className="qs-section-header">
           <div>
-            <span className="qs-section-title">Piotroski F-Score<InfoTip text={METRIC_INFO.piotroski} width={280} /></span>
+            <GlassTitle term="Piotroski F-Score" glass={GLASS_METRICS.piotroski} />
             <span className="qs-score" style={{ color: pioColor }}>
               {pio?.score ?? '—'}/9
             </span>
@@ -165,7 +184,9 @@ export default function QuantScores({ data, loading }) {
               <div
                 key={key}
                 className={`pio-cell ${pass ? 'pio-pass' : 'pio-fail'}`}
-                title={sig?.description || meta?.label}
+                onClick={() => setExpandedSignal(s => (s === key ? null : key))}
+                style={{ cursor: 'pointer' }}
+                title="Click for the data behind this signal"
               >
                 <span className="pio-icon">{pass ? '✓' : '✗'}</span>
                 <span className="pio-label">{meta?.label}</span>
@@ -179,6 +200,27 @@ export default function QuantScores({ data, loading }) {
             );
           })}
         </div>
+
+        {/* click-to-expand: the exact data behind the selected signal */}
+        {expandedSignal && pio?.signals?.[expandedSignal] && (
+          <div style={{
+            marginTop: 10, padding: '10px 14px', borderRadius: 8,
+            background: 'var(--bg-inset)', border: '1px solid var(--border)',
+            fontSize: 12, lineHeight: 1.6, color: 'var(--text-secondary)',
+          }}>
+            <strong style={{ color: pio.signals[expandedSignal].score === 1 ? '#10b981' : '#ef4444' }}>
+              {SIGNAL_META[expandedSignal]?.label} — {pio.signals[expandedSignal].score === 1 ? 'PASS' : 'FAIL'}
+            </strong>
+            <span style={{ color: 'var(--text-muted)' }}> ({SIGNAL_META[expandedSignal]?.group})</span>
+            <div>{pio.signals[expandedSignal].description}</div>
+            {pio.signals[expandedSignal].value != null && (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, marginTop: 3 }}>
+                Measured: {String(pio.signals[expandedSignal].value)}
+                {pio.signals[expandedSignal].unit ? ` ${pio.signals[expandedSignal].unit}` : ''}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Altman Z ── */}
@@ -186,7 +228,7 @@ export default function QuantScores({ data, loading }) {
         <div className="quant-section">
           <div className="qs-section-header">
             <div>
-              <span className="qs-section-title">Altman Z-Score<InfoTip text={METRIC_INFO.altman} width={280} /></span>
+              <GlassTitle term="Altman Z-Score" glass={GLASS_METRICS.altman} />
               <span className="qs-score" style={{
                 color: alt.zone === 'Safe' ? '#10b981' : alt.zone === 'Grey Zone' ? '#d97706' : '#ef4444',
               }}>
@@ -206,7 +248,7 @@ export default function QuantScores({ data, loading }) {
       {dup && (
         <div className="quant-section quant-section-last">
           <div className="qs-section-header">
-            <span className="qs-section-title">DuPont Decomposition<InfoTip text={METRIC_INFO.dupont} width={280} /></span>
+            <GlassTitle term="DuPont Decomposition" glass={GLASS_METRICS.dupont} />
           </div>
 
           {/* Formula display */}

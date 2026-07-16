@@ -18,7 +18,41 @@ function Delta({ current, prev }) {
   return <span className={`delta ${cls}`}>{arrow} {Math.abs(diff).toFixed(2)}%</span>;
 }
 
-export default function Shareholding({ data }) {
+/* Insider / substantial-acquisition disclosures fished out of BSE filings */
+const DEAL_KEYWORDS = /sast|insider|acquisition of shares|disposal of shares|pledge|invocation|promoter group|bulk deal|block deal/i;
+
+function InstitutionalFootprint({ announcements }) {
+  const deals = (announcements || [])
+    .filter(a => DEAL_KEYWORDS.test(a.headline || ''))
+    .slice(0, 8);
+
+  return (
+    <div className="sh-footprint">
+      <div className="sh-footprint-title">Institutional Footprint</div>
+      {deals.length > 0 ? (
+        <div className="sh-deals">
+          {deals.map((d, i) => (
+            <a key={i} href={d.url || d.link || undefined} target="_blank" rel="noreferrer"
+               className="sh-deal-row" title={d.headline}>
+              <span className="sh-deal-date">{(d.date || '').slice(0, 10)}</span>
+              <span className="sh-deal-text">{d.headline}</span>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <div className="sh-footprint-empty">
+          No insider / SAST / block-deal disclosures in recent BSE filings.
+        </div>
+      )}
+      <div className="sh-footprint-note">
+        Named fund-level holders (top MF/FII stakes) need exchange shareholding
+        disclosures — not available from current data sources.
+      </div>
+    </div>
+  );
+}
+
+export default function Shareholding({ data, announcements }) {
   if (!data || Object.keys(data).length === 0) {
     return (
       <div className="card">
@@ -26,6 +60,7 @@ export default function Shareholding({ data }) {
         <div className="card-body" style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0' }}>
           No shareholding data available
         </div>
+        <InstitutionalFootprint announcements={announcements} />
       </div>
     );
   }
@@ -106,7 +141,14 @@ export default function Shareholding({ data }) {
           {pledgePct != null && (
             <div className="sh-pledge-row">
               <span className="pledge-icon">⚠️</span>
-              <span className="sh-label">Promoter Pledge</span>
+              <span className="sh-label">
+                Promoter Pledged Shares
+                {data.promoter != null && (
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block' }}>
+                    of {Number(data.promoter).toFixed(1)}% promoter holding
+                  </span>
+                )}
+              </span>
               <span className={`sh-value ${pledgePct > 5 ? 'negative' : ''}`}>
                 {Number(pledgePct).toFixed(2)}%
               </span>
@@ -114,6 +156,8 @@ export default function Shareholding({ data }) {
           )}
         </div>
       </div>
+
+      <InstitutionalFootprint announcements={announcements} />
     </div>
   );
 }

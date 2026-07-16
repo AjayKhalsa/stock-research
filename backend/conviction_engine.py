@@ -304,9 +304,9 @@ def _ret(closes: list, lookback: int) -> Optional[float]:
 
 
 def relative_strength(candles: list, index_candles: list) -> dict:
-    """Excess returns vs the index over 1M/3M/6M + RS-line new-high flag."""
+    """Excess returns vs the index over 1M/3M/6M, beta, + RS-line new-high flag."""
     out = {"excess_1m": None, "excess_3m": None, "excess_6m": None,
-           "rs_line_new_high": None, "label": "Index data unavailable"}
+           "beta": None, "rs_line_new_high": None, "label": "Index data unavailable"}
     if not candles or not index_candles or len(index_candles) < 30:
         return out
     sc = [c["close"] for c in candles]
@@ -315,6 +315,25 @@ def relative_strength(candles: list, index_candles: list) -> dict:
         sr, ir = _ret(sc, lb), _ret(ic, lb)
         if sr is not None and ir is not None:
             out[key] = round(sr - ir, 4)
+
+    # Beta vs the index: cov(stock, index) / var(index) on date-aligned daily
+    # returns over the trailing ~1 year
+    idx_by_date = {c["date"]: c["close"] for c in index_candles}
+    pairs = [(c["close"], idx_by_date[c["date"]])
+             for c in candles if c["date"] in idx_by_date][-253:]
+    if len(pairs) >= 60:
+        s_ret = [pairs[i][0] / pairs[i - 1][0] - 1 for i in range(1, len(pairs))
+                 if pairs[i - 1][0]]
+        i_ret = [pairs[i][1] / pairs[i - 1][1] - 1 for i in range(1, len(pairs))
+                 if pairs[i - 1][1]]
+        n = min(len(s_ret), len(i_ret))
+        if n >= 60:
+            s_ret, i_ret = s_ret[-n:], i_ret[-n:]
+            ms, mi = sum(s_ret) / n, sum(i_ret) / n
+            cov = sum((s_ret[k] - ms) * (i_ret[k] - mi) for k in range(n)) / (n - 1)
+            var = sum((r - mi) ** 2 for r in i_ret) / (n - 1)
+            if var > 0:
+                out["beta"] = round(cov / var, 2)
 
     # RS line = stock/index ratio on the overlapping window (by date)
     idx_by_date = {c["date"]: c["close"] for c in index_candles}

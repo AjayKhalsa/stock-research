@@ -120,8 +120,11 @@ async def fetch_screener(symbol: str) -> dict:
                 r = await c.get(url, headers=SCRAPE_HEADERS)
                 if r.status_code == 200:
                     return parse_screener(r.text)
+                # 429 = rate-limited, 403 = blocked — say so explicitly
+                print(f"[screener] HTTP {r.status_code} from {url}"
+                      + (" — RATE LIMITED" if r.status_code == 429 else ""))
         except Exception as e:
-            print(f"[screener] {e}")
+            print(f"[screener] {type(e).__name__}: {e} ({url})")
     return {}
 
 
@@ -654,8 +657,10 @@ async def fetch_screener_full(symbol: str) -> dict:
                 base   = parse_screener(r.text)
                 annual = parse_screener_annual(r.text)
                 return {**base, **annual}
+            print(f"[screener_full] HTTP {r.status_code} from {url}"
+                  + (" — RATE LIMITED" if r.status_code == 429 else ""))
         except Exception as e:
-            print(f"[screener_full] {e}")
+            print(f"[screener_full] {type(e).__name__}: {e} ({url})")
     return {}
 
 

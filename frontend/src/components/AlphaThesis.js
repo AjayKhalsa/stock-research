@@ -119,8 +119,16 @@ export default function AlphaThesis({ data, loading }) {
       </div>
 
       {hasError ? (
-        <div className="card-body alpha-error">
-          <span>⚠️ {error}</span>
+        <div className="card-body" style={{ textAlign: 'center', padding: '36px 24px' }}>
+          <div style={{ fontSize: 30, marginBottom: 10 }}>🤖💤</div>
+          <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
+            AI Analysis temporarily unavailable
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 380, margin: '0 auto' }}>
+            {String(error).includes('429') || String(error).toLowerCase().includes('rate')
+              ? 'The Gemini API is rate-limited right now. Please try again in a moment — the quantitative analysis above is unaffected.'
+              : 'Please try again in a moment. The quantitative analysis above is unaffected.'}
+          </div>
         </div>
       ) : (
         <div className="alpha-body">

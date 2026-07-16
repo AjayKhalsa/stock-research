@@ -143,6 +143,20 @@ function PriceChart({ history, levels }) {
           {first != null && (
             <ReferenceLine y={first} stroke="var(--text-muted)" strokeDasharray="4 6" strokeOpacity={0.5} />
           )}
+          {/* Target channel: entry baseline up to the last target (light green) */}
+          {entry?.low != null && targets.length > 0 && targets[targets.length - 1].price != null && (
+            <ReferenceArea
+              y1={(entry.low + entry.high) / 2} y2={targets[targets.length - 1].price}
+              fill="rgba(16,185,129,0.07)" stroke="none"
+            />
+          )}
+          {/* Risk channel: entry baseline down to the hard stop (light red) */}
+          {entry?.low != null && stop?.price != null && (
+            <ReferenceArea
+              y1={stop.price} y2={(entry.low + entry.high) / 2}
+              fill="rgba(239,68,68,0.07)" stroke="none"
+            />
+          )}
           {entry?.low != null && entry?.high != null && (
             <ReferenceArea
               y1={entry.low} y2={entry.high}
@@ -186,7 +200,44 @@ function PriceChart({ history, levels }) {
   );
 }
 
-export default function OverviewCard({ data, planLevels }) {
+function convictionColor(s) {
+  if (s == null) return '#94a3b8';
+  if (s >= 70) return '#10b981';
+  if (s >= 50) return '#6366f1';
+  if (s >= 30) return '#f59e0b';
+  return '#ef4444';
+}
+
+/* Dual-conviction chips: two explicit lenses instead of one ambiguous rating */
+function DualConviction({ synthesis }) {
+  if (!synthesis?.lenses) return null;
+  const trade = synthesis.lenses.find(l => l.key === 'trade');
+  const biz = synthesis.lenses.find(l => l.key === 'business');
+  if (!trade && !biz) return null;
+  const chip = (label, score, tip) => (
+    <span title={tip} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      fontSize: 11.5, fontWeight: 700, padding: '4px 12px', borderRadius: 999,
+      background: 'var(--bg-inset)', border: '1px solid var(--border)',
+      color: 'var(--text-secondary)', whiteSpace: 'nowrap',
+    }}>
+      {label}
+      <strong style={{ color: convictionColor(score), fontSize: 13 }}>
+        {score != null ? `${score}/100` : '—'}
+      </strong>
+    </span>
+  );
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+      {chip('Technical Trend Setup Strength', trade?.score,
+            'Structural price velocity, setup quality, base rates, relative strength — the days-to-weeks lens')}
+      {chip('Fundamental Corporate Health', biz?.score,
+            'Piotroski, Altman Z, ROE composite — the quarters-to-years lens')}
+    </div>
+  );
+}
+
+export default function OverviewCard({ data, planLevels, synthesis }) {
   const [adding, setAdding] = useState(false);
 
   const handleAddWatchlist = async () => {
@@ -241,7 +292,16 @@ export default function OverviewCard({ data, planLevels }) {
             {data.day_change >= 0 ? '▲' : '▼'} ₹{Math.abs(data.day_change).toFixed(2)} ({fmtPct(data.day_change_pct)})
           </div>
         )}
+        <span style={{
+          fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+          background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)',
+          color: '#b45309', whiteSpace: 'nowrap', alignSelf: 'center',
+        }} title="Quotes come from Yahoo Finance and lag the exchange by ~15 minutes. Verify live LTP on your broker before acting.">
+          ⚠️ Delayed Data: Yahoo Finance (~15m lag)
+        </span>
       </div>
+
+      <DualConviction synthesis={synthesis} />
 
       {data.price_history?.length > 4 && <PriceChart history={data.price_history} levels={planLevels} />}
 
