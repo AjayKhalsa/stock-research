@@ -156,7 +156,7 @@ async def build_plan_payload(symbol: str, exchange: str = "NSE"):
     (screener_data, fund_meta), hist_data, nifty = await asyncio.gather(
         data_cache.get_fundamentals(symbol, exchange),
         price.get_historical(instrument, days=1250),   # ~5y for base rates
-        price.get_index_historical("^NSEI", days=400),
+        price.get_index_historical("^NSEI", days=1600)   # covers the 5y base-rate window + MA200 warmup,
     )
 
     quant = quant_engine.compute_all(screener_data) if screener_data else None
@@ -202,7 +202,7 @@ async def build_alpha_payload(symbol: str, exchange: str = "NSE"):
         price.get_historical(instrument, days=1250),
         price.get_ohlc(instrument),
         qualitative_engine.get_bse_announcements(symbol),
-        price.get_index_historical("^NSEI", days=400),
+        price.get_index_historical("^NSEI", days=1600)   # covers the 5y base-rate window + MA200 warmup,
     )
 
     company_name = screener_data.get("company_name", symbol)

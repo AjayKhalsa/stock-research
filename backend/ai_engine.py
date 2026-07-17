@@ -31,17 +31,31 @@ def _gemini_url() -> str:
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = """\
-You are an elite quantitative equity analyst with 20 years of experience in \
-Indian capital markets (NSE / BSE). You combine rigorous fundamental analysis, \
-quantitative factor models, and keen awareness of Indian regulatory, macro, \
-and sectoral dynamics.
+You are the DEVIL'S ADVOCATE on an Indian-equities investment committee — an \
+aggressive risk officer with 20 years in NSE/BSE markets whose only job is to \
+attack the bull thesis before real money is committed. The quantitative engine \
+has already made its case; you exist to find the holes in it.
 
-Your analysis is contrarian when the data warrants it, brutally honest about \
-hidden risks, and always grounded in numbers rather than narratives.
+HARD RULES:
+1. You must NOT calculate, derive, or estimate ANY number, ratio, or level. \
+Every figure you cite must appear VERBATIM in the data provided to you. If a \
+number you want is not provided, say what is missing instead of computing it.
+2. Argue from the provided evidence only: the engine's quantitative metrics, \
+the computed trade plans, the BSE filings and news headlines. No outside \
+facts, no invented events, no guessed valuations.
+3. Attack quality over quantity: each bear point must name the specific \
+metric or filing it rests on. Generic risks ("markets are volatile") are \
+worthless and forbidden.
+4. You may concede: if the evidence stack is genuinely strong, say so and \
+score conviction accordingly — a devil's advocate who cries wolf on \
+everything is as useless as a cheerleader.
 
-You surface non-obvious risks that consensus sell-side analysts miss — \
-promoter behaviour, off-balance-sheet exposures, working-capital traps, \
-sector-specific landmines.
+Where you hunt: promoter behaviour (pledge, stake changes in filings), \
+working-capital and accrual deterioration in the provided Piotroski/Beneish \
+components, leverage vs the Altman inputs, valuation vs the provided \
+multiples, regime/tape risk vs the provided market-regime block, base-rate \
+sample weakness (small n, wide confidence intervals), and any filing that \
+smells of dilution, related-party dealing, or regulatory trouble.
 
 You output ONLY valid JSON — no markdown fences, no prose outside the JSON \
 object. Every field in the schema must be present.\
@@ -211,34 +225,47 @@ def _build_prompt(
 {json.dumps(plans_block, indent=2) if plans_block else "unavailable"}
 
 === INSTRUCTIONS ===
-1. Synthesise ALL layers above into a comprehensive, data-driven investment thesis.
-2. Be brutally honest — surface risks the numbers hide (channel stuffing, \
-working-capital deterioration, promoter behaviour, sector headwinds, valuation traps).
-3. Consider Indian regulatory context (SEBI rules, GST, RBI policy) \
-and sectoral dynamics where relevant.
-4. Confidence interval: flag if data is too thin for high conviction.
+You are the devil's advocate. The quantitative engine above has made the bull
+case; your job is to attack it using ONLY the numbers and filings provided.
+1. Do NOT compute or estimate any figure — cite provided values verbatim.
+2. Build the BEAR CASE LEDGER: 3–6 specific attacks, each anchored to a named
+   metric, filing, or headline from the data above, each with a severity and
+   the concrete evidence that would refute it.
+3. Steel-man the bull case in one short paragraph (restate the engine's
+   strongest provided evidence — add nothing of your own).
+4. Concede honestly: if the evidence stack survives your attacks, score it up.
+5. Indian context matters where the DATA shows it (pledge %, SEBI-related
+   filings, dilution announcements) — never speculate beyond the filings.
 
 Return EXACTLY this JSON object (no markdown, no extra keys):
 {{
-  "conviction_score": <integer 1–100; 1=strong sell, 50=neutral, 100=strong buy>,
+  "conviction_score": <integer 1–100 AFTER your attacks; 1=thesis destroyed, 50=survives with damage, 100=bulletproof>,
   "conviction_label": "<Strong Buy|Buy|Neutral|Sell|Strong Sell>",
-  "thesis_summary": "<3 sentences: current situation | bull case | bear case>",
-  "bull_case": "<2–3 specific, data-backed reasons to be long>",
-  "bear_case": "<2–3 specific, data-backed reasons to be short or avoid>",
+  "thesis_summary": "<3 sentences: the engine's case | your strongest attack | what survives>",
+  "bull_case": "<steel-man: the engine's strongest provided evidence, restated faithfully — no new claims>",
+  "bear_case": "<1-sentence headline of your single strongest attack>",
+  "bear_case_ledger": [
+    {{
+      "attack": "<one-sentence specific attack on the thesis>",
+      "evidence": "<the exact provided metric/filing/headline this rests on, quoted verbatim>",
+      "severity": <integer 1–10; 10 = thesis-killing>,
+      "rebuttal_condition": "<the specific provided-data change that would neutralise this attack>"
+    }}
+  ],
   "red_flags": [
-    "<concrete hidden warning sign 1>",
-    "<concrete hidden warning sign 2>",
-    "<concrete hidden warning sign 3>"
+    "<concrete warning sign visible in the PROVIDED data 1>",
+    "<concrete warning sign 2>",
+    "<concrete warning sign 3>"
   ],
   "key_catalysts": [
-    "<specific future event to watch — include timeline if inferrable>",
-    "<specific future event 2>",
-    "<specific future event 3>"
+    "<specific event visible in the provided filings/headlines to watch>",
+    "<event 2>",
+    "<event 3>"
   ],
-  "valuation_view": "<cheap | fair | expensive vs historical/peers — 1–2 sentences>",
-  "risk_reward": "<asymmetric upside vs downside assessment — 1 sentence>",
+  "valuation_view": "<expensive/fair/cheap judged ONLY from the provided multiples — 1–2 sentences, cite them>",
+  "risk_reward": "<1 sentence weighing the provided plan's R:R against your attacks>",
   "suggested_action": "<Buy on dips | Accumulate | Hold | Reduce | Avoid — with a specific condition>",
-  "plan_commentary": "<1-2 sentences: do you agree or disagree with the computed trade plans and evidence stack above (base rates, regime, relative strength)? Cite the single strongest piece of evidence for or against. If plans are unavailable, say so.>",
+  "plan_commentary": "<1-2 sentences: does the computed plan survive your attacks? Cite the single strongest piece of provided evidence for or against.>",
   "data_confidence": "<high|medium|low — based on completeness of data provided>"
 }}"""
 
@@ -264,6 +291,7 @@ def _no_key_response() -> dict:
         "risk_reward":      None,
         "suggested_action": None,
         "plan_commentary":  None,
+        "bear_case_ledger": [],
         "data_confidence":  "n/a",
     }
 
@@ -389,7 +417,24 @@ async def generate_alpha_thesis(
         thesis.setdefault("risk_reward",       "")
         thesis.setdefault("suggested_action",  "Hold")
         thesis.setdefault("plan_commentary",   "")
+        thesis.setdefault("bear_case_ledger",  [])
         thesis.setdefault("data_confidence",   "medium")
+
+        # Sanitise the bear-case ledger: list of dicts, severity clamped 1-10
+        if not isinstance(thesis["bear_case_ledger"], list):
+            thesis["bear_case_ledger"] = []
+        clean_ledger = []
+        for item in thesis["bear_case_ledger"][:8]:
+            if not isinstance(item, dict):
+                continue
+            sev = item.get("severity")
+            clean_ledger.append({
+                "attack": str(item.get("attack", ""))[:300],
+                "evidence": str(item.get("evidence", ""))[:300],
+                "severity": max(1, min(10, int(sev))) if isinstance(sev, (int, float)) else 5,
+                "rebuttal_condition": str(item.get("rebuttal_condition", ""))[:300],
+            })
+        thesis["bear_case_ledger"] = clean_ledger
 
         # Clamp conviction score
         if isinstance(thesis.get("conviction_score"), (int, float)):
