@@ -383,6 +383,7 @@ def _plan_summary(plans: dict) -> dict:
     targets = sw.get("targets") or []
     return {
         "plan_verdict":     sw.get("verdict"),
+        "plan_setup":       sw.get("setup"),        # raw key for UI chips
         "plan_setup_label": sw.get("setup_label"),
         "plan_entry_low":   entry.get("low"),
         "plan_entry_high":  entry.get("high"),

@@ -1,7 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { API_BASE, resolveSymbols } from '../api';
 
 const STREAM_URL = `${API_BASE}/api/screen-stream`;
+const ROW_HEIGHT = 86;          // fixed height enables list windowing
+const VIRTUALIZE_ABOVE = 30;    // plain render below this count
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -13,18 +15,62 @@ function scoreColor(score) {
   return '#ef4444';
 }
 
-function verdictStyle(verdict = '') {
-  if (verdict === 'Strong Candidate') return { bg: 'rgba(16,185,129,0.12)', color: '#10b981', border: '#10b981' };
-  if (verdict === 'Buy Watch')        return { bg: 'rgba(99,102,241,0.10)', color: '#6366f1', border: '#6366f1' };
-  if (verdict === 'Neutral')          return { bg: 'rgba(245,158,11,0.14)', color: '#f59e0b', border: '#f59e0b' };
-  return { bg: 'rgba(239,68,68,0.10)', color: '#ef4444', border: '#ef4444' };
+const TONE = {
+  strong:  { bg: 'rgba(16,185,129,0.12)', color: '#059669', border: 'rgba(16,185,129,0.5)' },
+  weak:    { bg: 'rgba(239,68,68,0.10)',  color: '#dc2626', border: 'rgba(239,68,68,0.5)' },
+  neutral: { bg: 'var(--bg-inset)',       color: '#64748b', border: 'var(--border-strong)' },
+  indigo:  { bg: 'rgba(99,102,241,0.10)', color: '#4f46e5', border: 'rgba(99,102,241,0.5)' },
+};
+
+// Fundamental lens: business quality, independent of the chart.
+function fundamentalState(r) {
+  const pio = r.piotroski_score;
+  const zq = r.z_quality;
+  const distress = r.altman_zone === 'Distress';
+  if (r.data_completeness === 'price_only' || (pio == null && zq == null)) {
+    return { label: 'Fund: N/A', tone: 'neutral',
+             tip: 'No fundamental data available for this stock' };
+  }
+  if (distress || (pio != null && pio <= 3) || (zq != null && zq <= -0.6)) {
+    return { label: 'Fund: Weak', tone: 'weak',
+             tip: 'Weak business quality (Piotroski / Altman / relative quality)' };
+  }
+  if ((pio != null && pio >= 7) || (zq != null && zq >= 0.6)) {
+    return { label: 'Fund: Strong', tone: 'strong',
+             tip: 'Strong business quality (Piotroski / Altman / relative quality)' };
+  }
+  return { label: 'Fund: Neutral', tone: 'neutral',
+           tip: 'Average business quality' };
 }
 
-function planVerdictStyle(verdict = '') {
-  if (verdict === 'Buy')        return { bg: 'rgba(16,185,129,0.12)', color: '#10b981', border: '#10b981' };
-  if (verdict === 'Buy on Dip') return { bg: 'rgba(99,102,241,0.10)', color: '#6366f1', border: '#6366f1' };
-  if (verdict === 'Wait')       return { bg: 'rgba(245,158,11,0.14)', color: '#f59e0b', border: '#f59e0b' };
-  return { bg: 'rgba(239,68,68,0.10)', color: '#ef4444', border: '#ef4444' };
+// Technical lens: chart posture, independent of the fundamentals.
+function technicalState(r) {
+  const setup = r.plan_setup;
+  const trend = r.trend_score;
+  if (trend != null && trend < 0) {
+    return { label: 'Chart: Breakdown', tone: 'weak', kind: 'breakdown',
+             tip: 'Price below the 200-DMA / downtrend structure' };
+  }
+  if (setup === 'breakout') {
+    return { label: 'Chart: Breakout', tone: 'strong', kind: 'breakout',
+             tip: 'Breaking out of resistance / 52-week-high structure' };
+  }
+  if (setup === 'pullback') {
+    return { label: 'Chart: Pullback', tone: 'indigo', kind: 'pullback',
+             tip: 'Pulling back to support within an uptrend' };
+  }
+  if (setup === 'trend_continuation') {
+    return { label: 'Chart: Uptrend', tone: 'strong', kind: 'uptrend',
+             tip: 'Established uptrend continuation' };
+  }
+  return { label: 'Chart: Range', tone: 'neutral', kind: 'range',
+           tip: 'No actionable chart setup' };
+}
+
+// The two lenses can disagree without either being wrong. Flag the specific
+// dissonance where positive price action runs against weak fundamentals.
+function isSpeculative(fund, tech) {
+  return fund.tone === 'weak' && (tech.kind === 'breakout' || tech.kind === 'pullback');
 }
 
 function Spinner({ color = '#f59e0b', size = 14 }) {
@@ -39,77 +85,190 @@ function Spinner({ color = '#f59e0b', size = 14 }) {
   );
 }
 
-/* Tiny centered z-score bar for the compact master rows */
-function MiniZ({ z, label }) {
+function WarnTriangle({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 1.5 L15 14 H1 Z" fill="none" stroke="#d97706" strokeWidth="1.4"
+        strokeLinejoin="round" />
+      <rect x="7.3" y="6" width="1.4" height="4" rx="0.7" fill="#d97706" />
+      <circle cx="8" cy="11.6" r="0.9" fill="#d97706" />
+    </svg>
+  );
+}
+
+/* Lightweight styled hover tooltip. Renders above the trigger, within row
+   bounds, so it is not clipped by the scrolling panel. */
+function HoverTip({ text, children }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-flex' }}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      {children}
+      {show && (
+        <span style={{
+          position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%',
+          transform: 'translateX(-50%)', width: 190, zIndex: 60,
+          background: '#0f172a', color: '#f1f5f9', fontSize: 10.5, lineHeight: 1.45,
+          fontWeight: 500, padding: '6px 9px', borderRadius: 7,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.28)', pointerEvents: 'none',
+          whiteSpace: 'normal', textAlign: 'left',
+        }}>
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function Chip({ state }) {
+  const t = TONE[state.tone] || TONE.neutral;
+  return (
+    <span title={state.tip} style={{
+      padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 700,
+      background: t.bg, color: t.color, border: `1px solid ${t.border}`,
+      whiteSpace: 'nowrap',
+    }}>{state.label}</span>
+  );
+}
+
+/* Centered z-score micro-bar with its factor-definition tooltip. */
+function FactorBar({ z, label, tip }) {
   const clamped = z == null ? 0 : Math.max(-2.5, Math.min(2.5, z));
   const pctW = Math.abs(clamped) / 2.5 * 50;
   const pos = clamped >= 0;
   return (
-    <div title={`${label}: ${z == null ? '-' : (z > 0 ? '+' : '') + z.toFixed(2)}`}
-         style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-      <span style={{ fontSize: 9, color: '#94a3b8', width: 10 }}>{label}</span>
-      <div style={{ position: 'relative', width: 44, height: 5, background: 'var(--border)', borderRadius: 3 }}>
-        {z != null && (
-          <div style={{
-            position: 'absolute', top: 0, height: 5, borderRadius: 3,
-            left: pos ? '50%' : `${50 - pctW}%`, width: `${pctW}%`,
-            background: pos ? '#10b981' : '#ef4444',
-          }} />
+    <HoverTip text={tip}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'default' }}>
+        <span style={{ fontSize: 9, color: '#94a3b8', width: 10 }}>{label}</span>
+        <span style={{ position: 'relative', width: 42, height: 5, background: 'var(--border)', borderRadius: 3, display: 'inline-block' }}>
+          {z != null && (
+            <span style={{
+              position: 'absolute', top: 0, height: 5, borderRadius: 3,
+              left: pos ? '50%' : `${50 - pctW}%`, width: `${pctW}%`,
+              background: pos ? '#10b981' : '#ef4444',
+            }} />
+          )}
+          <span style={{ position: 'absolute', left: '50%', top: -1, width: 1, height: 7, background: '#cbd5e1' }} />
+        </span>
+      </span>
+    </HoverTip>
+  );
+}
+
+const FACTOR_TIPS = {
+  M: 'Momentum (Cross-sectional relative strength)',
+  Q: 'Quality (Piotroski & Altman health scores)',
+  V: 'Value (Earnings yield & valuation)',
+};
+
+// ── compact master row (fixed height for windowing) ───────────────────────────
+
+function MasterRow({ r, active, onSelect, style }) {
+  const fund = fundamentalState(r);
+  const tech = technicalState(r);
+  const speculative = isSpeculative(fund, tech);
+
+  return (
+    <div
+      onClick={() => onSelect(r.symbol, r)}
+      style={{
+        ...style,
+        boxSizing: 'border-box', height: ROW_HEIGHT,
+        display: 'flex', flexDirection: 'column', gap: 5,
+        padding: '9px 12px', cursor: 'pointer',
+        borderBottom: '1px solid var(--border)',
+        background: active ? 'linear-gradient(135deg, rgba(99,102,241,0.10), rgba(139,92,246,0.06))' : 'transparent',
+        borderLeft: active ? '3px solid #6366f1'
+          : speculative ? '3px solid #d97706' : '3px solid transparent',
+        transition: 'background 0.15s ease',
+      }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--bg-hover)'; }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.background = active ? '' : 'transparent'; }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 11, color: '#94a3b8', width: 18 }}>{r.rank ?? '·'}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: active ? '#6366f1' : '#0f172a' }}>{r.symbol}</span>
+        {r.partial_data && (
+          <span title="Partial data - fundamentals unavailable, ranked on price action only"
+                style={{ fontSize: 8.5, fontWeight: 700, color: '#b45309',
+                         background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.4)',
+                         borderRadius: 4, padding: '0 4px' }}>PARTIAL</span>
         )}
-        <div style={{ position: 'absolute', left: '50%', top: -1, width: 1, height: 7, background: '#cbd5e1' }} />
+        <span style={{ fontSize: 15, fontWeight: 700, color: scoreColor(r.score), marginLeft: 'auto' }}>
+          {r.score != null ? r.score : '·'}
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Chip state={fund} />
+        <Chip state={tech} />
+        {speculative && (
+          <span title="Speculative Setup: Positive price action against weak fundamentals."
+                style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 'auto' }}>
+            <WarnTriangle />
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <FactorBar z={r.z_momentum} label="M" tip={FACTOR_TIPS.M} />
+        <FactorBar z={r.z_quality}  label="Q" tip={FACTOR_TIPS.Q} />
+        <FactorBar z={r.z_value}    label="V" tip={FACTOR_TIPS.V} />
       </div>
     </div>
   );
 }
 
-// ── compact master row ────────────────────────────────────────────────────────
+// ── windowing: render only visible rows so 400+ rows never crash the DOM ──────
 
-function MasterRow({ r, active, onSelect }) {
-  const vs = verdictStyle(r.verdict);
-  const ps = planVerdictStyle(r.plan_verdict);
+function useWindowing(rowCount, rowHeight, overscan = 6) {
+  const ref = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [height, setHeight] = useState(0);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => setHeight(el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const onScroll = () => setScrollTop(ref.current?.scrollTop || 0);
+  const viewport = height || 600;
+  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const end = Math.min(rowCount, Math.ceil((scrollTop + viewport) / rowHeight) + overscan);
+  return { ref, onScroll, start, end, totalHeight: rowCount * rowHeight };
+}
+
+function VirtualList({ rows, activeSymbol, onSelect }) {
+  const { ref, onScroll, start, end, totalHeight } = useWindowing(rows.length, ROW_HEIGHT);
+  const small = rows.length <= VIRTUALIZE_ABOVE;
+
   return (
-    <div
-      onClick={() => onSelect(r.symbol, r)}
-      style={{
-        display: 'flex', flexDirection: 'column', gap: 6,
-        padding: '9px 12px', cursor: 'pointer',
-        borderBottom: '1px solid var(--border)',
-        background: active ? 'linear-gradient(135deg, rgba(99,102,241,0.10), rgba(139,92,246,0.06))' : 'transparent',
-        borderLeft: active ? '3px solid #6366f1' : '3px solid transparent',
-        transition: 'background 0.15s ease',
-      }}
-      onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--bg-hover)'; }}
-      onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 11, color: '#94a3b8', width: 18 }}>{r.rank}</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: active ? '#6366f1' : '#0f172a' }}>{r.symbol}</span>
-        <span style={{ fontSize: 15, fontWeight: 700, color: scoreColor(r.score), marginLeft: 'auto' }}>
-          {r.score != null ? r.score : '-'}
-        </span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-        <span style={{
-          padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 700,
-          background: vs.bg, color: vs.color, border: `1px solid ${vs.border}`, whiteSpace: 'nowrap',
-        }}>{r.verdict}</span>
-        {r.plan_verdict && (
-          <span title={r.plan_setup_label || ''} style={{
-            padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 700,
-            background: ps.bg, color: ps.color, border: `1px solid ${ps.border}`, whiteSpace: 'nowrap',
-          }}>Plan: {r.plan_verdict}</span>
-        )}
-        {r.flags?.length > 0 && (
-          <span title={r.flags.join('\n')} style={{ fontSize: 10, color: '#ea580c', marginLeft: 'auto' }}>
-            ⚑ {r.flags.length}
-          </span>
-        )}
-      </div>
-      <div style={{ display: 'flex', gap: 10 }}>
-        <MiniZ z={r.z_momentum} label="M" />
-        <MiniZ z={r.z_quality} label="Q" />
-        <MiniZ z={r.z_value} label="V" />
-      </div>
+    <div ref={ref} onScroll={onScroll} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+      {small ? (
+        rows.map(r => (
+          <MasterRow key={r.symbol} r={r} active={r.symbol === activeSymbol} onSelect={onSelect} />
+        ))
+      ) : (
+        <div style={{ position: 'relative', height: totalHeight }}>
+          {rows.slice(start, end).map((r, i) => (
+            <MasterRow
+              key={r.symbol}
+              r={r}
+              active={r.symbol === activeSymbol}
+              onSelect={onSelect}
+              style={{ position: 'absolute', top: (start + i) * ROW_HEIGHT, left: 0, right: 0 }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -123,17 +282,17 @@ export default function Screener({ onSelectStock, activeSymbol }) {
   const [running,    setRunning]    = useState(false);
   const [logLines,   setLogLines]   = useState([]);
   const [progress,   setProgress]   = useState({ done: 0, total: 0 });
-  const [results,    setResults]    = useState(null);
-  const [error,      setError]      = useState(null);
+  const [rows,       setRows]        = useState(null);   // progressive + ranked
+  const [ranked,     setRanked]      = useState(false);  // final result arrived
+  const [error,      setError]       = useState(null);
   const [resolving,  setResolving]  = useState(false);
   const [resolution, setResolution] = useState(null);
   const [showInput,  setShowInput]  = useState(true);
 
   const esRef = useRef(null);
   const fileRef = useRef(null);
+  const lastSymsRef = useRef([]);     // symbols of the current list (for Refresh)
 
-  // Newlines/commas/semicolons separate entries; ALL-CAPS multi-word segments
-  // are space-separated symbols (old behavior); lowercase = company name.
   const parseTokens = (text) => {
     const out = [];
     for (const seg of text.split(/[,;\n\r\t]+/)) {
@@ -157,6 +316,53 @@ export default function Screener({ onSelectStock, activeSymbol }) {
     e.target.value = '';
   };
 
+  // Open the SSE stream for a resolved symbol set and populate progressively.
+  const streamSymbols = (syms) => {
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    lastSymsRef.current = syms;
+    setRows([]);
+    setRanked(false);
+    setProgress({ done: 0, total: syms.length });
+    setRunning(true);
+
+    const es = new EventSource(`${STREAM_URL}?symbols=${encodeURIComponent(syms.join(','))}`);
+    esRef.current = es;
+
+    es.onmessage = (evt) => {
+      let msg;
+      try { msg = JSON.parse(evt.data); } catch { return; }
+
+      if (msg.type === 'log') {
+        setLogLines(prev => [...prev.slice(-80), msg.text]);
+      } else if (msg.type === 'batch') {
+        // Progressive: append this batch's rows (unranked) so the table fills.
+        setRows(prev => [...(prev || []), ...msg.rows]);
+        setProgress({ done: msg.done, total: msg.total });
+        setShowInput(false);
+      } else if (msg.type === 'result') {
+        // Authoritative cross-sectionally ranked set replaces the provisional rows.
+        setRows(msg.data);
+        setRanked(true);
+        setShowInput(false);
+      } else if (msg.type === 'done') {
+        setRunning(false);
+        es.close(); esRef.current = null;
+      } else if (msg.type === 'error') {
+        setError(msg.text || 'Screen failed.');
+        setRunning(false);
+        es.close(); esRef.current = null;
+      }
+    };
+
+    es.onerror = () => {
+      if (esRef.current) {
+        setError('Connection lost - is the backend running?');
+        setRunning(false);
+        es.close(); esRef.current = null;
+      }
+    };
+  };
+
   const handleRun = async () => {
     const tokens = parseTokens(input);
     if (tokens.length < 2) {
@@ -177,7 +383,7 @@ export default function Screener({ onSelectStock, activeSymbol }) {
       syms = [...new Set(resolved.filter(r => r.symbol).map(r => r.symbol))];
       const unresolved = resolved.filter(r => !r.symbol);
       if (unresolved.length > 0) {
-        setError(`Could not resolve: ${unresolved.map(r => `"${r.query}"`).join(', ')} — screening the rest.`);
+        setError(`Could not resolve: ${unresolved.map(r => `"${r.query}"`).join(', ')} - screening the rest.`);
       }
     } catch {
       syms = tokens.filter(t => !t.includes(' ')).map(t => t.toUpperCase());
@@ -186,50 +392,26 @@ export default function Screener({ onSelectStock, activeSymbol }) {
     }
 
     if (syms.length < 2) {
-      setError('Fewer than 2 entries resolved to NSE symbols — nothing to rank.');
+      setError('Fewer than 2 entries resolved to NSE symbols - nothing to rank.');
       return;
     }
-
-    setResults(null);
-    setProgress({ done: 0, total: syms.length });
-    setRunning(true);
-
-    const es = new EventSource(`${STREAM_URL}?symbols=${encodeURIComponent(syms.join(','))}`);
-    esRef.current = es;
-
-    es.onmessage = (evt) => {
-      try {
-        const msg = JSON.parse(evt.data);
-        if (msg.type === 'log') {
-          setLogLines(prev => [...prev.slice(-80), msg.text]);
-          const m = msg.text.match(/\((\d+)\/(\d+)\)/);
-          if (m) setProgress({ done: parseInt(m[1], 10), total: parseInt(m[2], 10) });
-        } else if (msg.type === 'result') {
-          setResults(msg.data);
-          setShowInput(false);   // collapse input to give the list room
-        } else if (msg.type === 'done') {
-          setRunning(false);
-          es.close(); esRef.current = null;
-        } else if (msg.type === 'error') {
-          setError(msg.text || 'Screen failed.');
-          setRunning(false);
-          es.close(); esRef.current = null;
-        }
-      } catch (err) {
-        console.error('[screener] bad SSE payload', err);
-      }
-    };
-
-    es.onerror = () => {
-      if (esRef.current) {
-        setError('Connection lost - is the backend running?');
-        setRunning(false);
-        es.close(); esRef.current = null;
-      }
-    };
+    streamSymbols(syms);
   };
 
+  // Lightweight refresh: re-stream the current symbols. Cached fundamentals
+  // (4h TTL) are skipped, so this mainly re-pulls prices and re-ranks - a
+  // top-level metrics refresh without re-typing the universe. Deep per-stock
+  // analysis stays lazy (only on row click).
+  const handleRefresh = () => {
+    if (running || resolving || lastSymsRef.current.length < 2) return;
+    setError(null);
+    streamSymbols(lastSymsRef.current);
+  };
+
+  useEffect(() => () => { if (esRef.current) esRef.current.close(); }, []);
+
   const busy = running || resolving;
+  const count = rows?.length || 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -239,14 +421,29 @@ export default function Screener({ onSelectStock, activeSymbol }) {
         padding: '14px 14px 10px', borderBottom: '1px solid var(--border)',
         display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
       }}>
-        <span style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>📊 Master Screener</span>
-        {results && (
-          <span style={{ fontSize: 11, color: '#94a3b8' }}>{results.length} ranked</span>
+        <span style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>Master Screener</span>
+        {count > 0 && (
+          <span style={{ fontSize: 11, color: '#94a3b8' }}>
+            {count}{ranked ? ' ranked' : ` / ${progress.total}`}
+          </span>
+        )}
+        {rows && lastSymsRef.current.length >= 2 && (
+          <button
+            onClick={handleRefresh}
+            disabled={busy}
+            title="Re-pull prices and re-rank the current list (top-level metrics only)"
+            style={{
+              marginLeft: 'auto', background: 'none', border: '1px solid var(--border-strong)',
+              borderRadius: 6, fontSize: 11, color: busy ? '#cbd5e1' : '#4f46e5',
+              cursor: busy ? 'not-allowed' : 'pointer', padding: '3px 9px', fontWeight: 600,
+            }}
+          >{running ? 'Refreshing...' : 'Refresh List'}</button>
         )}
         <button
           onClick={() => setShowInput(s => !s)}
           style={{
-            marginLeft: 'auto', background: 'none', border: '1px solid var(--border-strong)',
+            marginLeft: (rows && lastSymsRef.current.length >= 2) ? 0 : 'auto',
+            background: 'none', border: '1px solid var(--border-strong)',
             borderRadius: 6, fontSize: 11, color: '#64748b', cursor: 'pointer', padding: '3px 9px',
           }}
         >{showInput ? 'Hide input' : 'New screen'}</button>
@@ -280,8 +477,8 @@ export default function Screener({ onSelectStock, activeSymbol }) {
                 color: busy ? '#64748b' : '#fff',
               }}
             >
-              {resolving ? <><Spinner /> Resolving…</>
-                : running ? <><Spinner /> {progress.done}/{progress.total}…</>
+              {resolving ? <><Spinner /> Resolving...</>
+                : running ? <><Spinner /> {progress.done}/{progress.total}...</>
                 : 'Run Screen'}
             </button>
             <button onClick={() => fileRef.current?.click()} disabled={busy}
@@ -332,8 +529,8 @@ export default function Screener({ onSelectStock, activeSymbol }) {
                   {r.method === 'symbol'
                     ? <strong style={{ color: '#0f172a' }}>{r.symbol}</strong>
                     : r.symbol
-                      ? <>{r.query.slice(0, 22)} → <strong style={{ color: '#0f172a' }}>{r.symbol}</strong></>
-                      : <>{r.query.slice(0, 26)} ✗</>}
+                      ? <>{r.query.slice(0, 22)} -&gt; <strong style={{ color: '#0f172a' }}>{r.symbol}</strong></>
+                      : <>{r.query.slice(0, 26)} (unresolved)</>}
                 </span>
               ))}
             </div>
@@ -341,19 +538,19 @@ export default function Screener({ onSelectStock, activeSymbol }) {
         </div>
       )}
 
-      {/* ranked list — its own scroll container so selection never resets scroll */}
-      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-        {results?.map(r => (
-          <MasterRow key={r.symbol} r={r} active={r.symbol === activeSymbol} onSelect={onSelectStock} />
-        ))}
-        {!results && !running && (
-          <div style={{ padding: '36px 18px', textAlign: 'center', color: '#94a3b8', fontSize: 12, lineHeight: 1.7 }}>
-            <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
-            Run a screen to rank stocks here.<br />
-            Click any result to open its full analysis →
-          </div>
-        )}
-      </div>
+      {/* ranked list — windowed so hundreds of rows never crash the DOM */}
+      {count > 0 ? (
+        <VirtualList rows={rows} activeSymbol={activeSymbol} onSelect={onSelectStock} />
+      ) : (
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+          {!running && (
+            <div style={{ padding: '36px 18px', textAlign: 'center', color: '#94a3b8', fontSize: 12, lineHeight: 1.7 }}>
+              Run a screen to rank stocks here.<br />
+              Click any result to open its full analysis.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
