@@ -24,6 +24,10 @@ export default function App() {
 
   // Master screener panel (collapsible left workspace)
   const [isMasterOpen, setIsMasterOpen] = useState(true);
+  // Tickers of the universe currently rendered in the screener table (for Save).
+  const [screenTickers, setScreenTickers] = useState([]);
+  // Load-a-saved-screen request bridged to the Screener ({tickers, nonce}).
+  const [loadScreenReq, setLoadScreenReq] = useState(null);
   // In-app guide: fictional stock walkthrough explaining every metric
   const [showGuide, setShowGuide] = useState(false);
   // The screener row for the selected stock (carries cross-sectional z-scores)
@@ -123,13 +127,26 @@ export default function App() {
           <span className="logo-icon">📈</span>
           <span className="logo-text">StockLens</span>
         </div>
-        <Watchlist onSelect={loadStock} currentSymbol={currentSymbol?.symbol} />
+        <Watchlist
+          onSelect={loadStock}
+          currentSymbol={currentSymbol?.symbol}
+          screenTickers={screenTickers}
+          onLoadScreen={(tickers) => {
+            setIsMasterOpen(true);
+            setLoadScreenReq({ tickers, nonce: Date.now() });
+          }}
+        />
       </aside>
 
       {/* ── Master screener panel (collapsible) ── */}
       <div className={`master-panel ${isMasterOpen ? 'open' : 'closed'}`}>
         <div className="master-panel-inner">
-          <Screener onSelectStock={loadStock} activeSymbol={currentSymbol?.symbol} />
+          <Screener
+            onSelectStock={loadStock}
+            activeSymbol={currentSymbol?.symbol}
+            onTickersChange={setScreenTickers}
+            loadRequest={loadScreenReq}
+          />
         </div>
       </div>
 

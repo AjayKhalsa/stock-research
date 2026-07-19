@@ -9,7 +9,7 @@ import config  # noqa: F401  — loads .env before anything reads the environmen
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import screener, stocks, watchlist
+from routers import screener, screens, stocks, watchlist
 
 app = FastAPI(title="Stock Research API", version="2.0.0")
 
@@ -25,6 +25,7 @@ app.add_middleware(
 app.include_router(stocks.router)
 app.include_router(watchlist.router)
 app.include_router(screener.router)
+app.include_router(screens.router)
 
 
 if __name__ == "__main__":

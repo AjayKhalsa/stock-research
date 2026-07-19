@@ -277,7 +277,7 @@ function VirtualList({ rows, activeSymbol, onSelect }) {
 
 const EXAMPLE = 'RELIANCE, TCS, INFY, HDFCBANK, ITC, LT, SUNPHARMA';
 
-export default function Screener({ onSelectStock, activeSymbol }) {
+export default function Screener({ onSelectStock, activeSymbol, onTickersChange, loadRequest }) {
   const [input,      setInput]      = useState('');
   const [running,    setRunning]    = useState(false);
   const [logLines,   setLogLines]   = useState([]);
@@ -320,6 +320,7 @@ export default function Screener({ onSelectStock, activeSymbol }) {
   const streamSymbols = (syms) => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     lastSymsRef.current = syms;
+    onTickersChange?.(syms);   // publish the current universe for Save Screen
     setRows([]);
     setRanked(false);
     setProgress({ done: 0, total: syms.length });
@@ -409,6 +410,22 @@ export default function Screener({ onSelectStock, activeSymbol }) {
   };
 
   useEffect(() => () => { if (esRef.current) esRef.current.close(); }, []);
+
+  // Load workflow: a saved screen selected in the sidebar streams here.
+  // Keep the latest streamSymbols in a ref so the nonce-keyed effect never
+  // fires on a stale closure.
+  const streamRef = useRef();
+  streamRef.current = streamSymbols;
+  useEffect(() => {
+    const req = loadRequest;
+    if (req && Array.isArray(req.tickers) && req.tickers.length >= 2) {
+      setError(null);
+      setResolution(null);
+      setLogLines([]);
+      streamRef.current(req.tickers);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadRequest?.nonce]);
 
   const busy = running || resolving;
   const count = rows?.length || 0;

@@ -64,12 +64,13 @@ CREATE TABLE IF NOT EXISTS fundamentals_cache (
     fetched_at REAL NOT NULL                    -- unix epoch
 );
 
--- Named, persistent screener universes (e.g. "Swing Universe" of 400 tickers).
--- Distinct from the single `watchlist` above (the sidebar's active list).
-CREATE TABLE IF NOT EXISTS watchlists (
+-- Named, persistent saved screens (e.g. "My Top Picks" of N tickers).
+-- Distinct from the single `watchlist` above (the sidebar's active list):
+-- a saved screen is a re-loadable snapshot of a screener universe.
+CREATE TABLE IF NOT EXISTS saved_screens (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL UNIQUE,
-    symbols    TEXT NOT NULL,                   -- JSON array of NSE tickers
+    tickers    TEXT NOT NULL,                   -- JSON array of NSE tickers
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
@@ -277,74 +278,71 @@ def cache_put(symbol: str, exchange: str, payload: dict, origin: str) -> None:
         )
 
 
-# ── named watchlists (persistent screener universes) ─────────────────────────
+# ── saved screens (persistent, re-loadable screener universes) ────────────────
 
-def _row_to_watchlist(r: sqlite3.Row, with_symbols: bool = True) -> dict:
+def _row_to_screen(r: sqlite3.Row, with_tickers: bool = True) -> dict:
     try:
-        symbols = json.loads(r["symbols"])
+        tickers = json.loads(r["tickers"])
     except Exception:
-        symbols = []
+        tickers = []
     out = {
         "id": r["id"],
         "name": r["name"],
-        "count": len(symbols),
+        "count": len(tickers),
         "created_at": r["created_at"],
         "updated_at": r["updated_at"],
     }
-    if with_symbols:
-        out["symbols"] = symbols
+    if with_tickers:
+        out["tickers"] = tickers
     return out
 
 
-def watchlists_all() -> list:
-    """All saved universes, newest first, WITHOUT the (large) symbol arrays."""
+def screens_all() -> list:
+    """All saved screens, newest first, WITHOUT the (large) ticker arrays —
+    enough to populate a dropdown."""
     with _conn() as c:
         rows = c.execute(
-            "SELECT * FROM watchlists ORDER BY updated_at DESC"
+            "SELECT * FROM saved_screens ORDER BY updated_at DESC"
         ).fetchall()
-    return [_row_to_watchlist(r, with_symbols=False) for r in rows]
+    return [_row_to_screen(r, with_tickers=False) for r in rows]
 
 
-def watchlist_get(list_id: int) -> Optional[dict]:
+def screen_get(screen_id: int) -> Optional[dict]:
+    """Full payload (with tickers) for one saved screen."""
     with _conn() as c:
-        r = c.execute("SELECT * FROM watchlists WHERE id = ?", (list_id,)).fetchone()
-    return _row_to_watchlist(r) if r else None
+        r = c.execute("SELECT * FROM saved_screens WHERE id = ?",
+                      (screen_id,)).fetchone()
+    return _row_to_screen(r) if r else None
 
 
-def watchlist_get_by_name(name: str) -> Optional[dict]:
-    with _conn() as c:
-        r = c.execute("SELECT * FROM watchlists WHERE name = ?", (name,)).fetchone()
-    return _row_to_watchlist(r) if r else None
-
-
-def watchlist_save(name: str, symbols: list) -> dict:
+def screen_save(name: str, tickers: list) -> dict:
     """
-    Create or replace a named universe (upsert on name). Symbols are stored
-    as a JSON array — deduped, upper-cased, order preserved.
+    Create or replace a saved screen (upsert on name). Tickers are stored as a
+    JSON array — deduped, upper-cased, order preserved.
     """
     seen, clean = set(), []
-    for s in symbols:
-        u = str(s).strip().upper()
+    for t in tickers:
+        u = str(t).strip().upper()
         if u and u not in seen:
             seen.add(u)
             clean.append(u)
     now = time.time()
     with _conn() as c:
         c.execute(
-            "INSERT INTO watchlists(name, symbols, created_at, updated_at) "
+            "INSERT INTO saved_screens(name, tickers, created_at, updated_at) "
             "VALUES (?,?,?,?) "
-            "ON CONFLICT(name) DO UPDATE SET symbols=excluded.symbols, "
+            "ON CONFLICT(name) DO UPDATE SET tickers=excluded.tickers, "
             "updated_at=excluded.updated_at",
             (name.strip(), json.dumps(clean), now, now),
         )
-        r = c.execute("SELECT * FROM watchlists WHERE name = ?",
+        r = c.execute("SELECT * FROM saved_screens WHERE name = ?",
                       (name.strip(),)).fetchone()
-    return _row_to_watchlist(r)
+    return _row_to_screen(r)
 
 
-def watchlist_delete(list_id: int) -> bool:
+def screen_delete(screen_id: int) -> bool:
     with _conn() as c:
-        cur = c.execute("DELETE FROM watchlists WHERE id = ?", (list_id,))
+        cur = c.execute("DELETE FROM saved_screens WHERE id = ?", (screen_id,))
     return cur.rowcount > 0
 
 

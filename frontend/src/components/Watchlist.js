@@ -1,9 +1,115 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import toast from 'react-hot-toast';
-import { getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert } from '../api';
+import {
+  getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
+  getScreens, getScreen, saveScreen,
+} from '../api';
 import './Watchlist.css';
 
-export default function Watchlist({ onSelect, currentSymbol }) {
+/* Save/load panel for named screens. Sits at the very top of the sidebar. */
+function SavedScreensPanel({ screenTickers, onLoadScreen }) {
+  const [screens, setScreens] = useState([]);
+  const [selected, setSelected] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef(null);
+
+  const refresh = useCallback(async () => {
+    try { setScreens(await getScreens()); } catch {}
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { if (modalOpen) setTimeout(() => inputRef.current?.focus(), 30); }, [modalOpen]);
+
+  const canSave = Array.isArray(screenTickers) && screenTickers.length > 0;
+
+  const handleSave = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || !canSave || saving) return;
+    setSaving(true);
+    try {
+      const rec = await saveScreen(trimmed, screenTickers);
+      toast.success(`Saved "${rec.name}" (${rec.count} tickers)`);
+      setModalOpen(false);
+      setName('');
+      await refresh();
+      setSelected(String(rec.id));
+    } catch {
+      toast.error('Could not save screen');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleLoad = async (id) => {
+    setSelected(id);
+    if (!id) return;
+    try {
+      const rec = await getScreen(id);
+      if (rec.tickers?.length) {
+        onLoadScreen(rec.tickers);
+        toast.success(`Loading "${rec.name}" (${rec.count} tickers)`);
+      }
+    } catch {
+      toast.error('Could not load screen');
+    }
+  };
+
+  return (
+    <div className="ss-panel">
+      <div className="ss-header">
+        <span className="ss-title">Saved Screens</span>
+        <button
+          className="ss-save-btn"
+          onClick={() => setModalOpen(true)}
+          disabled={!canSave}
+          title={canSave ? 'Save the current screen results as a named list'
+            : 'Run a screen first, then save its results'}
+        >Save Screen</button>
+      </div>
+
+      <select
+        className="ss-select"
+        value={selected}
+        onChange={(e) => handleLoad(e.target.value)}
+      >
+        <option value="">Load a saved screen...</option>
+        {screens.map(s => (
+          <option key={s.id} value={s.id}>{s.name} ({s.count})</option>
+        ))}
+      </select>
+
+      {modalOpen && (
+        <div className="ss-modal-overlay" onMouseDown={() => setModalOpen(false)}>
+          <div className="ss-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="ss-modal-title">Save Screen</div>
+            <div className="ss-modal-sub">
+              {screenTickers.length} ticker{screenTickers.length === 1 ? '' : 's'} from the current results
+            </div>
+            <input
+              ref={inputRef}
+              className="ss-modal-input"
+              placeholder="Screen name, e.g. My Top Picks"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setModalOpen(false); }}
+              maxLength={60}
+            />
+            <div className="ss-modal-actions">
+              <button className="ss-modal-cancel" onClick={() => setModalOpen(false)}>Cancel</button>
+              <button className="ss-modal-confirm" onClick={handleSave} disabled={!name.trim() || saving}>
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLoadScreen }) {
   const [items, setItems] = useState([]);
   const [prices, setPrices] = useState({});
   const [alertsBySymbol, setAlertsBySymbol] = useState({});
@@ -95,6 +201,8 @@ export default function Watchlist({ onSelect, currentSymbol }) {
 
   return (
     <div className="watchlist">
+      <SavedScreensPanel screenTickers={screenTickers} onLoadScreen={onLoadScreen} />
+
       <div className="wl-header">
         <span className="wl-title">Watchlist</span>
         <span className="wl-count">{items.length}</span>
