@@ -149,14 +149,43 @@ function TheCase({ dossier }) {
             📜 What history says about this exact setup on this stock
           </div>
           {br.n >= 5 ? (
-            <div className="tp-baserates-stats">
-              <span><strong>{br.n}</strong> occurrences</span>
-              <span><strong>{br.win_rate}%</strong> hit target first</span>
-              <span><strong>{br.expected_r > 0 ? '+' : ''}{br.expected_r}R</strong> expected value/trade</span>
-              <span><strong>{br.median_hold}</strong> bars median hold</span>
-            </div>
+            <>
+              <div className="tp-baserates-stats">
+                <span><strong>{br.n}</strong> occurrences</span>
+                <span>
+                  <strong>{br.win_rate}%</strong> hit target first
+                  {br.win_rate_ci && (
+                    <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}
+                          title="Wilson 95% confidence interval — the range the TRUE win rate plausibly sits in given this sample size">
+                      {' '}(CI {br.win_rate_ci.low}–{br.win_rate_ci.high}%)
+                    </span>
+                  )}
+                </span>
+                <span><strong>{br.expected_r > 0 ? '+' : ''}{br.expected_r}R</strong> expected value/trade</span>
+                <span><strong>{br.median_hold}</strong> bars median hold</span>
+              </div>
+              {br.regime?.matched && br.regime.matched.n >= 1 && (
+                <div className="tp-baserates-note" style={{ marginTop: 6 }}>
+                  🌡️ In today's <strong>{br.regime.current}</strong>-trend tape:{' '}
+                  <strong>{br.regime.matched.n}</strong> setups,{' '}
+                  <strong>{br.regime.matched.win_rate}%</strong> wins,{' '}
+                  <strong>{br.regime.matched.avg_r > 0 ? '+' : ''}{br.regime.matched.avg_r}R</strong>
+                  {br.regime.matched.n >= 5
+                    ? ' — this regime-matched record drives the score.'
+                    : ' — sample too thin to lean on.'}
+                </div>
+              )}
+            </>
           ) : (
             <div className="tp-baserates-note">{br.note}</div>
+          )}
+          {br.sample_confidence?.warning && (
+            <div style={{
+              marginTop: 6, fontSize: 11, fontWeight: 700, color: '#f59e0b',
+              display: 'flex', gap: 6, alignItems: 'center',
+            }}>
+              ⚠️ {br.sample_confidence.label}
+            </div>
           )}
         </div>
       )}
@@ -307,7 +336,24 @@ export default function TradePlan({ data, loading, horizon, onHorizonChange, aiC
               <div className="tp-level-basis">{plan.entry.rationale}</div>
             </div>
             <div className="tp-level">
-              <div className="tp-level-label" style={{ color: '#ef4444' }}>Stop Loss</div>
+              <div className="tp-level-label" style={{ color: '#ef4444' }}>
+                Stop Loss
+                {plan.stop?.timeframe && (
+                  <span
+                    title={plan.stop.timeframe === 'D'
+                      ? 'Anchored to daily-chart structure'
+                      : `Tightened using ${plan.stop.timeframe} chart structure — finer swing lows the daily chart cannot see`}
+                    style={{
+                      marginLeft: 6, padding: '1px 7px', borderRadius: 999,
+                      fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4,
+                      background: plan.stop.timeframe === 'D' ? 'var(--bg-card)' : 'rgba(99,102,241,0.12)',
+                      border: `1px solid ${plan.stop.timeframe === 'D' ? 'var(--border-strong)' : 'rgba(99,102,241,0.45)'}`,
+                      color: plan.stop.timeframe === 'D' ? 'var(--text-muted)' : '#4338ca',
+                    }}>
+                    {plan.stop.timeframe === 'D' ? 'DAILY' : `${plan.stop.timeframe} STRUCTURE`}
+                  </span>
+                )}
+              </div>
               <PriceWithOffset price={plan.stop?.price} refPrice={data.price} label="Stop" />
               <div className="tp-level-basis">
                 {plan.stop?.rationale}

@@ -28,83 +28,15 @@ from typing import Optional
 
 import price_action
 
-# ── rolling indicator series (aligned to candles; None until warm-up) ─────────
+# ── rolling indicator series (canonical implementations in indicators.py) ────
 
-def _sma_series(vals: list, period: int) -> list:
-    out = [None] * len(vals)
-    s = 0.0
-    for i, v in enumerate(vals):
-        s += v
-        if i >= period:
-            s -= vals[i - period]
-        if i >= period - 1:
-            out[i] = s / period
-    return out
-
-
-def _rsi_series(closes: list, period: int = 14) -> list:
-    n = len(closes)
-    out = [None] * n
-    if n < period + 1:
-        return out
-    gains = losses = 0.0
-    for i in range(1, period + 1):
-        d = closes[i] - closes[i - 1]
-        gains += max(d, 0.0)
-        losses += max(-d, 0.0)
-    ag, al = gains / period, losses / period
-    out[period] = 100.0 if al == 0 else 100 - 100 / (1 + ag / al)
-    for i in range(period + 1, n):
-        d = closes[i] - closes[i - 1]
-        ag = (ag * (period - 1) + max(d, 0.0)) / period
-        al = (al * (period - 1) + max(-d, 0.0)) / period
-        out[i] = 100.0 if al == 0 else 100 - 100 / (1 + ag / al)
-    return out
-
-
-def _atr_series(highs: list, lows: list, closes: list, period: int = 14) -> list:
-    n = len(closes)
-    out = [None] * n
-    if n < period + 1:
-        return out
-    trs = [max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]),
-               abs(lows[i] - closes[i - 1])) for i in range(1, n)]
-    atr = sum(trs[:period]) / period
-    out[period] = atr
-    for i in range(period, len(trs)):
-        atr = (atr * (period - 1) + trs[i]) / period
-        out[i + 1] = atr
-    return out
-
-
-def _ema_series(vals: list, period: int) -> list:
-    n = len(vals)
-    out = [None] * n
-    if n < period:
-        return out
-    k = 2.0 / (period + 1)
-    ema = sum(vals[:period]) / period
-    out[period - 1] = ema
-    for i in range(period, n):
-        ema = vals[i] * k + ema * (1 - k)
-        out[i] = ema
-    return out
-
-
-def _macd_hist_series(closes: list) -> list:
-    n = len(closes)
-    e12, e26 = _ema_series(closes, 12), _ema_series(closes, 26)
-    macd = [None if (e12[i] is None or e26[i] is None) else e12[i] - e26[i]
-            for i in range(n)]
-    first = next((i for i, v in enumerate(macd) if v is not None), None)
-    out = [None] * n
-    if first is None or n - first < 9:
-        return out
-    sig = _ema_series([v for v in macd[first:]], 9)
-    for j, s in enumerate(sig):
-        if s is not None:
-            out[first + j] = macd[first + j] - s
-    return out
+from indicators import (
+    sma_series as _sma_series,
+    ema_series as _ema_series,
+    rsi_series as _rsi_series,
+    atr_series as _atr_series,
+    macd_hist_series as _macd_hist_series,
+)
 
 
 # ── setup detection masks (must mirror decision_engine.detect_setup rules) ────
@@ -139,6 +71,43 @@ def _setup_signal(kind: str, i: int, closes, highs, vols,
 
 # ── setup base rates (event study) ────────────────────────────────────────────
 
+def _wilson_ci(wins: int, n: int, z: float = 1.96) -> Optional[dict]:
+    """
+    Wilson score 95% interval for the true win rate. Honest about small
+    samples: 3 wins in 4 trades reads 75% but the interval is ~30–95%.
+    """
+    if n <= 0:
+        return None
+    p = wins / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    margin = (z / denom) * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return {"low": round(max(0.0, centre - margin) * 100, 1),
+            "high": round(min(1.0, centre + margin) * 100, 1)}
+
+
+def _index_trend_by_date(index_candles: list) -> dict:
+    """
+    {date: 'up'|'recovering'|'down'} for every index bar — the regime-trend
+    state that prevailed on that day (close vs rolling MA50/MA200). Used to
+    condition base rates on the tape the setup fired in.
+    """
+    if not index_candles or len(index_candles) < 210:
+        return {}
+    closes = [c["close"] for c in index_candles]
+    ma50 = _sma_series(closes, 50)
+    ma200 = _sma_series(closes, 200)
+    out = {}
+    for i, c in enumerate(index_candles):
+        if ma200[i] is None or ma50[i] is None:
+            continue
+        px = closes[i]
+        out[c["date"]] = ("up" if px > ma50[i] > ma200[i] else
+                          "recovering" if px > ma200[i] else
+                          "down")
+    return out
+
+
 def _sample_confidence(n: int) -> dict:
     """How much to trust base-rate stats given occurrence count."""
     if n < 5:
@@ -168,14 +137,21 @@ def _sample_confidence(n: int) -> dict:
 
 def setup_base_rates(candles: list, setup_kind: str,
                      stop_atr: float = 2.0, target_r: float = 1.5,
-                     max_hold: int = 40, min_gap: int = 10) -> dict:
+                     max_hold: int = 40, min_gap: int = 10,
+                     index_candles: Optional[list] = None) -> dict:
     """
     Event study: every historical bar where `setup_kind` fired, enter at close,
     stop = 2 ATR below, target = +1.5R, exit at stop/target/timeout (40 bars,
     mark-to-market). Same-bar stop+target counts as a stop (conservative).
 
-    Returns {n, wins, win_rate, avg_r, expected_r, median_hold, verdict_text}
-    or {"n": 0, ...} when the setup never fired / not enough history.
+    When `index_candles` (NIFTY) is supplied, results are also conditioned on
+    the market-regime trend that prevailed when each setup fired — a pullback
+    that wins 65% in Risk-On tapes may win 35% in downtrends, and the current
+    tape decides which number matters.
+
+    Returns {n, wins, win_rate, win_rate_ci, avg_r, expected_r, median_hold,
+    sample_confidence, regime: {current, matched: {...}}, note} — or a
+    zeroed dict when the setup never fired / not enough history.
     """
     empty = {"n": 0, "wins": None, "win_rate": None, "avg_r": None,
              "expected_r": None, "median_hold": None,
@@ -197,7 +173,12 @@ def setup_base_rates(candles: list, setup_kind: str,
     macdh = _macd_hist_series(closes)
     atr   = _atr_series(highs, lows, closes)
 
-    results, holds = [], []
+    trend_by_date = _index_trend_by_date(index_candles or [])
+    current_trend = None
+    if index_candles:
+        current_trend = trend_by_date.get(index_candles[-1].get("date"))
+
+    results, holds, regimes = [], [], []
     last_sig = -10**9
     # leave max_hold bars of runway; skip the most recent 5 bars (open trades)
     for i in range(200, len(candles) - 5):
@@ -226,32 +207,69 @@ def setup_base_rates(candles: list, setup_kind: str,
             r_out, hold = (closes[end] - entry) / risk, end - i
         results.append(r_out)
         holds.append(hold)
+        regimes.append(trend_by_date.get(candles[i].get("date")))
 
-    if len(results) < 5:
-        n = len(results)
+    def _stats(rs: list) -> Optional[dict]:
+        if not rs:
+            return None
+        w = sum(1 for r in rs if r > 0)
+        return {
+            "n": len(rs),
+            "wins": w,
+            "win_rate": round(w / len(rs) * 100, 1),
+            "win_rate_ci": _wilson_ci(w, len(rs)),
+            "avg_r": round(sum(rs) / len(rs), 2),
+        }
+
+    n = len(results)
+    if n < 5:
         return {**empty,
                 "n": n,
+                **({} if n == 0 else {k: v for k, v in (_stats(results) or {}).items()
+                                      if k != "n"}),
                 "sample_confidence": _sample_confidence(n),
+                "regime": {"current": current_trend, "matched": None},
                 "note": f"Only {n} comparable setups since "
                         f"{candles[0].get('date', '?')} — too few to trust."}
 
-    wins = sum(1 for r in results if r > 0)
-    win_rate = wins / len(results)
-    avg_r = sum(results) / len(results)
+    overall = _stats(results)
+    avg_r = overall["avg_r"]
     holds.sort()
+
+    # Regime-conditioned subset: only the setups that fired in the same
+    # index-trend state as today's tape.
+    matched = None
+    if current_trend:
+        subset = [r for r, g in zip(results, regimes) if g == current_trend]
+        matched = _stats(subset)
+        if matched:
+            matched["sample_confidence"] = _sample_confidence(matched["n"])
+
+    trend_label = {"up": "Risk-On uptrend", "recovering": "recovering",
+                   "down": "downtrend"}.get(current_trend, "unknown")
+    regime_note = ""
+    if matched and matched["n"] >= 1:
+        regime_note = (f" In {trend_label} tapes like today's: {matched['n']} setups, "
+                       f"{matched['win_rate']}% wins, {matched['avg_r']:+.2f}R.")
+
     return {
-        "n": len(results),
-        "wins": wins,
-        "win_rate": round(win_rate * 100, 1),
-        "avg_r": round(avg_r, 2),
-        "expected_r": round(avg_r, 2),          # avg R IS the per-trade EV
+        "n": n,
+        "wins": overall["wins"],
+        "win_rate": overall["win_rate"],
+        "win_rate_ci": overall["win_rate_ci"],
+        "avg_r": avg_r,
+        "expected_r": avg_r,                    # avg R IS the per-trade EV
         "median_hold": holds[len(holds) // 2],
         "since": candles[0].get("date"),
-        "sample_confidence": _sample_confidence(len(results)),
-        "note": (f"{len(results)} comparable {setup_kind.replace('_', ' ')} setups "
-                 f"since {candles[0].get('date', '?')[:4]}: {wins} winners "
-                 f"({round(win_rate * 100)}%), average {avg_r:+.2f}R per trade "
-                 f"(2-ATR stop, {target_r}R target, {max_hold}-bar timeout)."),
+        "sample_confidence": _sample_confidence(n),
+        "regime": {"current": current_trend, "matched": matched},
+        "note": (f"{n} comparable {setup_kind.replace('_', ' ')} setups "
+                 f"since {candles[0].get('date', '?')[:4]}: {overall['wins']} winners "
+                 f"({round(overall['win_rate'])}%, 95% CI "
+                 f"{overall['win_rate_ci']['low']}–{overall['win_rate_ci']['high']}%), "
+                 f"average {avg_r:+.2f}R per trade "
+                 f"(2-ATR stop, {target_r}R target, {max_hold}-bar timeout)."
+                 + regime_note),
     }
 
 
@@ -488,21 +506,62 @@ def build_case(plan: dict, quant: Optional[dict], base_rates: dict,
         else:
             bear(8, f"Trend template only {ts}/{tmax} — weak technical structure", "checklist")
 
-    # 3. Base rates / expected value (the core "convince me" number)
+    # 3. Base rates / expected value (the core "convince me" number).
+    #    Regime-conditioned: prefer the stats from setups that fired in the
+    #    same tape as today's; weight the points by the current regime, since
+    #    momentum setups (continuation/breakout) degrade hardest in Risk-Off.
     ev = base_rates.get("expected_r")
     n = base_rates.get("n", 0)
-    if ev is not None and n >= 5:
-        wr = base_rates.get("win_rate")
-        if ev >= 0.3:
-            bull(15, f"History is on your side: {n} comparable setups, {wr}% win rate, "
-                     f"{ev:+.2f}R expected value per trade", "base_rates")
-        elif ev > 0:
-            bull(6, f"Mildly positive history: {n} setups, {wr}% wins, {ev:+.2f}R per trade", "base_rates")
+    matched = (base_rates.get("regime") or {}).get("matched")
+    regime_state = regime.get("regime")
+
+    # Point multiplier for the momentum-dependent setups
+    mult = 1.0
+    if setup in ("trend_continuation", "breakout"):
+        mult = {"risk_off": 0.6, "neutral": 0.85, "risk_on": 1.2}.get(regime_state, 1.0)
+
+    use = None            # which stats actually drive the score
+    scope = "overall"
+    if matched and matched["n"] >= 5:
+        use, scope = matched, "regime"
+    elif ev is not None and n >= 5:
+        use = {"n": n, "win_rate": base_rates.get("win_rate"),
+               "win_rate_ci": base_rates.get("win_rate_ci"), "avg_r": ev}
+
+    if use:
+        ci = use.get("win_rate_ci") or {}
+        ci_txt = f" (95% CI {ci.get('low')}–{ci.get('high')}%)" if ci else ""
+        where = (f"in today's {base_rates['regime']['current']}-tape regime"
+                 if scope == "regime" else "across all regimes")
+        uev, uwr, un = use["avg_r"], use["win_rate"], use["n"]
+        if uev >= 0.3:
+            bull(round(15 * mult), f"History is on your side {where}: {un} setups, "
+                 f"{uwr}% win rate{ci_txt}, {uev:+.2f}R expected value per trade", "base_rates")
+        elif uev > 0:
+            bull(round(6 * mult), f"Mildly positive history {where}: {un} setups, "
+                 f"{uwr}% wins{ci_txt}, {uev:+.2f}R per trade", "base_rates")
         else:
-            bear(15, f"History argues AGAINST this: {n} comparable setups averaged "
-                     f"{ev:+.2f}R ({wr}% wins) — this setup has lost money on this stock", "base_rates")
+            bear(15, f"History argues AGAINST this {where}: {un} setups averaged "
+                     f"{uev:+.2f}R ({uwr}% wins{ci_txt}) — this setup has lost money "
+                     f"on this stock", "base_rates")
+        if mult < 1.0:
+            bear(4, f"Regime discount applied: {setup.replace('_', ' ')} setups degrade "
+                    f"in a {regime.get('label', 'Risk-Off')} tape — base-rate credit "
+                    f"scaled to {int(mult * 100)}%", "base_rates")
+        # Regime-matched sample too thin to use, but tells a different story
+        if scope == "overall" and matched and matched["n"] >= 1 and matched["n"] < 5 \
+                and ev is not None and matched["avg_r"] is not None \
+                and (matched["avg_r"] < 0) != (ev < 0):
+            bear(4, f"Caution: in today's tape this setup fired only {matched['n']} time(s) "
+                    f"and averaged {matched['avg_r']:+.2f}R — small sample, opposite sign "
+                    f"to the all-regime record", "base_rates")
     else:
         bear(3, base_rates.get("note", "No base-rate history available"), "base_rates")
+
+    # Sample-size safeguard: never let a thin sample masquerade as evidence
+    sc = base_rates.get("sample_confidence") or {}
+    if sc.get("warning") and n >= 1:
+        bear(4, f"Sample-size warning: {sc.get('label')}", "base_rates")
 
     # 4. Relative strength
     e3 = rs.get("excess_3m")
@@ -773,7 +832,8 @@ def build_dossier(candles: list, plan_envelope: dict, quant: Optional[dict],
     template = trend_template(candles, excess_3m=rs.get("excess_3m"))
 
     swing = plan_envelope.get("swing") or {}
-    base_rates = setup_base_rates(candles, swing.get("setup", "none"))
+    base_rates = setup_base_rates(candles, swing.get("setup", "none"),
+                                  index_candles=index_candles)
 
     pa = plan_envelope.get("price_action") or {}
     case = build_case(swing, quant, base_rates, template, rs, regime, factors,

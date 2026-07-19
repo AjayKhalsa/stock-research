@@ -97,7 +97,7 @@ export default function AlphaThesis({ data, loading }) {
 
   const {
     conviction_score, conviction_label, thesis_summary,
-    bull_case, bear_case, red_flags, key_catalysts,
+    bull_case, bear_case, bear_case_ledger, red_flags, key_catalysts,
     valuation_view, risk_reward, suggested_action,
     data_confidence, error,
   } = data;
@@ -153,15 +153,55 @@ export default function AlphaThesis({ data, loading }) {
           {/* ── bull / bear columns ── */}
           <div className="alpha-columns">
             <div className="alpha-col bull-col">
-              <div className="col-label bull-label">📈 Bull Case</div>
+              <div className="col-label bull-label">📈 Bull Case (steel-manned)</div>
               <p className="col-text">{bull_case || '—'}</p>
             </div>
             <div className="alpha-col-divider" />
             <div className="alpha-col bear-col">
-              <div className="col-label bear-label">📉 Bear Case</div>
+              <div className="col-label bear-label">📉 Strongest Attack</div>
               <p className="col-text">{bear_case || '—'}</p>
             </div>
           </div>
+
+          {/* ── devil's-advocate bear case ledger ── */}
+          {bear_case_ledger?.length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              <div className="col-label bear-label" style={{ marginBottom: 8 }}>
+                😈 Bear Case Ledger — every attack, its evidence, and what would refute it
+              </div>
+              {bear_case_ledger.map((item, i) => (
+                <div key={i} style={{
+                  display: 'flex', gap: 10, alignItems: 'flex-start',
+                  padding: '8px 12px', marginBottom: 6, borderRadius: 8,
+                  background: 'var(--bg-inset)',
+                  border: '1px solid var(--border)',
+                  borderLeft: `3px solid ${item.severity >= 7 ? '#ef4444' : item.severity >= 4 ? '#f59e0b' : '#94a3b8'}`,
+                }}>
+                  <span title={`Severity ${item.severity}/10`} style={{
+                    flexShrink: 0, fontSize: 11, fontWeight: 800, minWidth: 34,
+                    textAlign: 'center', padding: '2px 6px', borderRadius: 6,
+                    color: item.severity >= 7 ? '#ef4444' : item.severity >= 4 ? '#f59e0b' : '#64748b',
+                    background: 'var(--bg-card)', border: '1px solid var(--border)',
+                  }}>
+                    {item.severity}/10
+                  </span>
+                  <div style={{ fontSize: 12, lineHeight: 1.55 }}>
+                    <div style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{item.attack}</div>
+                    {item.evidence && (
+                      <div style={{ color: 'var(--text-secondary)' }}>
+                        <strong>Evidence:</strong> {item.evidence}
+                      </div>
+                    )}
+                    {item.rebuttal_condition && (
+                      <div style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>
+                        <strong>Refuted if:</strong> {item.rebuttal_condition}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* ── red flags + catalysts ── */}
           <div className="alpha-flags-row">

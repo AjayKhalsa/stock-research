@@ -230,8 +230,45 @@ def _confidence(factors: dict, setup: dict, quant_component: float) -> int:
     return int(min(100, max(0, trend_pts + setup_pts + quant_component + rsi_pts)))
 
 
+def _intraday_stop_refinement(entry_low: float, entry_mid: float,
+                              daily_stop: float, atr: float,
+                              intraday_candles: Optional[list],
+                              timeframe: str = "1H") -> Optional[dict]:
+    """
+    Tighten the daily-structure stop using lower-timeframe swing lows.
+    Finds fractal pivot lows on the intraday series that sit BETWEEN the
+    daily stop and the entry zone; the highest such level is finer structure
+    the daily chart cannot see. The refined stop goes 0.15 daily-ATR below it.
+    Returns {"price", "anchor", "bars", "timeframe"} or None when no
+    refinement applies on this timeframe.
+    """
+    if not intraday_candles or len(intraday_candles) < 40:
+        return None
+    lows = [c.get("low", c.get("close")) for c in intraday_candles]
+    span = 3
+    pivot_lows = []
+    for i in range(span, len(lows) - span):
+        if lows[i] < min(lows[i - span:i]) and lows[i] < min(lows[i + 1:i + span + 1]):
+            pivot_lows.append(lows[i])
+    # Candidate must be real structure between the daily stop and the entry
+    cands = [p for p in pivot_lows if daily_stop < p < entry_low]
+    if not cands:
+        return None
+    anchor = max(cands)
+    refined = round(anchor - 0.15 * atr, 2)
+    if refined <= daily_stop or refined >= entry_low:
+        return None
+    # Refuse silly-tight stops: keep at least 0.6 ATR of room from entry mid
+    if entry_mid - refined < 0.6 * atr:
+        return None
+    return {"price": refined, "anchor": round(anchor, 2),
+            "bars": len(intraday_candles), "timeframe": timeframe}
+
+
 def build_swing_plan(factors: dict, pivots: dict, setup: dict,
-                     ma50=None, ma200=None) -> dict:
+                     ma50=None, ma200=None,
+                     intraday_candles: Optional[list] = None,
+                     intraday_candles_15m: Optional[list] = None) -> dict:
     """Days-to-weeks technical plan: setup entry band, ATR/structure stop, R-multiple targets."""
     price = factors["price"]
     atr   = factors.get("atr")
@@ -287,6 +324,24 @@ def build_swing_plan(factors: dict, pivots: dict, setup: dict,
         if sup_below:
             stop_rationale += f" (below {sup_below['kind']} support {sup_below['price']})"
 
+    # Lower-timeframe refinement: hourly swing lows expose finer structure
+    # between the daily stop and the entry, allowing a tighter stop with the
+    # same invalidation logic. 1H is tried first; when the hourly chart has
+    # no structure in the band, the 15-minute chart gets a chance.
+    stop_timeframe = None
+    refined = _intraday_stop_refinement(entry_low, entry_mid, stop_price,
+                                        atr, intraday_candles, timeframe="1H")
+    if not refined:
+        refined = _intraday_stop_refinement(entry_low, entry_mid, stop_price,
+                                            atr, intraday_candles_15m,
+                                            timeframe="15m")
+    if refined:
+        stop_price, basis = refined["price"], "intraday_structure"
+        stop_timeframe = refined["timeframe"]
+        stop_rationale = (f"0.15 ATR below the {refined['timeframe']} swing low "
+                          f"{refined['anchor']} (tightened from the "
+                          f"daily-structure stop)")
+
     risk = entry_mid - stop_price
     if risk <= 0:
         return _no_trade_plan("swing", setup, factors, "Could not derive a valid stop below entry")
@@ -330,6 +385,7 @@ def build_swing_plan(factors: dict, pivots: dict, setup: dict,
         "entry": {"low": round(entry_low, 2), "high": round(entry_high, 2),
                   "type": kind, "rationale": rationale},
         "stop": {"price": round(stop_price, 2), "basis": basis,
+                 "timeframe": stop_timeframe or "D",
                  "rationale": stop_rationale, "risk_pct": round(risk_pct, 2)},
         "targets": targets,
         "risk_reward": rr,
@@ -504,7 +560,9 @@ def build_positional_plan(factors: dict, pivots: dict, setup: dict,
 # ── orchestrator ──────────────────────────────────────────────────────────────
 
 def build_trade_plans(candles: list, fundamentals: Optional[dict] = None,
-                      quant: Optional[dict] = None) -> dict:
+                      quant: Optional[dict] = None,
+                      intraday_candles: Optional[list] = None,
+                      intraday_candles_15m: Optional[list] = None) -> dict:
     """
     candles: [{date, open, high, low, close, volume}, ...] oldest first.
     Returns the full trade-plans envelope, or {"error": ...} on thin history.
@@ -528,7 +586,9 @@ def build_trade_plans(candles: list, fundamentals: Optional[dict] = None,
     setup  = detect_setup(factors, pivots, ma50, ma200, high_52w,
                           pa=pa["signals"])
 
-    swing = build_swing_plan(factors, pivots, setup, ma50, ma200)
+    swing = build_swing_plan(factors, pivots, setup, ma50, ma200,
+                             intraday_candles=intraday_candles,
+                             intraday_candles_15m=intraday_candles_15m)
     positional = build_positional_plan(factors, pivots, setup, quant,
                                        ma50, ma200, candles)
 

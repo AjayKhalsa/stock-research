@@ -23,3 +23,9 @@ export const createAlertsFromPlan = (payload) => API.post('/api/alerts/from-plan
 export const deleteAlert = (id) => API.delete(`/api/alerts/${id}`).then(r => r.data);
 export const ackAlert = (id) => API.post(`/api/alerts/${id}/ack`).then(r => r.data);
 export const getWatchlistPulse = () => API.get('/api/watchlist/pulse').then(r => r.data);
+
+// Saved screens (persistent, re-loadable screener universes)
+export const getScreens = () => API.get('/api/screens').then(r => r.data);
+export const getScreen = (id) => API.get(`/api/screens/${id}`).then(r => r.data);
+export const saveScreen = (name, tickers) => API.post('/api/screens', { name, tickers }).then(r => r.data);
+export const deleteScreen = (id) => API.delete(`/api/screens/${id}`).then(r => r.data);
