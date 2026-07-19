@@ -47,7 +47,7 @@ async def screen_stream(symbols: str):
         if s and s not in seen:
             seen.add(s)
             syms.append(s)
-    syms = syms[:60]
+    syms = syms[:500]
 
     if not syms:
         raise HTTPException(status_code=400, detail="No symbols provided")
@@ -55,7 +55,10 @@ async def screen_stream(symbols: str):
     async def _gen():
         yield _sse({"type": "log", "text": f"Screening {len(syms)} stocks..."})
 
-        sem = asyncio.Semaphore(3)
+        # Concurrency 4: cached symbols skip scraping entirely, so large runs
+        # mostly parallelize yfinance history fetches; kept modest to stay
+        # under Screener.in's rate limits on cold batches.
+        sem = asyncio.Semaphore(4)
 
         async def fetch_one(sym: str):
             async with sem:

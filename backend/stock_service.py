@@ -161,16 +161,19 @@ async def build_plan_payload(symbol: str, exchange: str = "NSE"):
     symbol = symbol.upper().strip()
     instrument = f"{exchange}:{symbol}"
 
-    (screener_data, fund_meta), hist_data, nifty, intraday = await asyncio.gather(
-        data_cache.get_fundamentals(symbol, exchange),
-        price.get_historical(instrument, days=1250),   # ~5y for base rates
-        price.get_index_historical("^NSEI", days=1600),  # 5y window + MA200 warmup
-        price.get_intraday(instrument, interval="1h", days=60),
-    )
+    (screener_data, fund_meta), hist_data, nifty, intraday_1h, intraday_15m = \
+        await asyncio.gather(
+            data_cache.get_fundamentals(symbol, exchange),
+            price.get_historical(instrument, days=1250),   # ~5y for base rates
+            price.get_index_historical("^NSEI", days=1600),  # 5y + MA200 warmup
+            price.get_intraday(instrument, interval="1h", days=60),
+            price.get_intraday(instrument, interval="15m", days=7),
+        )
 
     quant = quant_engine.compute_all(screener_data) if screener_data else None
     plans = decision_engine.build_trade_plans(hist_data, screener_data, quant,
-                                              intraday_candles=intraday)
+                                              intraday_candles=intraday_1h,
+                                              intraday_candles_15m=intraday_15m)
     if "error" not in plans:
         plans["dossier"] = conviction_engine.build_dossier(
             hist_data, plans, quant, nifty

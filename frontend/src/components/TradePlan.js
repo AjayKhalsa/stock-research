@@ -336,7 +336,24 @@ export default function TradePlan({ data, loading, horizon, onHorizonChange, aiC
               <div className="tp-level-basis">{plan.entry.rationale}</div>
             </div>
             <div className="tp-level">
-              <div className="tp-level-label" style={{ color: '#ef4444' }}>Stop Loss</div>
+              <div className="tp-level-label" style={{ color: '#ef4444' }}>
+                Stop Loss
+                {plan.stop?.timeframe && (
+                  <span
+                    title={plan.stop.timeframe === 'D'
+                      ? 'Anchored to daily-chart structure'
+                      : `Tightened using ${plan.stop.timeframe} chart structure — finer swing lows the daily chart cannot see`}
+                    style={{
+                      marginLeft: 6, padding: '1px 7px', borderRadius: 999,
+                      fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4,
+                      background: plan.stop.timeframe === 'D' ? 'var(--bg-card)' : 'rgba(99,102,241,0.12)',
+                      border: `1px solid ${plan.stop.timeframe === 'D' ? 'var(--border-strong)' : 'rgba(99,102,241,0.45)'}`,
+                      color: plan.stop.timeframe === 'D' ? 'var(--text-muted)' : '#4338ca',
+                    }}>
+                    {plan.stop.timeframe === 'D' ? 'DAILY' : `${plan.stop.timeframe} STRUCTURE`}
+                  </span>
+                )}
+              </div>
               <PriceWithOffset price={plan.stop?.price} refPrice={data.price} label="Stop" />
               <div className="tp-level-basis">
                 {plan.stop?.rationale}

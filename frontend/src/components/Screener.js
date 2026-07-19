@@ -296,7 +296,7 @@ export default function Screener({ onSelectStock, activeSymbol }) {
               Example
             </button>
             <span style={{ fontSize: 10.5, color: '#94a3b8', marginLeft: 'auto' }}>
-              {parseTokens(input).length}/60
+              {parseTokens(input).length}/500
             </span>
           </div>
 

@@ -37,7 +37,7 @@ async def resolve_symbols(item: dict):
     queries = item.get("queries")
     if not isinstance(queries, list) or not queries:
         raise HTTPException(status_code=400, detail="queries (non-empty list) required")
-    return await symbol_resolver.resolve_many([str(q) for q in queries[:80]])
+    return await symbol_resolver.resolve_many([str(q) for q in queries[:500]])
 
 
 @router.get("/api/stock/{symbol}")
