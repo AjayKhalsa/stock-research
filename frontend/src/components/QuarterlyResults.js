@@ -25,7 +25,9 @@ const CustomTooltip = ({ active, payload, label }) => {
       <div className="tooltip-label">{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color }}>
-          {p.name}: ₹{Number(p.value).toLocaleString('en-IN')} Cr
+          {p.name}: {p.dataKey === 'opm'
+            ? `${Number(p.value).toFixed(1)}%`
+            : `₹${Number(p.value).toLocaleString('en-IN')} Cr`}
         </div>
       ))}
     </div>
@@ -55,6 +57,7 @@ export default function QuarterlyResults({ data }) {
       revenue: q.revenue,
       net_profit: q.net_profit,
       ebitda: q.ebitda,
+      opm: q.opm,
       rev_growth: prev ? growthPct(q.revenue, prev.revenue) : null,
       profit_growth: prev ? growthPct(q.net_profit, prev.net_profit) : null,
     };
@@ -64,6 +67,7 @@ export default function QuarterlyResults({ data }) {
     revenue: { key: 'revenue', label: 'Revenue', color: '#6366f1' },
     net_profit: { key: 'net_profit', label: 'Net Profit', color: '#10b981' },
     ebitda: { key: 'ebitda', label: 'EBITDA', color: '#8b5cf6' },
+    opm: { key: 'opm', label: 'OPM %', color: '#0ea5e9' },
   };
   const selected = metricMap[metric];
 
@@ -118,6 +122,7 @@ export default function QuarterlyResults({ data }) {
                 <th>Quarter</th>
                 <th>Revenue (Cr)</th>
                 <th>Net Profit (Cr)</th>
+                <th>OPM %</th>
                 <th>Rev YoY</th>
                 <th>Profit YoY</th>
               </tr>
@@ -133,6 +138,7 @@ export default function QuarterlyResults({ data }) {
                     <td className={q.net_profit > 0 ? 'positive' : q.net_profit < 0 ? 'negative' : ''}>
                       {q.net_profit != null ? Number(q.net_profit).toLocaleString('en-IN') : '—'}
                     </td>
+                    <td>{q.opm != null ? `${Number(q.opm).toFixed(1)}%` : '—'}</td>
                     <td>{yoyQ ? <GrowthBadge current={q.revenue} prev={yoyQ.revenue} /> : '—'}</td>
                     <td>{yoyQ ? <GrowthBadge current={q.net_profit} prev={yoyQ.net_profit} /> : '—'}</td>
                   </tr>

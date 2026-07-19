@@ -82,6 +82,11 @@ def enrich_with_yf_fundamentals(screener_data: dict, yf_funds: dict) -> dict:
     if not screener_data or not yf_funds:
         return screener_data
 
+    # Sector/industry classification rides along with the statements
+    for k in ("sector", "industry"):
+        if yf_funds.get(k):
+            screener_data[k] = yf_funds[k]
+
     bs_by = yf_funds.get("bs_by_year") or {}
     pl_by = yf_funds.get("pl_by_year") or {}
     cf_by = yf_funds.get("cf_by_year") or {}

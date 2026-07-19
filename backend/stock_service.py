@@ -10,6 +10,7 @@ import re
 from typing import Optional
 
 import price_service as price
+import price_action
 import quant_engine
 import qualitative_engine
 import ai_engine
@@ -95,9 +96,11 @@ async def build_stock_payload(symbol: str, exchange: str = "NSE"):
     symbol = symbol.upper().strip()
     instrument = f"{exchange}:{symbol}"
 
+    # 420 calendar days ≈ 290 trading bars — the 1Y chart range (252 bars)
+    # gets full price AND volume coverage (was 300d, which starved it).
     (screener_data, fund_meta), hist_data, ohlc_data = await asyncio.gather(
         data_cache.get_fundamentals(symbol, exchange),
-        price.get_historical(instrument, days=300),
+        price.get_historical(instrument, days=420),
         price.get_ohlc(instrument),
     )
 
@@ -112,11 +115,16 @@ async def build_stock_payload(symbol: str, exchange: str = "NSE"):
         for c in hist_data if c.get("close") is not None
     ]
 
+    volume_tags = price_action.volume_anomalies(hist_data).get("tags", [])
+
     return {
         "symbol": symbol,
         "exchange": exchange,
         "company_name": company_name,
+        "sector": screener_data.get("sector"),
+        "industry": screener_data.get("industry"),
         "price_history": price_history,
+        "volume_tags": volume_tags,
         "live_price": live_price,
         "day_change": ohlc_data.get("day_change"),
         "day_change_pct": ohlc_data.get("day_change_pct"),
@@ -153,14 +161,16 @@ async def build_plan_payload(symbol: str, exchange: str = "NSE"):
     symbol = symbol.upper().strip()
     instrument = f"{exchange}:{symbol}"
 
-    (screener_data, fund_meta), hist_data, nifty = await asyncio.gather(
+    (screener_data, fund_meta), hist_data, nifty, intraday = await asyncio.gather(
         data_cache.get_fundamentals(symbol, exchange),
         price.get_historical(instrument, days=1250),   # ~5y for base rates
-        price.get_index_historical("^NSEI", days=1600)   # covers the 5y base-rate window + MA200 warmup,
+        price.get_index_historical("^NSEI", days=1600),  # 5y window + MA200 warmup
+        price.get_intraday(instrument, interval="1h", days=60),
     )
 
     quant = quant_engine.compute_all(screener_data) if screener_data else None
-    plans = decision_engine.build_trade_plans(hist_data, screener_data, quant)
+    plans = decision_engine.build_trade_plans(hist_data, screener_data, quant,
+                                              intraday_candles=intraday)
     if "error" not in plans:
         plans["dossier"] = conviction_engine.build_dossier(
             hist_data, plans, quant, nifty

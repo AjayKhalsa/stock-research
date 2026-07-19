@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import {
-  ComposedChart, Area, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea,
+  ComposedChart, Area, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, ReferenceDot,
 } from 'recharts';
 import toast from 'react-hot-toast';
 import { addToWatchlist } from '../api';
@@ -36,27 +36,42 @@ const ChartTooltip = ({ active, payload }) => {
       {p.volume > 0 && (
         <div style={{ fontSize: 11, color: p.upDay ? '#10b981' : '#ef4444' }}>
           Vol {p.volume >= 1e7 ? `${(p.volume / 1e7).toFixed(1)} Cr` : `${(p.volume / 1e5).toFixed(1)} L`}
+          {p.volTag && (
+            <span style={{ marginLeft: 6, fontWeight: 800, color: '#4338ca' }}
+                  title={{ HVE: 'Highest volume ever', HVY: 'Highest volume in a year', HVQ: 'Highest volume in a quarter' }[p.volTag]}>
+              {p.volTag}
+            </span>
+          )}
         </div>
       )}
     </div>
   );
 };
 
-function PriceChart({ history, levels }) {
+const VOL_TAG_COLORS = { HVE: '#312e81', HVY: '#4338ca', HVQ: '#6366f1' };
+
+function PriceChart({ history, levels, volumeTags }) {
   const [range, setRange] = useState('6M');
 
-  const { slice, up, changePct, hasVolume } = useMemo(() => {
+  const { slice, up, changePct, hasVolume, visibleTags } = useMemo(() => {
     const days = RANGES.find(r => r.key === range)?.days ?? 126;
+    const tagByDate = {};
+    (volumeTags || []).forEach(t => { tagByDate[t.date] = t.tag; });
     const s = history.slice(-days).map((c, i, arr) => ({
       ...c,
       upDay: i === 0 ? true : c.close >= arr[i - 1].close,
+      volTag: tagByDate[c.date] || null,
     }));
     const first = s[0]?.close, last = s[s.length - 1]?.close;
     const isUp = last >= first;
     const chg = first ? ((last - first) / first) * 100 : 0;
     const hv = s.some(c => (c.volume || 0) > 0);
-    return { slice: s, up: isUp, changePct: chg, hasVolume: hv };
-  }, [history, range]);
+    // Annotation labels: all HVE/HVY in view, plus HVQ only on shorter
+    // ranges where the chart has room for them.
+    const vt = s.filter(c => c.volTag &&
+      (c.volTag !== 'HVQ' || days <= 63));
+    return { slice: s, up: isUp, changePct: chg, hasVolume: hv, visibleTags: vt };
+  }, [history, range, volumeTags]);
 
   // Trade-plan levels (entry zone / stop / targets) drawn as reference marks.
   // Extend the y-domain so stop and targets stay visible in context.
@@ -135,7 +150,7 @@ function PriceChart({ history, levels }) {
             <YAxis
               yAxisId="vol"
               orientation="right"
-              domain={[0, (dataMax) => dataMax * 6]}
+              domain={[0, (dataMax) => dataMax * 3.5]}
               hide
             />
           )}
@@ -180,10 +195,23 @@ function PriceChart({ history, levels }) {
           {hasVolume && (
             <Bar yAxisId="vol" dataKey="volume" isAnimationActive={false} barSize={3}>
               {slice.map((c, i) => (
-                <Cell key={i} fill={c.upDay ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.35)'} />
+                <Cell key={i} fill={c.volTag
+                  ? VOL_TAG_COLORS[c.volTag]
+                  : c.upDay ? 'rgba(16,185,129,0.45)' : 'rgba(239,68,68,0.45)'} />
               ))}
             </Bar>
           )}
+          {hasVolume && visibleTags.map(c => (
+            <ReferenceDot
+              key={`vt-${c.date}`}
+              x={c.date} y={c.volume}
+              yAxisId="vol" r={0}
+              label={{
+                value: c.volTag, position: 'top',
+                fill: VOL_TAG_COLORS[c.volTag], fontSize: 9, fontWeight: 700,
+              }}
+            />
+          ))}
           <Area
             type="monotone"
             dataKey="close"
@@ -302,6 +330,12 @@ export default function OverviewCard({ data, planLevels, synthesis, demo = false
           <div className="ov-symbol">
             <span>{data.symbol}</span>
             <span className="ov-exchange">{data.exchange}</span>
+            {data.sector && (
+              <span className="ov-exchange" title={data.industry || ''}
+                    style={{ textTransform: 'none', letterSpacing: 0.2 }}>
+                | {data.sector}
+              </span>
+            )}
           </div>
         </div>
         {!demo && (
@@ -332,7 +366,10 @@ export default function OverviewCard({ data, planLevels, synthesis, demo = false
 
       <DualConviction synthesis={synthesis} />
 
-      {data.price_history?.length > 4 && <PriceChart history={data.price_history} levels={planLevels} />}
+      {data.price_history?.length > 4 && (
+        <PriceChart history={data.price_history} levels={planLevels}
+                    volumeTags={data.volume_tags} />
+      )}
 
       <div className="ov-range-row">
         {data.open != null && <span>Open <strong>₹{fmt(data.open)}</strong></span>}

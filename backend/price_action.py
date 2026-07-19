@@ -247,6 +247,55 @@ def tightness(candles: list) -> dict:
             "ranges_pct": [round(r, 1) for r in ranges]}
 
 
+def volume_anomalies(candles: list, tag_window: int = 260) -> dict:
+    """
+    Volume anomaly detection: flag days whose volume exceeded every prior bar
+    in the relevant lookback, using only data available on that day (trailing,
+    no lookahead):
+
+        HVE  highest volume ever      volume > max of ALL prior bars
+        HVY  highest volume in a year volume > max of prior 252 bars
+        HVQ  highest volume in a qtr  volume > max of prior 63 bars
+
+    A bar gets its single strongest tag (HVE > HVY > HVQ). Only the trailing
+    `tag_window` bars are returned so the chart annotation payload stays small.
+
+    Returns {"tags": [{date, tag, volume}], "latest": tag-or-None,
+             "history_bars": n}. HVE is relative to the supplied history span;
+    callers should pass the longest series they have.
+    """
+    vols = _vols(candles)
+    n = len(vols)
+    if n < 70:
+        return {"tags": [], "latest": None, "history_bars": n}
+
+    tags = []
+    running_max = max(vols[:63])
+    start = max(63, n - tag_window)
+    # Maintain the all-time-prior max incrementally for the scanned region
+    prior_max_all = max(vols[:start])
+    for i in range(start, n):
+        v = vols[i]
+        if v <= 0:
+            continue
+        tag = None
+        if v > prior_max_all:
+            tag = "HVE"
+        elif v > max(vols[max(0, i - 252):i]):
+            tag = "HVY"
+        elif v > max(vols[i - 63:i]):
+            tag = "HVQ"
+        if tag:
+            tags.append({"date": candles[i].get("date", ""), "tag": tag,
+                         "volume": int(v)})
+        prior_max_all = max(prior_max_all, v)
+
+    latest = None
+    if tags and tags[-1]["date"] == candles[-1].get("date", ""):
+        latest = tags[-1]["tag"]
+    return {"tags": tags, "latest": latest, "history_bars": n}
+
+
 def climax_volume(candles: list) -> dict:
     """Exhaustion: latest volume >= 3x the 50d average after a >=25% 3-month run."""
     if len(candles) < 70:
@@ -280,12 +329,14 @@ def analyze(candles: list) -> dict:
     ms    = market_structure(candles)
     tight = tightness(candles)
     clx   = climax_volume(candles)
+    vanom = volume_anomalies(candles)
 
     signals = {
         "obv": obv, "ad_line": ad, "up_down_volume_ratio": udr,
         "distribution_days": dd, "pocket_pivots": pp,
         "pullback_volume": pvc, "close_range": crq,
         "structure": ms, "tightness": tight, "climax": clx,
+        "volume_anomalies": vanom,
     }
 
     ev = []
@@ -331,5 +382,23 @@ def analyze(candles: list) -> dict:
 
     if clx.get("state") == "climax":
         bear(5, "Climax volume warning: " + clx["detail"])
+
+    # Recent volume anomaly: an HVE/HVY day inside the last 10 bars is an
+    # institutional-participation footprint; direction decides the side.
+    recent = [t for t in vanom.get("tags", [])[-3:]
+              if t["tag"] in ("HVE", "HVY")]
+    if recent and len(candles) >= 11:
+        t = recent[-1]
+        idx = next((k for k in range(len(candles) - 1, -1, -1)
+                    if candles[k].get("date") == t["date"]), None)
+        if idx is not None and idx >= len(candles) - 10 and idx > 0:
+            up_day = candles[idx]["close"] >= candles[idx - 1]["close"]
+            label = {"HVE": "highest volume ever", "HVY": "highest volume in a year"}[t["tag"]]
+            if up_day:
+                bull(6, f"{t['tag']} on {t['date']} ({label}) on an up day — "
+                        f"institutional-scale buying")
+            else:
+                bear(6, f"{t['tag']} on {t['date']} ({label}) on a down day — "
+                        f"institutional-scale selling")
 
     return {"signals": signals, "evidence": ev}

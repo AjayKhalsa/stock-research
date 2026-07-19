@@ -196,6 +196,29 @@ async def get_index_historical(symbol: str = "^NSEI", days: int = 400) -> list:
     return data
 
 
+async def get_intraday(instrument: str, interval: str = "1h",
+                       days: int = 60) -> list:
+    """
+    Intraday candles for structural stop refinement. yfinance limits:
+    1h data reaches ~730 days back, 15m data ~60 days. Returns the same
+    candle dict shape as get_historical (dates carry the bar timestamp).
+    """
+    sym = _yf_symbol(instrument)
+
+    def _fetch():
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=days)
+            df = yf.Ticker(sym).history(start=start, end=end,
+                                        interval=interval, auto_adjust=True)
+            return _df_to_candles(df)
+        except Exception as e:
+            print(f"[price_service] intraday error {sym} {interval}: {e}")
+            return []
+
+    return await asyncio.to_thread(_fetch)
+
+
 async def get_historical(instrument: str, days: int = 300) -> list:
     sym = _yf_symbol(instrument)
     def _fetch():
@@ -320,10 +343,20 @@ async def get_fundamentals(instrument: str) -> dict:
             bs_scale = set(_BS_LABELS) - set()               # all BS values are ₹ → crore
             pl_scale = set(_PL_LABELS) - {"eps"}             # everything except EPS
             cf_scale = set(_CF_LABELS)                       # all cash flows → crore
+            # Sector/industry classification (cached with the 4h fundamentals TTL)
+            sector = industry = None
+            try:
+                info = t.get_info()
+                sector = info.get("sector")
+                industry = info.get("industry")
+            except Exception:
+                pass
             return {
                 "bs_by_year": _extract_by_year(bs,  _BS_LABELS, bs_scale),
                 "pl_by_year": _extract_by_year(inc, _PL_LABELS, pl_scale),
                 "cf_by_year": _extract_by_year(cf,  _CF_LABELS, cf_scale),
+                "sector": sector,
+                "industry": industry,
                 "source": "yfinance",
             }
         except Exception as e:

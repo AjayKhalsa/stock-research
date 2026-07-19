@@ -127,8 +127,14 @@ def parse_screener(html: str) -> dict:
                         q["revenue"] = safe_float(vals[i])
                     elif "net profit" in rn or "profit after" in rn:
                         q["net_profit"] = safe_float(vals[i])
+                    elif "opm" in rn:
+                        q["opm"] = safe_float(vals[i])
                     elif "operating profit" in rn or "ebitda" in rn:
                         q["ebitda"] = safe_float(vals[i])
+                # Screener publishes an "OPM %" row; when absent, derive it
+                if q.get("opm") is None and q.get("ebitda") is not None \
+                        and q.get("revenue"):
+                    q["opm"] = round(q["ebitda"] / q["revenue"] * 100, 1)
                 d["quarterly_results"].append(q)
 
     # Shareholding
