@@ -13,6 +13,8 @@ from bs4 import BeautifulSoup
 
 from config import SCRAPE_HEADERS
 
+SCREENER_SEARCH_URL = "https://www.screener.in/api/company/search/"
+
 RED_FLAG_WORDS = ["fraud", "raid", "investigation", "scam", "default", "bankrupt", "arrest", "sebi notice"]
 NEGATIVE_WORDS = ["loss", "resign", "penalty", "fine", "lawsuit", "probe", "downgrade", "fall", "slump"]
 POSITIVE_WORDS = ["profit", "growth", "buy", "upgrade", "record", "dividend", "expansion", "acquisition",
@@ -328,24 +330,92 @@ def parse_screener_annual(html: str) -> dict:
     return result
 
 
-async def fetch_screener_full(symbol: str) -> dict:
+async def resolve_screener_slug(symbol: str) -> Optional[str]:
     """
-    One HTTP request to Screener → returns both the standard top-ratio dict
-    AND the annual P&L / balance sheet / cash flow in a single merged dict.
+    Screener's company-search API resolves a raw ticker to its canonical page
+    slug even when the slug differs from the NSE symbol (renames, dual pages).
+    Returns the slug or None. Numeric slugs are BSE scrip codes and are skipped.
     """
-    for url in [
+    import re
+    try:
+        async with httpx.AsyncClient(timeout=12) as c:
+            r = await c.get(SCREENER_SEARCH_URL, params={"q": symbol},
+                            headers=SCRAPE_HEADERS)
+            if r.status_code != 200:
+                return None
+            results = r.json()
+    except Exception as e:
+        print(f"[screener] slug resolution failed for {symbol}: {e}")
+        return None
+    up = symbol.upper()
+    best = None
+    for item in results:
+        m = re.match(r"^/company/([A-Za-z0-9&._-]+)/", item.get("url", ""))
+        if not m or m.group(1).isdigit():
+            continue
+        slug = m.group(1)
+        if slug.upper() == up:          # exact ticker match wins immediately
+            return slug
+        if best is None:                # else keep the first non-numeric hit
+            best = slug
+    return best
+
+
+async def _fetch_screener_html(symbol: str) -> Optional[str]:
+    """
+    Resilient HTML fetch: try the direct consolidated/standalone slugs, retry
+    once on a transient failure (429 / connection drop), and finally resolve
+    the canonical slug through the search API. Returns HTML or None.
+    """
+    urls = [
         f"https://www.screener.in/company/{symbol}/consolidated/",
         f"https://www.screener.in/company/{symbol}/",
-    ]:
+    ]
+    rate_limited = False
+    for url in urls:
         try:
             async with httpx.AsyncClient(timeout=22, follow_redirects=True) as c:
                 r = await c.get(url, headers=SCRAPE_HEADERS)
             if r.status_code == 200:
-                base   = parse_screener(r.text)
-                annual = parse_screener_annual(r.text)
-                return {**base, **annual}
+                return r.text
+            if r.status_code == 429:
+                rate_limited = True
             print(f"[screener_full] HTTP {r.status_code} from {url}"
                   + (" — RATE LIMITED" if r.status_code == 429 else ""))
         except Exception as e:
             print(f"[screener_full] {type(e).__name__}: {e} ({url})")
-    return {}
+
+    # Slug fallback: the raw ticker did not resolve directly — ask the search
+    # API for the canonical slug and retry (fixes symbol/slug mismatches).
+    slug = await resolve_screener_slug(symbol)
+    if slug and slug.upper() != symbol.upper():
+        for url in [
+            f"https://www.screener.in/company/{slug}/consolidated/",
+            f"https://www.screener.in/company/{slug}/",
+        ]:
+            try:
+                async with httpx.AsyncClient(timeout=22, follow_redirects=True) as c:
+                    r = await c.get(url, headers=SCRAPE_HEADERS)
+                if r.status_code == 200:
+                    print(f"[screener_full] resolved {symbol} -> slug {slug}")
+                    return r.text
+            except Exception as e:
+                print(f"[screener_full] slug retry {type(e).__name__}: {e} ({url})")
+
+    if rate_limited:
+        print(f"[screener_full] {symbol}: rate-limited, no data this pass")
+    return None
+
+
+async def fetch_screener_full(symbol: str) -> dict:
+    """
+    Fetch Screener's company page (with slug-resolution fallback) and return
+    the merged top-ratio + annual P&L / balance sheet / cash flow dict.
+    Returns {} only when every attempt failed.
+    """
+    html = await _fetch_screener_html(symbol)
+    if html is None:
+        return {}
+    base   = parse_screener(html)
+    annual = parse_screener_annual(html)
+    return {**base, **annual}

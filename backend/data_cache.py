@@ -79,8 +79,12 @@ def enrich_with_yf_fundamentals(screener_data: dict, yf_funds: dict) -> dict:
     total book equity — the inputs Altman/Piotroski/Beneish/DuPont depend on.
     Screener remains the fallback for any year/field yfinance doesn't cover.
     """
-    if not screener_data or not yf_funds:
+    if not yf_funds:
         return screener_data
+    # Screener empty (404 / rate-limited) but yfinance statements exist:
+    # seed a fresh payload from yfinance rather than discarding it.
+    if not screener_data:
+        screener_data = {}
 
     # Sector/industry classification rides along with the statements
     for k in ("sector", "industry"):
@@ -138,16 +142,48 @@ def _meta(source: str, origin: Optional[str], fetched_at: float,
     }
 
 
+def _completeness(screener_data: dict, merged: dict) -> str:
+    """
+    Classify the fundamentals payload for the UI's data-quality flag:
+      full     Screener ratios present (P/E, ROE, quarterly, or a name)
+      partial  no Screener ratios, but yfinance annual statements exist
+      missing  neither source produced usable fundamentals
+    """
+    if not merged:
+        return "missing"
+    has_ratios = bool(
+        screener_data.get("quarterly_results")
+        or screener_data.get("pe_ratio") is not None
+        or screener_data.get("roe") is not None
+    )
+    if has_ratios:
+        return "full"
+    if merged.get("annual_pl") or merged.get("annual_bs"):
+        return "partial"
+    if merged.get("company_name"):
+        return "partial"
+    return "missing"
+
+
 async def _fetch_live(symbol: str, exchange: str) -> Tuple[dict, str]:
-    """Scrape + yfinance statements, merged. Returns (payload, origin)."""
+    """
+    Fundamentals fallback cascade. Returns (payload, origin).
+      1. Screener.in direct + slug-resolution retry (in fetch_screener_full).
+      2. yfinance reported statements (fetched in parallel) fill the gaps, or
+         stand alone as PARTIAL data when Screener yields nothing.
+      3. Whatever survives is tagged with `data_completeness` so the row is
+         listed with a "Partial Data" flag rather than dropped.
+    """
     instrument = f"{exchange}:{symbol}"
     screener_data, yf_funds = await asyncio.gather(
         fetch_screener_full(symbol),
         price.get_fundamentals(instrument),
     )
-    merged = enrich_with_yf_fundamentals(screener_data, yf_funds)
-    origin = (merged or {}).get("fundamentals_source", "screener")
-    return merged or {}, origin
+    merged = enrich_with_yf_fundamentals(screener_data, yf_funds) or {}
+    if merged:
+        merged["data_completeness"] = _completeness(screener_data or {}, merged)
+    origin = merged.get("fundamentals_source", "screener") if merged else "unavailable"
+    return merged, origin
 
 
 async def get_fundamentals(symbol: str, exchange: str = "NSE",

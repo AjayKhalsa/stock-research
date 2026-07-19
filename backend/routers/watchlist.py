@@ -108,3 +108,61 @@ async def watchlist_pulse():
         "newly_triggered": newly_triggered,
         "alerts_by_symbol": alert_store.summary_by_symbol(),
     }
+
+
+# ── named watchlists (persistent screener universes) ──────────────────────────
+
+@router.get("/api/watchlists")
+async def list_watchlists():
+    """All saved universes (id, name, count) — symbol arrays omitted for size."""
+    return db.watchlists_all()
+
+
+@router.post("/api/watchlists")
+async def save_watchlist(item: dict):
+    """
+    Create or replace a named universe.
+    Body: {"name": "Swing Universe", "symbols": ["RELIANCE", ...]}.
+    Upserts on name; returns the stored record with its id.
+    """
+    name = (item.get("name") or "").strip()
+    symbols = item.get("symbols")
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not isinstance(symbols, list) or not symbols:
+        raise HTTPException(status_code=400, detail="symbols (non-empty array) is required")
+    return db.watchlist_save(name, symbols[:500])
+
+
+@router.get("/api/watchlists/{list_id}")
+async def get_watchlist_by_id(list_id: int):
+    """Load a saved universe (with its full symbol array) on app start."""
+    wl = db.watchlist_get(list_id)
+    if not wl:
+        raise HTTPException(status_code=404, detail="Watchlist not found")
+    return wl
+
+
+@router.delete("/api/watchlists/{list_id}")
+async def delete_watchlist(list_id: int):
+    if not db.watchlist_delete(list_id):
+        raise HTTPException(status_code=404, detail="Watchlist not found")
+    return {"ok": True}
+
+
+@router.get("/api/watchlists/{list_id}/quotes")
+async def watchlist_quotes(list_id: int):
+    """
+    Lightweight top-level refresh for a saved universe: latest prices only,
+    no deep analysis. Backs the frontend's "Refresh List" button so a 400-name
+    universe can be price-refreshed without re-running the full screen.
+    """
+    wl = db.watchlist_get(list_id)
+    if not wl:
+        raise HTTPException(status_code=404, detail="Watchlist not found")
+    syms = wl.get("symbols", [])
+    if not syms:
+        return {"id": list_id, "prices": {}}
+    instruments = [f"NSE:{s}" for s in syms]
+    prices = await price.get_ltp_multiple(instruments)
+    return {"id": list_id, "name": wl["name"], "count": len(syms), "prices": prices}

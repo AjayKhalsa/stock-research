@@ -63,6 +63,16 @@ CREATE TABLE IF NOT EXISTS fundamentals_cache (
     origin     TEXT,                            -- 'yfinance+screener' | 'screener'
     fetched_at REAL NOT NULL                    -- unix epoch
 );
+
+-- Named, persistent screener universes (e.g. "Swing Universe" of 400 tickers).
+-- Distinct from the single `watchlist` above (the sidebar's active list).
+CREATE TABLE IF NOT EXISTS watchlists (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    symbols    TEXT NOT NULL,                   -- JSON array of NSE tickers
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -265,6 +275,77 @@ def cache_put(symbol: str, exchange: str, payload: dict, origin: str) -> None:
             "exchange=excluded.exchange",
             (symbol.upper(), exchange, json.dumps(payload), origin, time.time()),
         )
+
+
+# ── named watchlists (persistent screener universes) ─────────────────────────
+
+def _row_to_watchlist(r: sqlite3.Row, with_symbols: bool = True) -> dict:
+    try:
+        symbols = json.loads(r["symbols"])
+    except Exception:
+        symbols = []
+    out = {
+        "id": r["id"],
+        "name": r["name"],
+        "count": len(symbols),
+        "created_at": r["created_at"],
+        "updated_at": r["updated_at"],
+    }
+    if with_symbols:
+        out["symbols"] = symbols
+    return out
+
+
+def watchlists_all() -> list:
+    """All saved universes, newest first, WITHOUT the (large) symbol arrays."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM watchlists ORDER BY updated_at DESC"
+        ).fetchall()
+    return [_row_to_watchlist(r, with_symbols=False) for r in rows]
+
+
+def watchlist_get(list_id: int) -> Optional[dict]:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM watchlists WHERE id = ?", (list_id,)).fetchone()
+    return _row_to_watchlist(r) if r else None
+
+
+def watchlist_get_by_name(name: str) -> Optional[dict]:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM watchlists WHERE name = ?", (name,)).fetchone()
+    return _row_to_watchlist(r) if r else None
+
+
+def watchlist_save(name: str, symbols: list) -> dict:
+    """
+    Create or replace a named universe (upsert on name). Symbols are stored
+    as a JSON array — deduped, upper-cased, order preserved.
+    """
+    seen, clean = set(), []
+    for s in symbols:
+        u = str(s).strip().upper()
+        if u and u not in seen:
+            seen.add(u)
+            clean.append(u)
+    now = time.time()
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO watchlists(name, symbols, created_at, updated_at) "
+            "VALUES (?,?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET symbols=excluded.symbols, "
+            "updated_at=excluded.updated_at",
+            (name.strip(), json.dumps(clean), now, now),
+        )
+        r = c.execute("SELECT * FROM watchlists WHERE name = ?",
+                      (name.strip(),)).fetchone()
+    return _row_to_watchlist(r)
+
+
+def watchlist_delete(list_id: int) -> bool:
+    with _conn() as c:
+        cur = c.execute("DELETE FROM watchlists WHERE id = ?", (list_id,))
+    return cur.rowcount > 0
 
 
 # Schema is created on import so any entry point gets a working DB.
