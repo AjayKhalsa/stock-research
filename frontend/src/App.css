@@ -1,8 +1,9 @@
+/* Full-height app shell: the outer frame locks to the viewport so the page
+   never scrolls globally; each pane scrolls inside its own column. */
 .app-layout {
   display: flex;
-  min-height: 100vh;
-  max-width: 100vw;
-  overflow-x: hidden;   /* no page-level horizontal scroll on any viewport */
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* ── Sidebar ── */
@@ -15,9 +16,7 @@
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
   overflow-y: auto;
 }
 
@@ -59,9 +58,7 @@
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   border-right: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
   /* Animate ONLY the collapse properties — never height. transition:all was
      catching height:100vh and leaving the panel stuck at 0 on some layouts,
@@ -86,9 +83,8 @@
 
 /* ── Divider + toggle chevron ── */
 .master-divider {
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  position: relative;
+  height: 100%;
   width: 0;
   z-index: 60;
 }
@@ -119,9 +115,10 @@
 .main-content {
   flex: 1;
   min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
+  overflow: hidden;   /* the search bar stays fixed; .detail-scroll scrolls */
   transition: flex-basis 0.3s ease-in-out;
 }
 
@@ -130,6 +127,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .top-bar {
@@ -138,8 +137,7 @@
   background: rgba(255, 255, 255, 0.65);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  position: sticky;
-  top: 0;
+  flex-shrink: 0;   /* fixed above the scrolling detail pane */
   z-index: 100;
 }
 
@@ -485,14 +483,14 @@
    screener, and detail are all reachable (nothing is hidden), each side rail
    becoming a capped, self-scrolling section instead of a full-height column. */
 @media (max-width: 860px) {
-  .app-layout { flex-direction: column; }
+  /* Release the 100vh lock so the stacked sections scroll with the page. */
+  .app-layout { flex-direction: column; height: auto; overflow: visible; }
 
   .sidebar {
     width: 100%;
     min-width: 0;
     height: auto;
     max-height: 46vh;
-    position: static;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
@@ -503,7 +501,6 @@
     min-width: 0;
     max-width: none;
     height: 60vh;
-    position: static;
     transform: none;
     opacity: 1;
     border-right: none;
@@ -513,8 +510,9 @@
 
   .master-divider { display: none; }
 
-  .main-content { min-height: 60vh; }
-  .top-bar { position: static; }
+  /* Detail grows with its content; the page (not the pane) does the scrolling. */
+  .main-content { height: auto; min-height: 60vh; overflow: visible; }
+  .detail-scroll { overflow-y: visible; }
 }
 
 /* Phone: tighten spacing and shorten the stacked rails. */
