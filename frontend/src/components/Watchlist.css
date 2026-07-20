@@ -303,3 +303,25 @@
   box-shadow: 0 4px 14px -2px rgba(99, 102, 241, 0.5);
 }
 .ss-modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
+.ss-load-row { display: flex; align-items: center; gap: 6px; }
+.ss-load-row .ss-select { flex: 1; }
+.ss-delete-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  background: #fff;
+  color: var(--text-muted);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ss-delete-btn:hover {
+  color: var(--accent-red);
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.06);
+}
