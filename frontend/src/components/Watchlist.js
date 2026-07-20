@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import toast from 'react-hot-toast';
 import {
   getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
-  getScreens, getScreen, saveScreen,
+  getScreens, getScreen, saveScreen, deleteScreen,
 } from '../api';
 import './Watchlist.css';
 
@@ -56,6 +56,20 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
     }
   };
 
+  const handleDelete = async () => {
+    if (!selected) return;
+    const rec = screens.find(s => String(s.id) === String(selected));
+    if (!window.confirm(`Delete saved screen "${rec?.name || 'this screen'}"? This cannot be undone.`)) return;
+    try {
+      await deleteScreen(selected);
+      toast.success(`Deleted "${rec?.name || 'screen'}"`);
+      setSelected('');
+      await refresh();
+    } catch {
+      toast.error('Could not delete screen');
+    }
+  };
+
   return (
     <div className="ss-panel">
       <div className="ss-header">
@@ -69,16 +83,31 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
         >Save Screen</button>
       </div>
 
-      <select
-        className="ss-select"
-        value={selected}
-        onChange={(e) => handleLoad(e.target.value)}
-      >
-        <option value="">Load a saved screen...</option>
-        {screens.map(s => (
-          <option key={s.id} value={s.id}>{s.name} ({s.count})</option>
-        ))}
-      </select>
+      <div className="ss-load-row">
+        <select
+          className="ss-select"
+          value={selected}
+          onChange={(e) => handleLoad(e.target.value)}
+        >
+          <option value="">Load a saved screen...</option>
+          {screens.map(s => (
+            <option key={s.id} value={s.id}>{s.name} ({s.count})</option>
+          ))}
+        </select>
+        {selected && (
+          <button
+            className="ss-delete-btn"
+            onClick={handleDelete}
+            title="Delete the selected saved screen"
+            aria-label="Delete selected screen"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3 4.5h10M6.5 4.5V3.2h3V4.5M4.2 4.5l.6 8.3a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9l.6-8.3"
+                fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+      </div>
 
       {modalOpen && (
         <div className="ss-modal-overlay" onMouseDown={() => setModalOpen(false)}>

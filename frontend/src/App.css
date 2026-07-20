@@ -1,6 +1,9 @@
+/* Full-height app shell: the outer frame locks to the viewport so the page
+   never scrolls globally; each pane scrolls inside its own column. */
 .app-layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* ── Sidebar ── */
@@ -13,9 +16,7 @@
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
   overflow-y: auto;
 }
 
@@ -57,11 +58,14 @@
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   border-right: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
-  transition: all 0.3s ease-in-out;
+  /* Animate ONLY the collapse properties — never height. transition:all was
+     catching height:100vh and leaving the panel stuck at 0 on some layouts,
+     which showed as a tall empty white column beside the detail view. */
+  transition: width 0.3s ease-in-out, min-width 0.3s ease-in-out,
+              max-width 0.3s ease-in-out, opacity 0.3s ease-in-out,
+              transform 0.3s ease-in-out;
 }
 .master-panel.closed {
   width: 0;
@@ -79,9 +83,8 @@
 
 /* ── Divider + toggle chevron ── */
 .master-divider {
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  position: relative;
+  height: 100%;
   width: 0;
   z-index: 60;
 }
@@ -112,10 +115,11 @@
 .main-content {
   flex: 1;
   min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
-  transition: all 0.3s ease-in-out;
+  overflow: hidden;   /* the search bar stays fixed; .detail-scroll scrolls */
+  transition: flex-basis 0.3s ease-in-out;
 }
 
 .detail-scroll {
@@ -123,6 +127,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .top-bar {
@@ -131,8 +137,7 @@
   background: rgba(255, 255, 255, 0.65);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  position: sticky;
-  top: 0;
+  flex-shrink: 0;   /* fixed above the scrolling detail pane */
   z-index: 100;
 }
 
@@ -163,15 +168,18 @@
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* minmax(0, 1fr) lets tracks shrink below their content's min-content, so a
+   wide table/chart scrolls inside its own card instead of pushing the
+   neighbouring card off-screen. */
 .grid-row-2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;
 }
 
 .grid-row-3 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;
 }
 
@@ -180,6 +188,7 @@
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  min-width: 0;   /* allow the card to shrink inside a grid/flex track */
   /* visible so info tooltips can escape the card bounds */
   overflow: visible;
   box-shadow: var(--shadow-card);
@@ -195,6 +204,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 16px 22px;
   border-bottom: 1px solid var(--border);
 }
@@ -459,17 +470,61 @@
   to   { max-height: 46vh; opacity: 1; }
 }
 
-/* ── Responsive ── */
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+/* Laptop / iPad landscape: trim the side rails, stack the paired cards. */
 @media (max-width: 1100px) {
-  .master-panel { min-width: 260px; }
-}
-@media (max-width: 900px) {
-  .sidebar { display: none; }
-  .master-panel, .master-divider { display: none; }
-  .grid-row-2, .grid-row-3 { grid-template-columns: 1fr; }
+  .master-panel { min-width: 240px; max-width: 340px; }
+  .grid-row-2, .grid-row-3 { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-grid { padding: 20px 20px 40px; }
 }
 
+/* iPad portrait and below: stack the whole shell vertically so the watchlist,
+   screener, and detail are all reachable (nothing is hidden), each side rail
+   becoming a capped, self-scrolling section instead of a full-height column. */
+@media (max-width: 860px) {
+  /* Release the 100vh lock so the stacked sections scroll with the page. */
+  .app-layout { flex-direction: column; height: auto; overflow: visible; }
+
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    max-height: 46vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .master-panel,
+  .master-panel.open {
+    width: 100% !important;
+    min-width: 0;
+    max-width: none;
+    height: 60vh;
+    transform: none;
+    opacity: 1;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .master-panel.closed { display: none; }
+
+  .master-divider { display: none; }
+
+  /* Detail grows with its content; the page (not the pane) does the scrolling. */
+  .main-content { height: auto; min-height: 60vh; overflow: visible; }
+  .detail-scroll { overflow-y: visible; }
+}
+
+/* Phone: tighten spacing and shorten the stacked rails. */
 @media (max-width: 600px) {
-  .top-bar { padding: 12px 16px; }
-  .dashboard-grid { padding: 14px 16px; }
+  .sidebar { max-height: 40vh; }
+  .master-panel, .master-panel.open { height: 52vh; }
+  .top-bar { padding: 10px 14px; }
+  .dashboard-grid { padding: 14px 14px 32px; gap: 14px; }
+  .grid-row-2, .grid-row-3 { gap: 14px; }
+  .card-header, .card-body { padding-left: 16px; padding-right: 16px; }
+  .empty-state { padding: 48px 18px; }
+  .empty-state h2 { font-size: 22px; }
+  .metric-tab { padding: 4px 10px; font-size: 11px; }
+  .ov-price { font-size: 34px; }
 }
