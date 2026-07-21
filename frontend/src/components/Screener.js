@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { API_BASE, resolveSymbols } from '../api';
 
 const STREAM_URL = `${API_BASE}/api/screen-stream`;
@@ -71,6 +71,39 @@ function technicalState(r) {
 // dissonance where positive price action runs against weak fundamentals.
 function isSpeculative(fund, tech) {
   return fund.tone === 'weak' && (tech.kind === 'breakout' || tech.kind === 'pullback');
+}
+
+// Trade-plan bucket for the quick view filters. Mirrors the swing verdict
+// vocabulary emitted by the backend (Buy / Buy on Dip / Wait / Avoid).
+//   buy  -> plan is active / actionable now
+//   wait -> pending breakout (untriggered) or extended / overbought setup
+//   other-> Avoid or no plan (only surfaced under ALL)
+function planBucket(r) {
+  const v = (r.plan_verdict || '').toLowerCase();
+  if (v === 'buy' || v === 'buy on dip') return 'buy';
+  if (v === 'wait') return 'wait';
+  return 'other';
+}
+
+// Compact monospace LTP + daily-change readout shown beside the Master Score,
+// e.g. "676.00 (-1.2%)". Change is green when up, red when down.
+function PriceTag({ ltp, chg }) {
+  if (ltp == null) return null;
+  const up = chg != null && chg >= 0;
+  const chgColor = chg == null ? '#94a3b8' : up ? '#059669' : '#dc2626';
+  return (
+    <span style={{
+      fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 600,
+      color: '#334155', whiteSpace: 'nowrap', letterSpacing: '-0.2px',
+    }}>
+      {Number(ltp).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      {chg != null && (
+        <span style={{ color: chgColor, marginLeft: 4 }}>
+          ({up ? '+' : ''}{chg.toFixed(1)}%)
+        </span>
+      )}
+    </span>
+  );
 }
 
 function Spinner({ color = '#f59e0b', size = 14 }) {
@@ -197,8 +230,13 @@ function MasterRow({ r, active, onSelect, style }) {
                          background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.4)',
                          borderRadius: 4, padding: '0 4px' }}>PARTIAL</span>
         )}
-        <span style={{ fontSize: 15, fontWeight: 700, color: scoreColor(r.score), marginLeft: 'auto' }}>
-          {r.score != null ? r.score : '·'}
+        <span style={{
+          marginLeft: 'auto', display: 'flex', alignItems: 'baseline', gap: 8,
+        }}>
+          <PriceTag ltp={r.price} chg={r.day_change_pct} />
+          <span style={{ fontSize: 15, fontWeight: 700, color: scoreColor(r.score) }}>
+            {r.score != null ? r.score : '·'}
+          </span>
         </span>
       </div>
 
@@ -273,6 +311,50 @@ function VirtualList({ rows, activeSymbol, onSelect }) {
   );
 }
 
+// ── quick view filter (trade-plan status) ─────────────────────────────────────
+
+const FILTERS = [
+  { key: 'all',  label: 'ALL',      tip: 'Show every ranked stock' },
+  { key: 'buy',  label: 'BUY ZONE', tip: 'Trade plan is active / actionable now (Buy or Buy on Dip)' },
+  { key: 'wait', label: 'WAIT',     tip: 'Pending breakouts or extended / overbought setups' },
+];
+
+function FilterBar({ active, counts, onChange }) {
+  return (
+    <div style={{
+      display: 'flex', gap: 6, padding: '8px 12px', flexShrink: 0,
+      borderBottom: '1px solid var(--border)', alignItems: 'center',
+    }}>
+      {FILTERS.map(f => {
+        const on = active === f.key;
+        return (
+          <button
+            key={f.key}
+            onClick={() => onChange(f.key)}
+            title={f.tip}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '4px 9px', borderRadius: 6, cursor: 'pointer',
+              fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
+              textTransform: 'uppercase',
+              background: on ? 'rgba(99,102,241,0.10)' : 'transparent',
+              border: `1px solid ${on ? 'rgba(99,102,241,0.5)' : 'var(--border-strong)'}`,
+              color: on ? '#4f46e5' : '#64748b',
+              transition: 'background 0.15s ease, border-color 0.15s ease',
+            }}
+          >
+            {f.label}
+            <span style={{
+              fontSize: 9.5, fontWeight: 700, fontFamily: 'var(--font-mono)',
+              color: on ? '#4f46e5' : '#94a3b8',
+            }}>{counts[f.key]}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── main master-panel component ───────────────────────────────────────────────
 
 const EXAMPLE = 'RELIANCE, TCS, INFY, HDFCBANK, ITC, LT, SUNPHARMA';
@@ -288,6 +370,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   const [resolving,  setResolving]  = useState(false);
   const [resolution, setResolution] = useState(null);
   const [showInput,  setShowInput]  = useState(true);
+  const [filter,     setFilter]     = useState('all');   // all | buy | wait
 
   const esRef = useRef(null);
   const fileRef = useRef(null);
@@ -323,6 +406,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     onTickersChange?.(syms);   // publish the current universe for Save Screen
     setRows([]);
     setRanked(false);
+    setFilter('all');
     setProgress({ done: 0, total: syms.length });
     setRunning(true);
 
@@ -429,6 +513,22 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
 
   const busy = running || resolving;
   const count = rows?.length || 0;
+
+  // Bucket counts for the filter chips + the list actually rendered.
+  const counts = useMemo(() => {
+    const c = { all: count, buy: 0, wait: 0 };
+    (rows || []).forEach(r => {
+      const b = planBucket(r);
+      if (b === 'buy') c.buy += 1;
+      else if (b === 'wait') c.wait += 1;
+    });
+    return c;
+  }, [rows, count]);
+
+  const filteredRows = useMemo(() => {
+    if (!rows || filter === 'all') return rows || [];
+    return rows.filter(r => planBucket(r) === filter);
+  }, [rows, filter]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -555,9 +655,24 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
         </div>
       )}
 
-      {/* ranked list — windowed so hundreds of rows never crash the DOM */}
+      {/* quick view filters + windowed ranked list */}
       {count > 0 ? (
-        <VirtualList rows={rows} activeSymbol={activeSymbol} onSelect={onSelectStock} />
+        <>
+          <FilterBar active={filter} counts={counts} onChange={setFilter} />
+          {filteredRows.length > 0 ? (
+            <VirtualList key={filter} rows={filteredRows} activeSymbol={activeSymbol} onSelect={onSelectStock} />
+          ) : (
+            <div style={{
+              flex: 1, minHeight: 0, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', padding: '32px 18px', textAlign: 'center',
+              color: '#94a3b8', fontSize: 12, lineHeight: 1.6,
+            }}>
+              {filter === 'buy'
+                ? 'No stocks in the buy zone right now.'
+                : 'No pending or extended setups right now.'}
+            </div>
+          )}
+        </>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {!running && (
