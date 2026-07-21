@@ -75,6 +75,11 @@ def compute_price_factors(candles: list) -> dict:
 
     price = closes[-1]
 
+    # Latest daily change (LTP vs prior close) — surfaced in the screener list
+    day_change_pct = None
+    if len(closes) >= 2 and closes[-2]:
+        day_change_pct = round((closes[-1] / closes[-2] - 1.0) * 100, 2)
+
     # Momentum horizons
     ret_1m = _ret(closes, D_1M)
     ret_3m = _ret(closes, D_3M)
@@ -127,6 +132,7 @@ def compute_price_factors(candles: list) -> dict:
 
     return {
         "price":        round(price, 2),
+        "day_change_pct": day_change_pct,
         "ret_1m":       ret_1m,
         "ret_3m":       ret_3m,
         "ret_6m":       ret_6m,
