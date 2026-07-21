@@ -2,12 +2,33 @@ services:
   - type: web
     name: stocklens-api
     runtime: python
+    # NOTE ON DATA PERSISTENCE:
+    # The app stores the watchlist, saved screens, alerts and the fundamentals
+    # cache in SQLite at $STOCKLENS_DATA_DIR/stocklens.db (default backend/data).
+    # On the `free` plan the disk is EPHEMERAL — it is wiped on every restart
+    # (and free instances spin down after ~15 min idle), so that DB, and with it
+    # the watchlist and saved screens, is lost on each restart/redeploy.
+    #
+    # To persist across restarts, pick ONE of:
+    #   A) Persistent disk (keeps SQLite, simplest — requires a PAID plan):
+    #        change `plan: free` -> `plan: starter`, uncomment the `disk:` block
+    #        below, and set STOCKLENS_DATA_DIR to the mount path.
+    #   B) External managed DB (stays on free tier — needs a code change to move
+    #        db.py from SQLite to e.g. Render Postgres).
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # --- Option A: uncomment with `plan: starter` to persist the SQLite DB ---
+    # disk:
+    #   name: stocklens-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
     envVars:
       - key: GEMINI_API_KEY
         sync: false   # set the value in the Render dashboard
       - key: PYTHON_VERSION
         value: 3.12.0
+      # Point durable state at the persistent disk mount (Option A above).
+      # - key: STOCKLENS_DATA_DIR
+      #   value: /var/data
