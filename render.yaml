@@ -1,3 +1,21 @@
+# Render blueprint. The backend keeps the watchlist, saved screens, alerts and
+# fundamentals cache in Postgres (via DATABASE_URL) so they PERSIST across
+# restarts/redeploys. Without an external DB, the free web plan's ephemeral
+# disk wipes the local SQLite file on every restart, losing the watchlist and
+# saved screens — which is the bug this configuration fixes.
+#
+# db.py auto-detects DATABASE_URL: set -> Postgres, unset -> local SQLite.
+#
+# NOTE: Render's free Postgres instance is time-limited (it expires ~30 days
+# after creation); upgrade the database plan before then to keep the data, or
+# it will be removed by Render.
+
+databases:
+  - name: stocklens-db
+    plan: free
+    databaseName: stocklens
+    user: stocklens
+
 services:
   - type: web
     name: stocklens-api
@@ -7,7 +25,14 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stocklens-db
+          property: connectionString
       - key: GEMINI_API_KEY
         sync: false   # set the value in the Render dashboard
       - key: PYTHON_VERSION
         value: 3.12.0
+      # Optional: only used by the SQLite fallback (when DATABASE_URL is unset).
+      # - key: STOCKLENS_DATA_DIR
+      #   value: /var/data
