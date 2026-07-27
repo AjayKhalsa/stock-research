@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Toaster } from 'react-hot-toast';
 import SearchBar      from './components/SearchBar';
 import Watchlist      from './components/Watchlist';
@@ -19,8 +19,61 @@ import GuideView      from './components/GuideView';
 import { getStock, getAlpha, getPlan } from './api';
 import './App.css';
 
+// Sidebar stays always-visible (never collapsible, by design) but its width
+// is user-resizable via a drag handle; the chosen width is remembered
+// across sessions.
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 420;
+const SIDEBAR_DEFAULT = 250;
+const SIDEBAR_STORAGE_KEY = 'stocklens_sidebar_width';
+
 export default function App() {
   const [currentSymbol, setCurrentSymbol] = useState(null);
+
+  // Resizable sidebar width (drag handle below), persisted to localStorage.
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem(SIDEBAR_STORAGE_KEY));
+      return saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : SIDEBAR_DEFAULT;
+    } catch {
+      return SIDEBAR_DEFAULT;
+    }
+  });
+  const [resizingSidebar, setResizingSidebar] = useState(false);
+  const dragRef = useRef({ startX: 0, startWidth: 0 });
+  const widthRef = useRef(sidebarWidth);
+  widthRef.current = sidebarWidth;
+
+  const handleSidebarResizeStart = useCallback((e) => {
+    dragRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+    setResizingSidebar(true);
+  }, [sidebarWidth]);
+
+  // Pointer events (not mouse events) so this also works with touch/pen —
+  // e.g. an iPad with a trackpad/Magic Keyboard, where the resize handle is
+  // still shown above the ~860px breakpoint that stacks the layout on phones.
+  useEffect(() => {
+    if (!resizingSidebar) return undefined;
+    const onMove = (e) => {
+      const delta = e.clientX - dragRef.current.startX;
+      const next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, dragRef.current.startWidth + delta));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      setResizingSidebar(false);
+      try { localStorage.setItem(SIDEBAR_STORAGE_KEY, String(widthRef.current)); } catch {}
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [resizingSidebar]);
 
   // Master screener panel (collapsible left workspace)
   const [isMasterOpen, setIsMasterOpen] = useState(true);
@@ -121,8 +174,9 @@ export default function App() {
         style: { background: '#ffffff', color: '#0f172a', border: '1px solid rgba(15,23,42,0.1)', borderRadius: 12, boxShadow: '0 8px 24px rgba(16,24,40,0.12)' }
       }} />
 
-      {/* ── Far-left rail: brand + watchlist/alerts hub ── */}
-      <aside className="sidebar">
+      {/* ── Far-left rail: brand + watchlist/alerts hub. Always visible,
+          never collapsible — only its width is user-adjustable. ── */}
+      <aside className="sidebar" style={{ '--sidebar-w': `${sidebarWidth}px` }}>
         <div className="sidebar-logo">
           <span className="logo-icon">📈</span>
           <span className="logo-text">StockLens</span>
@@ -137,6 +191,15 @@ export default function App() {
           }}
         />
       </aside>
+
+      <div
+        className={`sidebar-resize-handle ${resizingSidebar ? 'dragging' : ''}`}
+        onPointerDown={handleSidebarResizeStart}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        title="Drag to resize the sidebar"
+      />
 
       {/* ── Master screener panel (collapsible) ── */}
       <div className={`master-panel ${isMasterOpen ? 'open' : 'closed'}`}>
