@@ -325,3 +325,164 @@
   border-color: rgba(239, 68, 68, 0.5);
   background: rgba(239, 68, 68, 0.06);
 }
+
+/* ── Chartink auto-fetch link editor ───────────────────────────────────────── */
+.ce-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ce-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+}
+.ce-edit-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent-blue);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+.ce-edit-btn:hover { text-decoration: underline; }
+.ce-current {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 3px;
+}
+.ce-edit-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+.ce-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.ce-input:focus { outline: none; border-color: rgba(99, 102, 241, 0.55); }
+.ce-save-btn, .ce-cancel-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  background: #fff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.ce-save-btn { color: var(--accent-blue); }
+.ce-save-btn:disabled, .ce-cancel-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── System Reliability Scorecard (paper trading) ──────────────────────────── */
+.pt-scorecard {
+  margin: 12px 14px 14px;
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+.pt-scorecard-header { margin-bottom: 10px; }
+.pt-scorecard-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #94a3b8;
+  font-family: var(--font-mono);
+}
+.pt-scorecard-empty {
+  font-size: 11.5px;
+  color: #64748b;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+.pt-scorecard-rows { display: flex; flex-direction: column; gap: 7px; margin-bottom: 12px; }
+.pt-scorecard-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pt-scorecard-label { font-size: 11px; color: #94a3b8; }
+.pt-scorecard-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f1f5f9;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.pt-scorecard-sub { font-size: 10px; font-weight: 500; color: #64748b; }
+.pt-scorecard-log-btn {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 7px 0;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.pt-scorecard-log-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+.pt-log-modal { width: 460px; }
+.pt-log-table-wrap { max-height: 320px; overflow-y: auto; margin-top: 4px; }
+.pt-log-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.pt-log-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: #fff;
+}
+.pt-log-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.pt-log-symbol { font-weight: 700; color: var(--text-primary); }
+.pt-log-empty { text-align: center; padding: 20px 0; color: var(--text-muted); font-size: 12px; }
+
+.pt-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pt-badge.win    { background: rgba(16, 185, 129, 0.12); color: #059669; }
+.pt-badge.loss   { background: rgba(239, 68, 68, 0.10);  color: #dc2626; }
+.pt-badge.active { background: rgba(100, 116, 139, 0.10); color: #64748b; }
+
+.pt-r-pos { color: #059669; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pt-r-neg { color: #dc2626; font-weight: 700; font-variant-numeric: tabular-nums; }

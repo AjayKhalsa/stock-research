@@ -29,3 +29,13 @@ export const getScreens = () => API.get('/api/screens').then(r => r.data);
 export const getScreen = (id) => API.get(`/api/screens/${id}`).then(r => r.data);
 export const saveScreen = (name, tickers) => API.post('/api/screens', { name, tickers }).then(r => r.data);
 export const deleteScreen = (id) => API.delete(`/api/screens/${id}`).then(r => r.data);
+
+// Chartink daily auto-fetcher — saved screener URL
+export const getChartinkUrl = () => API.get('/api/settings/chartink-url').then(r => r.data);
+export const setChartinkUrl = (url) => API.post('/api/settings/chartink-url', { url }).then(r => r.data);
+
+// Paper trading / forward-testing log
+export const createPaperTrade = (trade) => API.post('/api/paper-trades', trade).then(r => r.data);
+export const getPaperTradeStats = () => API.get('/api/paper-trades/stats').then(r => r.data);
+export const getPaperTradesList = () => API.get('/api/paper-trades/list').then(r => r.data);
+export const evaluatePaperTrades = () => API.post('/api/paper-trades/evaluate').then(r => r.data);

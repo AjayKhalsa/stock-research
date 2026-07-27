@@ -26,6 +26,11 @@ load_dotenv(os.path.join(BACKEND_DIR, ".env"))
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
+# Shared secret gating POST /api/auto-screen (the Chartink daily auto-fetcher).
+# Unset by default -> the endpoint refuses every request until an operator
+# configures a real secret (an empty secret must never be "valid").
+CRON_SECRET_KEY: str = os.environ.get("CRON_SECRET_KEY", "")
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 # Where durable state lives (SQLite DB: watchlist, saved screens, alerts,
 # fundamentals cache). Overridable via STOCKLENS_DATA_DIR so a deploy can point
