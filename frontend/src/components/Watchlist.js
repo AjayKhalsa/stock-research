@@ -4,8 +4,8 @@ import toast from 'react-hot-toast';
 import {
   getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
   getScreens, getScreen, saveScreen, deleteScreen,
-  getChartinkUrl, setChartinkUrl, getPaperTradeStats, getPaperTradesList,
-  getAutoScreenStatus,
+  getChartinkUrl, setChartinkUrl, getChartinkScanClause, setChartinkScanClause,
+  getPaperTradeStats, getPaperTradesList, getAutoScreenStatus,
 } from '../api';
 
 import './Watchlist.css';
@@ -30,8 +30,13 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
   // Chartink daily auto-fetcher — the URL a server-side cron scrapes each
   // day into the "Daily Chartink Auto-Run" saved screen above.
   const [chartinkUrl, setChartinkUrlState] = useState('');
+  // Optional scan_clause override — most screener pages build this with
+  // client-side JS, so it's invisible to the plain-HTML scraper; storing the
+  // real value here (copied once from the browser) skips that guesswork.
+  const [chartinkScanClause, setChartinkScanClauseState] = useState('');
   const [editingLink, setEditingLink] = useState(false);
   const [linkDraft, setLinkDraft] = useState('');
+  const [scanClauseDraft, setScanClauseDraft] = useState('');
   const [savingLink, setSavingLink] = useState(false);
   const linkInputRef = useRef(null);
   // Last (or in-progress) cron run outcome — so a failed/stalled auto-fetch
@@ -47,6 +52,7 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
 
   useEffect(() => {
     getChartinkUrl().then(r => setChartinkUrlState(r.url || '')).catch(() => {});
+    getChartinkScanClause().then(r => setChartinkScanClauseState(r.scan_clause || '')).catch(() => {});
   }, []);
   useEffect(() => { if (editingLink) setTimeout(() => linkInputRef.current?.focus(), 30); }, [editingLink]);
 
@@ -61,19 +67,25 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
 
   const handleEditLink = () => {
     setLinkDraft(chartinkUrl);
+    setScanClauseDraft(chartinkScanClause);
     setEditingLink(true);
   };
 
   const handleSaveLink = async () => {
-    const trimmed = linkDraft.trim();
+    const trimmedUrl = linkDraft.trim();
+    const trimmedClause = scanClauseDraft.trim();
     setSavingLink(true);
     try {
-      const rec = await setChartinkUrl(trimmed);
-      setChartinkUrlState(rec.url || '');
+      const [urlRec, clauseRec] = await Promise.all([
+        setChartinkUrl(trimmedUrl),
+        setChartinkScanClause(trimmedClause),
+      ]);
+      setChartinkUrlState(urlRec.url || '');
+      setChartinkScanClauseState(clauseRec.scan_clause || '');
       setEditingLink(false);
-      toast.success(trimmed ? 'Chartink link saved' : 'Chartink link cleared');
+      toast.success(trimmedUrl ? 'Chartink settings saved' : 'Chartink link cleared');
     } catch {
-      toast.error('Could not save the Chartink link');
+      toast.error('Could not save the Chartink settings');
     } finally {
       setSavingLink(false);
     }
@@ -181,6 +193,13 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
           {chartinkUrl || 'No URL configured'}
         </div>
       )}
+      {!editingLink && chartinkUrl && (
+        <div className="ce-clause-note" title={chartinkScanClause || undefined}>
+          {chartinkScanClause
+            ? 'Scan clause: configured (skips auto-detect)'
+            : 'Scan clause: not set — relying on auto-detect, which fails for most screens'}
+        </div>
+      )}
       {!editingLink && runStatus?.status === 'running' && (
         <div className="ce-status ce-status-running">
           Running… {runStatus.done ?? 0}/{runStatus.total ?? '?'} fetched
@@ -201,21 +220,36 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
         </div>
       )}
       {editingLink && (
-        <div className="ce-edit-row">
+        <div className="ce-edit-form">
           <input
             ref={linkInputRef}
             className="ce-input"
             placeholder="https://chartink.com/screener/..."
             value={linkDraft}
             onChange={(e) => setLinkDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveLink(); if (e.key === 'Escape') setEditingLink(false); }}
+            onKeyDown={(e) => { if (e.key === 'Escape') setEditingLink(false); }}
           />
-          <button className="ce-save-btn" onClick={handleSaveLink} disabled={savingLink}>
-            {savingLink ? '...' : 'Save'}
-          </button>
-          <button className="ce-cancel-btn" onClick={() => setEditingLink(false)} disabled={savingLink}>
-            Cancel
-          </button>
+          <textarea
+            className="ce-textarea"
+            placeholder="Scan clause (optional, but usually required) — e.g. ( {cash} ( daily close > 20 and ... ) )"
+            value={scanClauseDraft}
+            onChange={(e) => setScanClauseDraft(e.target.value)}
+            rows={3}
+          />
+          <div className="ce-clause-help">
+            Chartink builds this with page JavaScript, so it's rarely visible in the raw
+            HTML — copy it from your browser's DevTools (Network tab → the "process" request
+            when you click Run Scan → its form payload) and paste it here once. Leave blank
+            to fall back to best-effort auto-detection.
+          </div>
+          <div className="ce-edit-actions">
+            <button className="ce-save-btn" onClick={handleSaveLink} disabled={savingLink}>
+              {savingLink ? '...' : 'Save'}
+            </button>
+            <button className="ce-cancel-btn" onClick={() => setEditingLink(false)} disabled={savingLink}>
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

@@ -180,6 +180,10 @@ class ChartinkUrlBody(BaseModel):
     url: str
 
 
+class ChartinkScanClauseBody(BaseModel):
+    scan_clause: str
+
+
 @router.get("/api/settings/chartink-url")
 async def get_chartink_url():
     return {"url": db.get_setting("chartink_url", "")}
@@ -193,6 +197,25 @@ async def set_chartink_url(body: ChartinkUrlBody):
                              detail="Must be a chartink.com screener URL")
     db.set_setting("chartink_url", url)
     return {"url": url}
+
+
+@router.get("/api/settings/chartink-scan-clause")
+async def get_chartink_scan_clause():
+    return {"scan_clause": db.get_setting("chartink_scan_clause", "")}
+
+
+@router.post("/api/settings/chartink-scan-clause")
+async def set_chartink_scan_clause(body: ChartinkScanClauseBody):
+    """
+    Optional override: most Chartink screener pages build the scan_clause
+    with client-side JS right before submission, so chartink_scraper's
+    HTML-based extraction never finds it. Storing the real clause here (grab
+    it once from the browser — e.g. DevTools' Network tab on the "Run Scan"
+    request, or the page's rendered condition text) skips that fragile step
+    entirely for this screener from then on.
+    """
+    db.set_setting("chartink_scan_clause", body.scan_clause.strip())
+    return {"scan_clause": body.scan_clause.strip()}
 
 
 def _set_auto_screen_status(**fields) -> None:
@@ -286,7 +309,8 @@ async def _run_auto_screen(url: str) -> None:
     _set_auto_screen_status(status="running", started_at=time.time(), finished_at=None,
                              done=0, total=0, count=0, error=None)
     try:
-        tickers = await chartink_scraper.fetch_screener_tickers(url)
+        scan_clause = db.get_setting("chartink_scan_clause", "") or None
+        tickers = await chartink_scraper.fetch_screener_tickers(url, scan_clause)
         if not tickers:
             _set_auto_screen_status(status="done", finished_at=time.time(),
                                      count=0, error="Chartink returned no tickers")

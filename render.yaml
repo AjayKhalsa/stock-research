@@ -1,20 +1,25 @@
-# Render blueprint. The backend keeps the watchlist, saved screens, alerts and
-# fundamentals cache in Postgres (via DATABASE_URL) so they PERSIST across
-# restarts/redeploys. Without an external DB, the free web plan's ephemeral
-# disk wipes the local SQLite file on every restart, losing the watchlist and
-# saved screens — which is the bug this configuration fixes.
+# Render deploy config for the backend web service.
 #
-# db.py auto-detects DATABASE_URL: set -> Postgres, unset -> local SQLite.
+# Durable state (watchlist, saved screens, alerts, paper trades, fundamentals
+# cache) lives wherever DATABASE_URL points db.py: set -> Postgres, unset ->
+# local SQLite. This does NOT provision a database — set DATABASE_URL
+# manually in the Render dashboard (Environment tab) pointing at a real
+# Postgres instance, e.g. a free Neon database (neon.tech): permanently free,
+# unlike Render's own managed Postgres free tier, which expires ~30 days
+# after creation and would silently lose this same data all over again.
 #
-# NOTE: Render's free Postgres instance is time-limited (it expires ~30 days
-# after creation); upgrade the database plan before then to keep the data, or
-# it will be removed by Render.
-
-databases:
-  - name: stocklens-db
-    plan: free
-    databaseName: stocklens
-    user: stocklens
+# Without DATABASE_URL set, the free web plan's ephemeral disk wipes the
+# local SQLite file on every restart/redeploy — this has already happened
+# once in production because the variable was never actually added. Check
+# the backend's startup logs for "[db] Using..." to confirm which backend is
+# actually active before assuming this is fixed.
+#
+# (An earlier version of this file provisioned Render's own free Postgres via
+# a `databases:` Blueprint block wired through `fromDatabase:` — removed
+# because it only takes effect on a Blueprint-style deploy, doesn't match how
+# this service is actually run, expires after ~30 days regardless, and would
+# silently override a manually-set DATABASE_URL if a Blueprint deploy were
+# ever used later.)
 
 services:
   - type: web
@@ -25,10 +30,11 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # Set manually in the Render dashboard -> Environment tab. Point it at
+      # a Postgres connection string (Neon's free tier or similar). Left
+      # unset here on purpose — see the note above.
       - key: DATABASE_URL
-        fromDatabase:
-          name: stocklens-db
-          property: connectionString
+        sync: false
       - key: GEMINI_API_KEY
         sync: false   # set the value in the Render dashboard
       - key: PYTHON_VERSION
