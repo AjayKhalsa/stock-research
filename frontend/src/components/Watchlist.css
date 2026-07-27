@@ -362,6 +362,16 @@
   text-overflow: ellipsis;
   margin-top: 3px;
 }
+.ce-status {
+  font-size: 10.5px;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ce-status-running { color: var(--accent-blue); }
+.ce-status-ok { color: var(--text-muted); }
+.ce-status-error { color: var(--accent-red); cursor: help; }
 .ce-edit-row {
   display: flex;
   gap: 6px;

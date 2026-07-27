@@ -5,11 +5,18 @@ import {
   getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
   getScreens, getScreen, saveScreen, deleteScreen,
   getChartinkUrl, setChartinkUrl, getPaperTradeStats, getPaperTradesList,
+  getAutoScreenStatus,
 } from '../api';
 
 import './Watchlist.css';
 
 const CHARTINK_SCREEN_NAME = 'Daily Chartink Auto-Run';
+
+function formatAgeMinutes(mins) {
+  if (mins == null) return '';
+  if (mins < 60) return `${Math.round(mins)}m ago`;
+  return `${(mins / 60).toFixed(1)}h ago`;
+}
 
 /* Save/load panel for named screens. Sits at the very top of the sidebar. */
 function SavedScreensPanel({ screenTickers, onLoadScreen }) {
@@ -27,6 +34,9 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
   const [linkDraft, setLinkDraft] = useState('');
   const [savingLink, setSavingLink] = useState(false);
   const linkInputRef = useRef(null);
+  // Last (or in-progress) cron run outcome — so a failed/stalled auto-fetch
+  // is visible here instead of only in Render's logs.
+  const [runStatus, setRunStatus] = useState(null);
 
   const refresh = useCallback(async () => {
     try { setScreens(await getScreens()); } catch {}
@@ -39,6 +49,13 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
     getChartinkUrl().then(r => setChartinkUrlState(r.url || '')).catch(() => {});
   }, []);
   useEffect(() => { if (editingLink) setTimeout(() => linkInputRef.current?.focus(), 30); }, [editingLink]);
+
+  useEffect(() => {
+    const poll = () => getAutoScreenStatus().then(setRunStatus).catch(() => {});
+    poll();
+    const interval = setInterval(poll, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const hasAutoRunScreen = screens.some(s => s.name === CHARTINK_SCREEN_NAME);
 
@@ -162,6 +179,25 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
       {!editingLink && (
         <div className="ce-current" title={chartinkUrl || undefined}>
           {chartinkUrl || 'No URL configured'}
+        </div>
+      )}
+      {!editingLink && runStatus?.status === 'running' && (
+        <div className="ce-status ce-status-running">
+          Running… {runStatus.done ?? 0}/{runStatus.total ?? '?'} fetched
+        </div>
+      )}
+      {!editingLink && runStatus?.status === 'error' && (
+        <div className="ce-status ce-status-error" title={runStatus.error || ''}>
+          Last run FAILED {formatAgeMinutes(runStatus.age_minutes)}
+          {runStatus.error ? ` — ${runStatus.error}` : ''}
+        </div>
+      )}
+      {!editingLink && runStatus?.status === 'done' && (
+        <div className={`ce-status ${runStatus.count ? 'ce-status-ok' : 'ce-status-error'}`}
+             title={runStatus.error || ''}>
+          {runStatus.count
+            ? `Last run: ${formatAgeMinutes(runStatus.age_minutes)} · ${runStatus.count} matched`
+            : `Last run: ${formatAgeMinutes(runStatus.age_minutes)} · ${runStatus.error || 'no matches'}`}
         </div>
       )}
       {editingLink && (

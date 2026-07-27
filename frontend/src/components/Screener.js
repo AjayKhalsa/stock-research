@@ -371,6 +371,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   const [resolution, setResolution] = useState(null);
   const [showInput,  setShowInput]  = useState(true);
   const [filter,     setFilter]     = useState('all');   // all | buy | wait
+  const [skipped,    setSkipped]    = useState(0);        // symbols with no usable data
 
   const esRef = useRef(null);
   const fileRef = useRef(null);
@@ -407,6 +408,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     setRows([]);
     setRanked(false);
     setFilter('all');
+    setSkipped(0);
     setProgress({ done: 0, total: syms.length });
     setRunning(true);
 
@@ -423,11 +425,13 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
         // Progressive: append this batch's rows (unranked) so the table fills.
         setRows(prev => [...(prev || []), ...msg.rows]);
         setProgress({ done: msg.done, total: msg.total });
+        setSkipped(msg.skipped ?? 0);
         setShowInput(false);
       } else if (msg.type === 'result') {
         // Authoritative cross-sectionally ranked set replaces the provisional rows.
         setRows(msg.data);
         setRanked(true);
+        setSkipped(msg.skipped ?? 0);
         setShowInput(false);
       } else if (msg.type === 'done') {
         setRunning(false);
@@ -542,6 +546,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
         {count > 0 && (
           <span style={{ fontSize: 11, color: '#94a3b8' }}>
             {count}{ranked ? ' ranked' : ` / ${progress.total}`}
+            {skipped > 0 && ` · ${skipped} skipped`}
           </span>
         )}
         {rows && lastSymsRef.current.length >= 2 && (
