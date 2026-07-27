@@ -372,15 +372,23 @@
 .ce-status-running { color: var(--accent-blue); }
 .ce-status-ok { color: var(--text-muted); }
 .ce-status-error { color: var(--accent-red); cursor: help; }
-.ce-edit-row {
+.ce-clause-note {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ce-edit-form {
   display: flex;
+  flex-direction: column;
   gap: 6px;
   margin-top: 6px;
-  align-items: center;
 }
-.ce-input {
-  flex: 1;
-  min-width: 0;
+.ce-input,
+.ce-textarea {
+  width: 100%;
   box-sizing: border-box;
   background: var(--bg-inset);
   border: 1px solid var(--border-strong);
@@ -390,7 +398,18 @@
   font-size: 11px;
   color: var(--text-primary);
 }
-.ce-input:focus { outline: none; border-color: rgba(99, 102, 241, 0.55); }
+.ce-textarea { resize: vertical; line-height: 1.4; }
+.ce-input:focus,
+.ce-textarea:focus { outline: none; border-color: rgba(99, 102, 241, 0.55); }
+.ce-clause-help {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.ce-edit-actions {
+  display: flex;
+  gap: 6px;
+}
 .ce-save-btn, .ce-cancel-btn {
   flex-shrink: 0;
   border: 1px solid var(--border-strong);

@@ -52,11 +52,21 @@ def _extract_scan_clause(html: str, soup: BeautifulSoup) -> str | None:
     return None
 
 
-async def fetch_screener_tickers(screener_url: str) -> list[str]:
+async def fetch_screener_tickers(screener_url: str, scan_clause_override: str | None = None) -> list[str]:
     """
     Load a Chartink screener page, run its scan via /screener/process, and
     return the deduped, upper-cased NSE symbols it matched today. Returns []
     on any failure — see module docstring.
+
+    scan_clause_override: many screener pages build the scan_clause with
+    client-side JS right before submission, so it's never present in the
+    plain HTML this module fetches — _extract_scan_clause() only catches the
+    screens where it happens to be statically embedded. When that fails, the
+    operator can copy the real clause once (Chartink's UI / DevTools expose
+    it) and store it via POST /api/settings/chartink-scan-clause; pass it
+    here to skip extraction entirely and use it directly. The CSRF token
+    still has to be fetched fresh every run — that part is session-bound and
+    can't be stored the same way.
     """
     if not screener_url:
         return []
@@ -70,12 +80,16 @@ async def fetch_screener_tickers(screener_url: str) -> list[str]:
 
             soup = BeautifulSoup(page.text, "lxml")
             csrf_token = _extract_csrf_token(soup)
-            scan_clause = _extract_scan_clause(page.text, soup)
+            scan_clause = scan_clause_override.strip() if scan_clause_override else \
+                _extract_scan_clause(page.text, soup)
 
             if not csrf_token or not scan_clause:
-                print(f"[chartink] could not find "
-                      f"{'csrf token' if not csrf_token else 'scan clause'} "
-                      f"on {screener_url} — page markup may have changed")
+                missing = "csrf token" if not csrf_token else "scan clause"
+                hint = (" (no stored scan_clause override configured either — "
+                        "set one via POST /api/settings/chartink-scan-clause)"
+                        if missing == "scan clause" and not scan_clause_override else "")
+                print(f"[chartink] could not find {missing} on {screener_url} "
+                      f"— page markup may have changed{hint}")
                 return []
 
             # Diagnostic only: confirms what we're about to submit without
