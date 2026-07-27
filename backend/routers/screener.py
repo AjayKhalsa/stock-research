@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -30,6 +31,14 @@ BATCH_SIZE = 25
 # Concurrency within a batch. Kept well under the batch size so Screener.in
 # is not hammered on cold runs; cached symbols skip scraping entirely.
 FETCH_CONCURRENCY = 6
+# Lower concurrency for the unattended daily cron run (_fetch_and_rank /
+# /api/auto-screen): nobody is watching it, so trading some speed for a
+# gentler footprint on Screener.in is the right call at 400+-symbol scale —
+# kept as its own constant so tuning one path never silently affects the
+# other.
+AUTO_SCREEN_FETCH_CONCURRENCY = 3
+
+AUTO_SCREEN_STATUS_KEY = "auto_screen_last_run"
 
 
 def _json_clean(obj):
@@ -186,10 +195,43 @@ async def set_chartink_url(body: ChartinkUrlBody):
     return {"url": url}
 
 
-async def _fetch_and_rank(syms: list[str]) -> list[dict]:
-    """Same fetch-then-rank shape as /api/screen-stream, without the SSE
-    progress events — used for the one-shot cron run."""
-    sem = asyncio.Semaphore(FETCH_CONCURRENCY)
+def _set_auto_screen_status(**fields) -> None:
+    """Merge-update the persisted last-run record for the daily cron job —
+    read via GET /api/auto-screen/status. Backed by the existing generic
+    settings table (db.get_setting/set_setting), no new schema needed."""
+    current = db.get_setting(AUTO_SCREEN_STATUS_KEY, {}) or {}
+    current.update(fields)
+    db.set_setting(AUTO_SCREEN_STATUS_KEY, current)
+
+
+# Heuristic rate-limit backoff for the unattended cron path. There is no
+# clean "was rate-limited" signal threaded up from screener_scraper.py's
+# fetch_screener_full — doing so would mean changing the return shape of a
+# function shared by every stock-detail endpoint in the app, not just this
+# one nightly job, which is a lot of blast radius for one cron path's
+# politeness. Instead: a batch that mostly comes back with no usable row is
+# a reasonable proxy for scrape friction (rate limiting or similar), and is
+# fully local to this function — no shared code touched. Not a general
+# retry framework; Path A (the interactive /api/screen-stream) never uses
+# this and always runs at full speed, since a human is actively waiting.
+_BAD_BATCH_HIT_RATE = 0.5      # < 50% of a batch producing a row looks like friction
+_BACKOFF_BASE_SECONDS = 5
+_BACKOFF_STEP_SECONDS = 5
+_BACKOFF_MAX_SECONDS = 30
+
+
+async def _fetch_and_rank(syms: list[str], concurrency: int = FETCH_CONCURRENCY) -> list[dict]:
+    """
+    Same fetch-then-rank shape as /api/screen-stream, without the SSE
+    progress events — used for the one-shot cron run. Unlike the interactive
+    stream, this:
+      - saves progress after every batch (db.screen_save is upsert-on-name,
+        so a mid-run crash/restart leaves the saved screen at whatever the
+        last completed batch produced, not empty)
+      - updates the auto_screen_last_run status record after every batch
+      - backs off between batches when a batch looks rate-limited
+    """
+    sem = asyncio.Semaphore(concurrency)
 
     async def fetch_one(sym: str):
         async with sem:
@@ -200,26 +242,83 @@ async def _fetch_and_rank(syms: list[str]) -> list[dict]:
             except Exception as e:                            # noqa: BLE001
                 return sym, {}, [], str(e)
 
-    rows = []
-    for batch in _chunks(syms, BATCH_SIZE):
+    batches = list(_chunks(syms, BATCH_SIZE))
+    total = len(syms)
+    rows, done, ranked, consecutive_bad_batches = [], 0, [], 0
+
+    for i, batch in enumerate(batches):
         results = await asyncio.gather(*(fetch_one(s) for s in batch))
+        batch_hits = 0
         for sym, sdata, hist, err in results:
+            done += 1
             if err:
                 continue
             row = _build_row(sym, sdata, hist)
             if row is not None:
                 rows.append(row)
+                batch_hits += 1
 
-    return swing_engine.cross_sectional_rank(rows) if rows else []
+        ranked = swing_engine.cross_sectional_rank(rows) if rows else []
+        ranked_symbols = [r["symbol"] for r in ranked]
+        if ranked_symbols:
+            db.screen_save(AUTO_SCREEN_NAME, ranked_symbols)
+        _set_auto_screen_status(done=done, total=total, count=len(ranked_symbols))
+
+        hit_rate = batch_hits / len(batch) if batch else 1.0
+        if hit_rate < _BAD_BATCH_HIT_RATE:
+            consecutive_bad_batches += 1
+            if i < len(batches) - 1:   # no point backing off after the last batch
+                delay = min(_BACKOFF_MAX_SECONDS, _BACKOFF_BASE_SECONDS
+                            + _BACKOFF_STEP_SECONDS * (consecutive_bad_batches - 1))
+                print(f"[auto-screen] batch {i + 1}/{len(batches)} hit rate "
+                      f"{hit_rate:.0%} — backing off {delay}s before the next batch")
+                await asyncio.sleep(delay)
+        else:
+            consecutive_bad_batches = 0
+
+    return ranked
+
+
+async def _run_auto_screen(url: str) -> None:
+    """The actual scrape -> fetch/rank -> save sequence, run in the
+    background (see auto_screen() below) so the HTTP request that triggers
+    it returns immediately regardless of how long this takes."""
+    _set_auto_screen_status(status="running", started_at=time.time(), finished_at=None,
+                             done=0, total=0, count=0, error=None)
+    try:
+        tickers = await chartink_scraper.fetch_screener_tickers(url)
+        if not tickers:
+            _set_auto_screen_status(status="done", finished_at=time.time(),
+                                     count=0, error="Chartink returned no tickers")
+            return
+
+        tickers = tickers[:500]
+        _set_auto_screen_status(total=len(tickers))
+        await _fetch_and_rank(tickers, concurrency=AUTO_SCREEN_FETCH_CONCURRENCY)
+
+        latest = db.get_setting(AUTO_SCREEN_STATUS_KEY, {}) or {}
+        final_count = latest.get("count", 0)
+        _set_auto_screen_status(
+            status="done", finished_at=time.time(), count=final_count,
+            error=None if final_count else "No usable data for any matched ticker",
+        )
+    except Exception as e:                                        # noqa: BLE001
+        _set_auto_screen_status(status="error", finished_at=time.time(), error=str(e))
 
 
 @router.post("/api/auto-screen")
-async def auto_screen(secret: str = ""):
+async def auto_screen(background_tasks: BackgroundTasks, secret: str = ""):
     """
     Daily cron target: scrape the saved Chartink screener URL, cross-sectionally
     rank the matches, and upsert them as the "Daily Chartink Auto-Run" saved
     screen. Gated by CRON_SECRET_KEY — an unset key disables the endpoint
     entirely (an empty secret must never be accepted as valid).
+
+    Runs in the background: a cold run over hundreds of symbols can take
+    minutes, well past what Render's proxy, Cloudflare's edge, or a cron
+    pinger's own timeout will tolerate on a held-open request. This endpoint
+    validates the secret and the configured URL, schedules the real work,
+    and returns immediately. Progress/outcome: GET /api/auto-screen/status.
     """
     if not config.CRON_SECRET_KEY or secret != config.CRON_SECRET_KEY:
         raise HTTPException(status_code=403, detail="Invalid or missing secret")
@@ -231,14 +330,16 @@ async def auto_screen(secret: str = ""):
             detail="No Chartink URL configured — set one via POST /api/settings/chartink-url",
         )
 
-    tickers = await chartink_scraper.fetch_screener_tickers(url)
-    if not tickers:
-        return {"status": "no_tickers", "count": 0, "screen": None}
+    background_tasks.add_task(_run_auto_screen, url)
+    return {"status": "started"}
 
-    ranked = await _fetch_and_rank(tickers[:500])
-    ranked_symbols = [r["symbol"] for r in ranked]
-    if not ranked_symbols:
-        return {"status": "no_data", "count": 0, "screen": None}
 
-    screen = db.screen_save(AUTO_SCREEN_NAME, ranked_symbols)
-    return {"status": "ok", "count": len(ranked_symbols), "screen": screen}
+@router.get("/api/auto-screen/status")
+async def auto_screen_status():
+    """Last (or in-progress) daily auto-fetch run: status/done/total/count/
+    error, so the outcome is visible in the UI instead of only in server
+    logs."""
+    record = db.get_setting(AUTO_SCREEN_STATUS_KEY, {}) or {}
+    if record.get("finished_at"):
+        record["age_minutes"] = round(max(0.0, time.time() - record["finished_at"]) / 60, 1)
+    return record

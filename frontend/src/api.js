@@ -33,6 +33,7 @@ export const deleteScreen = (id) => API.delete(`/api/screens/${id}`).then(r => r
 // Chartink daily auto-fetcher — saved screener URL
 export const getChartinkUrl = () => API.get('/api/settings/chartink-url').then(r => r.data);
 export const setChartinkUrl = (url) => API.post('/api/settings/chartink-url', { url }).then(r => r.data);
+export const getAutoScreenStatus = () => API.get('/api/auto-screen/status').then(r => r.data);
 
 // Paper trading / forward-testing log
 export const createPaperTrade = (trade) => API.post('/api/paper-trades', trade).then(r => r.data);
