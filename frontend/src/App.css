@@ -6,10 +6,16 @@
   overflow: hidden;
 }
 
-/* ── Sidebar ── */
+/* ── Sidebar ──
+   Width is driven by --sidebar-w (set inline from React state, persisted to
+   localStorage) so it's user-resizable via the drag handle below, while
+   staying always-visible/never-collapsible per the original design. The
+   var() fallback covers first paint before the effect that reads
+   localStorage has run. */
 .sidebar {
-  width: 250px;
-  min-width: 250px;
+  width: var(--sidebar-w, 250px);
+  min-width: 200px;
+  flex-shrink: 0;
   background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
@@ -18,6 +24,32 @@
   flex-direction: column;
   height: 100%;
   overflow-y: auto;
+}
+
+/* ── Sidebar resize handle ── */
+.sidebar-resize-handle {
+  position: relative;
+  flex-shrink: 0;
+  width: 6px;
+  margin-left: -3px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 70;
+  touch-action: none;
+}
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle.dragging::after {
+  background: var(--accent-blue);
 }
 
 .sidebar-logo {
@@ -487,13 +519,17 @@
   .app-layout { flex-direction: column; height: auto; overflow: visible; }
 
   .sidebar {
-    width: 100%;
+    /* !important: overrides the JS-driven --sidebar-w desktop width —
+       resizing doesn't apply once the shell stacks vertically. */
+    width: 100% !important;
     min-width: 0;
     height: auto;
     max-height: 46vh;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
+
+  .sidebar-resize-handle { display: none; }
 
   .master-panel,
   .master-panel.open {
