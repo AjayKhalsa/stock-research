@@ -78,6 +78,12 @@ async def fetch_screener_tickers(screener_url: str) -> list[str]:
                       f"on {screener_url} — page markup may have changed")
                 return []
 
+            # Diagnostic only: confirms what we're about to submit without
+            # dumping a potentially long clause in full.
+            print(f"[chartink] submitting scan_clause "
+                  f"({len(scan_clause)} chars): {scan_clause[:200]!r}"
+                  f"{'...' if len(scan_clause) > 200 else ''}")
+
             resp = await client.post(
                 PROCESS_URL,
                 data={"scan_clause": scan_clause},
@@ -106,6 +112,16 @@ async def fetch_screener_tickers(screener_url: str) -> list[str]:
                 if sym and sym not in seen:
                     seen.add(sym)
                     symbols.append(sym)
+
+            if not symbols:
+                # Every prior step succeeded (200s, valid JSON) but the scan
+                # matched nothing, or matched rows didn't carry "nsecode".
+                # This was previously a SILENT empty return — the one gap in
+                # this module's error logging — so log exactly what came back.
+                extra = {k: v for k, v in payload.items() if k != "data"}
+                print(f"[chartink] scan ran but returned {len(rows)} raw row(s), "
+                      f"0 usable symbols. Sample row: {rows[0] if rows else None!r}. "
+                      f"Other response keys: {extra!r}")
             return symbols
 
     except Exception as e:                                    # noqa: BLE001
