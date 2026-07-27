@@ -205,12 +205,17 @@ CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
 def init() -> None:
     """Create schema (idempotent). SQLite path also migrates legacy JSON once."""
     if _PG:
+        print("[db] Using Postgres — persistent across restarts.")
         with _conn() as c:
             with c.cursor() as cur:
                 for stmt in _SCHEMA_PG.split(";"):
                     if stmt.strip():
                         cur.execute(stmt)
         return
+    print(f"[db] Using local SQLite at {DB_PATH} — EPHEMERAL on most hosts "
+          f"(e.g. Render's free plan wipes this on every restart/redeploy). "
+          f"Set DATABASE_URL to a Postgres connection string to persist data "
+          f"across restarts.")
     with _conn() as c:
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(_SCHEMA_SQLITE)
