@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import {
   getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
@@ -182,7 +183,12 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
         </div>
       )}
 
-      {modalOpen && (
+      {modalOpen && createPortal(
+        // Portalled to <body>: the sidebar's backdrop-filter (frosted glass)
+        // creates a CSS containing block for any position:fixed descendant,
+        // which was pinning this overlay inside the 250px sidebar column
+        // instead of covering the viewport. Escaping via a portal sidesteps
+        // that regardless of what CSS the sidebar (or any ancestor) uses.
         <div className="ss-modal-overlay" onMouseDown={() => setModalOpen(false)}>
           <div className="ss-modal" onMouseDown={(e) => e.stopPropagation()}>
             <div className="ss-modal-title">Save Screen</div>
@@ -205,7 +211,8 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -286,7 +293,7 @@ function ScorecardWidget() {
 
       <button className="pt-scorecard-log-btn" onClick={openLog}>View Trade Log</button>
 
-      {showLog && (
+      {showLog && createPortal(
         <div className="ss-modal-overlay" onMouseDown={() => setShowLog(false)}>
           <div className="ss-modal pt-log-modal" onMouseDown={(e) => e.stopPropagation()}>
             <div className="ss-modal-title">Paper Trade Log</div>
@@ -323,7 +330,8 @@ function ScorecardWidget() {
               <button className="ss-modal-cancel" onClick={() => setShowLog(false)}>Close</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
