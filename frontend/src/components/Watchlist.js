@@ -3,8 +3,12 @@ import toast from 'react-hot-toast';
 import {
   getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
   getScreens, getScreen, saveScreen, deleteScreen,
+  getChartinkUrl, setChartinkUrl, getPaperTradeStats, getPaperTradesList,
 } from '../api';
+
 import './Watchlist.css';
+
+const CHARTINK_SCREEN_NAME = 'Daily Chartink Auto-Run';
 
 /* Save/load panel for named screens. Sits at the very top of the sidebar. */
 function SavedScreensPanel({ screenTickers, onLoadScreen }) {
@@ -15,12 +19,47 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
   const [saving, setSaving] = useState(false);
   const inputRef = useRef(null);
 
+  // Chartink daily auto-fetcher — the URL a server-side cron scrapes each
+  // day into the "Daily Chartink Auto-Run" saved screen above.
+  const [chartinkUrl, setChartinkUrlState] = useState('');
+  const [editingLink, setEditingLink] = useState(false);
+  const [linkDraft, setLinkDraft] = useState('');
+  const [savingLink, setSavingLink] = useState(false);
+  const linkInputRef = useRef(null);
+
   const refresh = useCallback(async () => {
     try { setScreens(await getScreens()); } catch {}
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => { if (modalOpen) setTimeout(() => inputRef.current?.focus(), 30); }, [modalOpen]);
+
+  useEffect(() => {
+    getChartinkUrl().then(r => setChartinkUrlState(r.url || '')).catch(() => {});
+  }, []);
+  useEffect(() => { if (editingLink) setTimeout(() => linkInputRef.current?.focus(), 30); }, [editingLink]);
+
+  const hasAutoRunScreen = screens.some(s => s.name === CHARTINK_SCREEN_NAME);
+
+  const handleEditLink = () => {
+    setLinkDraft(chartinkUrl);
+    setEditingLink(true);
+  };
+
+  const handleSaveLink = async () => {
+    const trimmed = linkDraft.trim();
+    setSavingLink(true);
+    try {
+      const rec = await setChartinkUrl(trimmed);
+      setChartinkUrlState(rec.url || '');
+      setEditingLink(false);
+      toast.success(trimmed ? 'Chartink link saved' : 'Chartink link cleared');
+    } catch {
+      toast.error('Could not save the Chartink link');
+    } finally {
+      setSavingLink(false);
+    }
+  };
 
   const canSave = Array.isArray(screenTickers) && screenTickers.length > 0;
 
@@ -109,6 +148,40 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
         )}
       </div>
 
+      <div className="ce-row">
+        <span className="ce-label" title="A server-side cron scrapes this Chartink screener daily into the &quot;Daily Chartink Auto-Run&quot; saved screen above.">
+          {hasAutoRunScreen ? 'Chartink Auto-Fetch' : 'Chartink Auto-Fetch (not yet run)'}
+        </span>
+        {!editingLink && (
+          <button className="ce-edit-btn" onClick={handleEditLink} title="Edit the Chartink screener URL">
+            ⚙️ Edit Link
+          </button>
+        )}
+      </div>
+      {!editingLink && (
+        <div className="ce-current" title={chartinkUrl || undefined}>
+          {chartinkUrl || 'No URL configured'}
+        </div>
+      )}
+      {editingLink && (
+        <div className="ce-edit-row">
+          <input
+            ref={linkInputRef}
+            className="ce-input"
+            placeholder="https://chartink.com/screener/..."
+            value={linkDraft}
+            onChange={(e) => setLinkDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveLink(); if (e.key === 'Escape') setEditingLink(false); }}
+          />
+          <button className="ce-save-btn" onClick={handleSaveLink} disabled={savingLink}>
+            {savingLink ? '...' : 'Save'}
+          </button>
+          <button className="ce-cancel-btn" onClick={() => setEditingLink(false)} disabled={savingLink}>
+            Cancel
+          </button>
+        </div>
+      )}
+
       {modalOpen && (
         <div className="ss-modal-overlay" onMouseDown={() => setModalOpen(false)}>
           <div className="ss-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -130,6 +203,124 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
               <button className="ss-modal-confirm" onClick={handleSave} disabled={!name.trim() || saving}>
                 {saving ? 'Saving...' : 'Save'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function statusTone(status) {
+  if (status === 'WIN_T1' || status === 'WIN_T2') return 'win';
+  if (status === 'STOPPED_OUT') return 'loss';
+  return 'active';
+}
+
+/* Persistent forward-testing scorecard. Sits in the always-visible sidebar
+   (never behind the collapsible screener panel) so the system's real,
+   running track record is never more than a glance away. */
+function ScorecardWidget() {
+  const [stats, setStats] = useState(null);   // null = not loaded yet
+  const [showLog, setShowLog] = useState(false);
+  const [trades, setTrades] = useState([]);
+  const [loadingTrades, setLoadingTrades] = useState(false);
+
+  const refreshStats = useCallback(async () => {
+    try { setStats(await getPaperTradeStats()); } catch {}
+  }, []);
+
+  useEffect(() => {
+    refreshStats();
+    const interval = setInterval(refreshStats, 60000);
+    return () => clearInterval(interval);
+  }, [refreshStats]);
+
+  const openLog = async () => {
+    setShowLog(true);
+    setLoadingTrades(true);
+    try {
+      setTrades(await getPaperTradesList());
+    } catch {
+      toast.error('Could not load the trade log');
+    } finally {
+      setLoadingTrades(false);
+    }
+  };
+
+  if (stats === null) return null;   // avoid flashing an empty state on load
+
+  const expColor = stats.net_pnl_r > 0 ? '#34d399' : stats.net_pnl_r < 0 ? '#f87171' : '#94a3b8';
+
+  return (
+    <div className="pt-scorecard">
+      <div className="pt-scorecard-header">
+        <span className="pt-scorecard-title">🧪 System Scorecard</span>
+      </div>
+
+      {stats.total_trades === 0 ? (
+        <div className="pt-scorecard-empty">
+          No paper trades logged yet — use "🧪 Paper Trade This Setup" on any Trade Plan.
+        </div>
+      ) : (
+        <div className="pt-scorecard-rows">
+          <div className="pt-scorecard-row">
+            <span className="pt-scorecard-label">Win Rate</span>
+            <span className="pt-scorecard-value">
+              {stats.win_rate_pct}%
+              <span className="pt-scorecard-sub"> ({stats.wins}W / {stats.losses}L)</span>
+            </span>
+          </div>
+          <div className="pt-scorecard-row">
+            <span className="pt-scorecard-label">Net Expectancy</span>
+            <span className="pt-scorecard-value" style={{ color: expColor }}>
+              {stats.net_pnl_r > 0 ? '+' : ''}{stats.net_pnl_r}R
+            </span>
+          </div>
+          <div className="pt-scorecard-row">
+            <span className="pt-scorecard-label">Active Paper Trades</span>
+            <span className="pt-scorecard-value">{stats.active_count} Pending</span>
+          </div>
+        </div>
+      )}
+
+      <button className="pt-scorecard-log-btn" onClick={openLog}>View Trade Log</button>
+
+      {showLog && (
+        <div className="ss-modal-overlay" onMouseDown={() => setShowLog(false)}>
+          <div className="ss-modal pt-log-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="ss-modal-title">Paper Trade Log</div>
+            <div className="ss-modal-sub">
+              {trades.length} trade{trades.length === 1 ? '' : 's'} logged
+            </div>
+            <div className="pt-log-table-wrap">
+              {loadingTrades ? (
+                <div className="pt-log-empty">Loading…</div>
+              ) : trades.length === 0 ? (
+                <div className="pt-log-empty">No trades logged yet.</div>
+              ) : (
+                <table className="pt-log-table">
+                  <thead>
+                    <tr><th>Symbol</th><th>Entry Date</th><th>Entry</th><th>Status</th><th>R</th></tr>
+                  </thead>
+                  <tbody>
+                    {trades.map(t => (
+                      <tr key={t.id}>
+                        <td className="pt-log-symbol">{t.symbol}</td>
+                        <td>{String(t.entry_date || t.created_at).slice(0, 10)}</td>
+                        <td>₹{Number(t.entry_price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                        <td><span className={`pt-badge ${statusTone(t.status)}`}>{t.status}</span></td>
+                        <td className={t.pnl_r > 0 ? 'pt-r-pos' : t.pnl_r < 0 ? 'pt-r-neg' : ''}>
+                          {t.pnl_r > 0 ? '+' : ''}{t.pnl_r}R
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="ss-modal-actions">
+              <button className="ss-modal-cancel" onClick={() => setShowLog(false)}>Close</button>
             </div>
           </div>
         </div>
@@ -231,6 +422,7 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
   return (
     <div className="watchlist">
       <SavedScreensPanel screenTickers={screenTickers} onLoadScreen={onLoadScreen} />
+      <ScorecardWidget />
 
       <div className="wl-header">
         <span className="wl-title">Watchlist</span>

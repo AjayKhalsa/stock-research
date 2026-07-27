@@ -7,7 +7,11 @@ import json
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
+import config
+import db
+import chartink_scraper
 import quant_engine
 import swing_engine
 import decision_engine
@@ -16,6 +20,8 @@ import data_cache
 from stock_service import _plan_summary, _screen_row
 
 router = APIRouter()
+
+AUTO_SCREEN_NAME = "Daily Chartink Auto-Run"
 
 # Stocks per streamed batch. Each batch is fetched concurrently (bounded by
 # the semaphore below) and its rows are pushed to the client as soon as the
@@ -157,3 +163,82 @@ async def screen_stream(symbols: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Chartink auto-fetcher: URL setting + daily cron endpoint ───────────────────
+
+class ChartinkUrlBody(BaseModel):
+    url: str
+
+
+@router.get("/api/settings/chartink-url")
+async def get_chartink_url():
+    return {"url": db.get_setting("chartink_url", "")}
+
+
+@router.post("/api/settings/chartink-url")
+async def set_chartink_url(body: ChartinkUrlBody):
+    url = body.url.strip()
+    if url and not url.startswith("https://chartink.com/"):
+        raise HTTPException(status_code=400,
+                             detail="Must be a chartink.com screener URL")
+    db.set_setting("chartink_url", url)
+    return {"url": url}
+
+
+async def _fetch_and_rank(syms: list[str]) -> list[dict]:
+    """Same fetch-then-rank shape as /api/screen-stream, without the SSE
+    progress events — used for the one-shot cron run."""
+    sem = asyncio.Semaphore(FETCH_CONCURRENCY)
+
+    async def fetch_one(sym: str):
+        async with sem:
+            try:
+                sdata, _meta = await data_cache.get_fundamentals(sym)
+                hist = await price.get_historical(f"NSE:{sym}", days=450)
+                return sym, sdata, hist, None
+            except Exception as e:                            # noqa: BLE001
+                return sym, {}, [], str(e)
+
+    rows = []
+    for batch in _chunks(syms, BATCH_SIZE):
+        results = await asyncio.gather(*(fetch_one(s) for s in batch))
+        for sym, sdata, hist, err in results:
+            if err:
+                continue
+            row = _build_row(sym, sdata, hist)
+            if row is not None:
+                rows.append(row)
+
+    return swing_engine.cross_sectional_rank(rows) if rows else []
+
+
+@router.post("/api/auto-screen")
+async def auto_screen(secret: str = ""):
+    """
+    Daily cron target: scrape the saved Chartink screener URL, cross-sectionally
+    rank the matches, and upsert them as the "Daily Chartink Auto-Run" saved
+    screen. Gated by CRON_SECRET_KEY — an unset key disables the endpoint
+    entirely (an empty secret must never be accepted as valid).
+    """
+    if not config.CRON_SECRET_KEY or secret != config.CRON_SECRET_KEY:
+        raise HTTPException(status_code=403, detail="Invalid or missing secret")
+
+    url = db.get_setting("chartink_url", "")
+    if not url:
+        raise HTTPException(
+            status_code=400,
+            detail="No Chartink URL configured — set one via POST /api/settings/chartink-url",
+        )
+
+    tickers = await chartink_scraper.fetch_screener_tickers(url)
+    if not tickers:
+        return {"status": "no_tickers", "count": 0, "screen": None}
+
+    ranked = await _fetch_and_rank(tickers[:500])
+    ranked_symbols = [r["symbol"] for r in ranked]
+    if not ranked_symbols:
+        return {"status": "no_data", "count": 0, "screen": None}
+
+    screen = db.screen_save(AUTO_SCREEN_NAME, ranked_symbols)
+    return {"status": "ok", "count": len(ranked_symbols), "screen": screen}

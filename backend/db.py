@@ -116,6 +116,24 @@ CREATE TABLE IF NOT EXISTS saved_screens (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
+
+-- Forward-tested ("paper") trades logged from a Trade Plan's Position Sizer.
+-- status: ACTIVE | WIN_T1 | WIN_T2 | STOPPED_OUT, advanced by /api/paper-trades/evaluate.
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol      VARCHAR(20) NOT NULL,
+    entry_date  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    entry_price NUMERIC(10, 2) NOT NULL,
+    stop_loss   NUMERIC(10, 2) NOT NULL,
+    target_t1   NUMERIC(10, 2) NOT NULL,
+    target_t2   NUMERIC(10, 2) NOT NULL,
+    score       NUMERIC(6, 2),
+    setup_type  TEXT,
+    status      VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    pnl_r       NUMERIC(5, 2) NOT NULL DEFAULT 0.0,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
 """
 
 # Postgres variant: BIGSERIAL for autoincrement, DOUBLE PRECISION for the epoch
@@ -165,6 +183,22 @@ CREATE TABLE IF NOT EXISTS saved_screens (
     created_at DOUBLE PRECISION NOT NULL,
     updated_at DOUBLE PRECISION NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id          SERIAL PRIMARY KEY,
+    symbol      VARCHAR(20) NOT NULL,
+    entry_date  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    entry_price NUMERIC(10, 2) NOT NULL,
+    stop_loss   NUMERIC(10, 2) NOT NULL,
+    target_t1   NUMERIC(10, 2) NOT NULL,
+    target_t2   NUMERIC(10, 2) NOT NULL,
+    score       NUMERIC(6, 2),
+    setup_type  TEXT,
+    status      VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    pnl_r       NUMERIC(5, 2) NOT NULL DEFAULT 0.0,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
 """
 
 
@@ -436,6 +470,83 @@ def screen_delete(screen_id: int) -> bool:
     with _conn() as c:
         cur = c.execute(_sql("DELETE FROM saved_screens WHERE id = ?"), (screen_id,))
         return cur.rowcount > 0
+
+
+# ── paper trades (forward-testing log for the Position Sizer) ─────────────────
+
+_NUMERIC_TRADE_FIELDS = ("entry_price", "stop_loss", "target_t1", "target_t2",
+                          "score", "pnl_r")
+
+
+def _row_to_trade(r) -> dict:
+    """Postgres returns NUMERIC columns as Decimal; cast to float so both
+    backends serialize identically over the API."""
+    d = dict(r)
+    for k in _NUMERIC_TRADE_FIELDS:
+        if d.get(k) is not None:
+            d[k] = float(d[k])
+    return d
+
+
+def paper_trade_insert(symbol: str, entry_price: float, stop_loss: float,
+                        target_t1: float, target_t2: float,
+                        score: Optional[float] = None,
+                        setup_type: Optional[str] = None) -> dict:
+    """Log a new forward-test trade; returns the created record (with id)."""
+    with _conn() as c:
+        r = c.execute(
+            _sql("INSERT INTO paper_trades"
+                 "(symbol, entry_price, stop_loss, target_t1, target_t2, score, setup_type) "
+                 "VALUES (?,?,?,?,?,?,?) RETURNING *"),
+            (symbol.upper(), entry_price, stop_loss, target_t1, target_t2,
+             score, setup_type),
+        ).fetchone()
+    return _row_to_trade(r)
+
+
+def paper_trades_all() -> list:
+    """All logged trades, newest first."""
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT * FROM paper_trades ORDER BY id DESC"
+        )).fetchall()
+    return [_row_to_trade(r) for r in rows]
+
+
+def paper_trades_active() -> list:
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT * FROM paper_trades WHERE status = 'ACTIVE' ORDER BY id"
+        )).fetchall()
+    return [_row_to_trade(r) for r in rows]
+
+
+def paper_trade_update_status(trade_id: int, status: str, pnl_r: float) -> bool:
+    with _conn() as c:
+        cur = c.execute(
+            _sql("UPDATE paper_trades SET status = ?, pnl_r = ? WHERE id = ?"),
+            (status, pnl_r, trade_id),
+        )
+        return cur.rowcount > 0
+
+
+def paper_trades_stats() -> dict:
+    """Aggregate scorecard stats — computed in Python so the query stays
+    identical (and trivially correct) on both backends."""
+    trades = paper_trades_all()
+    wins = sum(1 for t in trades if t["status"] in ("WIN_T1", "WIN_T2"))
+    losses = sum(1 for t in trades if t["status"] == "STOPPED_OUT")
+    active = sum(1 for t in trades if t["status"] == "ACTIVE")
+    closed = wins + losses
+    net_pnl_r = round(sum(t["pnl_r"] or 0.0 for t in trades), 2)
+    return {
+        "total_trades": len(trades),
+        "wins": wins,
+        "losses": losses,
+        "win_rate_pct": round(wins / closed * 100, 1) if closed else 0.0,
+        "net_pnl_r": net_pnl_r,
+        "active_count": active,
+    }
 
 
 # Schema is created on import so any entry point gets a working DB.

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import toast from 'react-hot-toast';
-import { createAlertsFromPlan } from '../api';
+import { createAlertsFromPlan, createPaperTrade } from '../api';
 import './TradePlan.css';
 
 function fmtINR(v) {
@@ -67,6 +67,131 @@ function PriceWithOffset({ price, refPrice, label }) {
           GTT {offsetStr}%
         </span>
       )}
+    </div>
+  );
+}
+
+const BUDGET_PRESETS = [5000, 10000, 25000];
+
+/* Compact sizing + broker-order helper for the currently displayed swing/
+   positional plan. Purely a UI/clipboard convenience — it does not place
+   any order, it only computes quantity/risk and formats a GTT-ready string. */
+function PositionSizer({ plan, symbol, score, readOnly }) {
+  const [budget, setBudget] = useState(5000);
+  const [logging, setLogging] = useState(false);
+
+  const entry = plan.entry;
+  const entryPrice = entry?.low != null && entry?.high != null ? (entry.low + entry.high) / 2 : null;
+  const stopPrice = plan.stop?.price;
+  const t1 = plan.targets?.[0]?.price;
+  const t2 = plan.targets?.[1]?.price ?? t1;
+
+  if (entryPrice == null || stopPrice == null || t1 == null) return null;
+
+  const qty = Math.max(0, Math.floor(budget / entryPrice));
+  const totalCost = qty * entryPrice;
+  const maxRisk = qty * (entryPrice - stopPrice);
+  const riskPct = budget > 0 ? (maxRisk / budget) * 100 : 0;
+  const riskColor = riskPct > 3 ? '#ef4444' : riskPct > 1.5 ? '#f59e0b' : '#10b981';
+
+  const handleCopyGtt = async () => {
+    if (readOnly) return;
+    const text = `${symbol} | BUY ${qty} @ ₹${entryPrice.toFixed(2)} | SL: ₹${stopPrice.toFixed(2)} | T1: ₹${t1.toFixed(2)}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('GTT Order Copied!', { duration: 1800 });
+    } catch {
+      toast.error('Clipboard unavailable');
+    }
+  };
+
+  const handlePaperTrade = async () => {
+    if (readOnly) return;
+    setLogging(true);
+    try {
+      await createPaperTrade({
+        symbol,
+        entry_price: entryPrice,
+        stop_loss: stopPrice,
+        target_t1: t1,
+        target_t2: t2,
+        score: score ?? null,
+        setup_type: plan.setup || null,
+      });
+      toast.success(`Paper trade logged for ${symbol}`);
+    } catch {
+      toast.error('Failed to log paper trade — is the backend running?');
+    } finally {
+      setLogging(false);
+    }
+  };
+
+  return (
+    <div className="tp-sizer">
+      <div className="tp-sizer-header">
+        <span className="tp-sizer-title">Position Sizer &amp; Broker Helper</span>
+      </div>
+
+      <div className="tp-sizer-budget-row">
+        <span className="tp-sizer-budget-label">₹</span>
+        <input
+          type="number"
+          className="tp-sizer-budget-input"
+          value={budget}
+          min={0}
+          step={500}
+          onChange={(e) => setBudget(Math.max(0, Number(e.target.value) || 0))}
+        />
+        {BUDGET_PRESETS.map(p => (
+          <button
+            key={p}
+            className={`tp-sizer-preset ${budget === p ? 'active' : ''}`}
+            onClick={() => setBudget(p)}
+          >
+            ₹{p.toLocaleString('en-IN')}
+          </button>
+        ))}
+      </div>
+
+      <div className="tp-sizer-stats">
+        <div className="tp-sizer-stat">
+          <span className="tp-sizer-stat-label">Shares Qty</span>
+          <span className="tp-sizer-stat-value">{qty}</span>
+        </div>
+        <div className="tp-sizer-stat">
+          <span className="tp-sizer-stat-label">Total Cost</span>
+          <span className="tp-sizer-stat-value">{fmtINR(totalCost)}</span>
+        </div>
+        <div className="tp-sizer-stat">
+          <span className="tp-sizer-stat-label">Max Downside Risk</span>
+          <span className="tp-sizer-stat-value" style={{ color: riskColor }}>{fmtINR(maxRisk)}</span>
+        </div>
+        <div className="tp-sizer-stat">
+          <span className="tp-sizer-stat-label">Risk % of Capital</span>
+          <span className="tp-sizer-stat-value" style={{ color: riskColor }}>{riskPct.toFixed(1)}%</span>
+        </div>
+      </div>
+
+      {qty === 0 && (
+        <div className="tp-sizer-warn">Budget too small for one share at this entry price.</div>
+      )}
+
+      <div className="tp-sizer-actions">
+        <button
+          className="tp-sizer-copy-btn" onClick={handleCopyGtt}
+          disabled={readOnly || qty === 0}
+          title={readOnly ? 'Disabled in the guide' : 'Copy a GTT-ready order line to the clipboard'}
+        >
+          📋 Copy GTT Order
+        </button>
+        <button
+          className="tp-sizer-paper-btn" onClick={handlePaperTrade}
+          disabled={readOnly || logging || qty === 0}
+          title={readOnly ? 'Disabled in the guide — on a real stock this logs a forward-test trade' : 'Log this setup to the paper-trading scorecard'}
+        >
+          {logging ? 'Logging…' : '🧪 Paper Trade This Setup'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -368,6 +493,13 @@ export default function TradePlan({ data, loading, horizon, onHorizonChange, aiC
               </div>
             ))}
           </div>
+
+          <PositionSizer
+            plan={plan}
+            symbol={symbol || data.symbol}
+            score={data.dossier?.case?.conviction ?? null}
+            readOnly={readOnly}
+          />
 
           <div className="tp-stats-row">
             {data.dossier?.case?.conviction != null && (
