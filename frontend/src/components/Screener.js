@@ -1,11 +1,22 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { API_BASE, resolveSymbols } from '../api';
+import toast from 'react-hot-toast';
+import { API_BASE, resolveSymbols, saveScreen } from '../api';
 
 const STREAM_URL = `${API_BASE}/api/screen-stream`;
 const ROW_HEIGHT = 86;          // fixed height enables list windowing
 const VIRTUALIZE_ABOVE = 30;    // plain render below this count
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+function formatAge(epochSeconds) {
+  if (!epochSeconds) return '';
+  const mins = (Date.now() / 1000 - epochSeconds) / 60;
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${Math.round(mins)}m ago`;
+  const hrs = mins / 60;
+  if (hrs < 24) return `${hrs.toFixed(1)}h ago`;
+  return `${(hrs / 24).toFixed(1)}d ago`;
+}
 
 function scoreColor(score) {
   if (score == null)  return '#94a3b8';
@@ -359,7 +370,7 @@ function FilterBar({ active, counts, onChange }) {
 
 const EXAMPLE = 'RELIANCE, TCS, INFY, HDFCBANK, ITC, LT, SUNPHARMA';
 
-export default function Screener({ onSelectStock, activeSymbol, onTickersChange, loadRequest }) {
+export default function Screener({ onSelectStock, activeSymbol, onTickersChange, onRowsChange, loadRequest }) {
   const [input,      setInput]      = useState('');
   const [running,    setRunning]    = useState(false);
   const [logLines,   setLogLines]   = useState([]);
@@ -372,10 +383,21 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   const [showInput,  setShowInput]  = useState(true);
   const [filter,     setFilter]     = useState('all');   // all | buy | wait
   const [skipped,    setSkipped]    = useState(0);        // symbols with no usable data
+  const [computedAt, setComputedAt] = useState(null);     // epoch seconds of current rows
 
   const esRef = useRef(null);
   const fileRef = useRef(null);
   const lastSymsRef = useRef([]);     // symbols of the current list (for Refresh)
+  // The saved screen (id/name) the current rows were loaded from, if any -
+  // a Refresh of these rows writes fresh results back to that saved screen.
+  const loadedScreenRef = useRef(null);
+
+  // Publish the current fully-ranked rows so Save Screen can persist them
+  // alongside the ticker list (instant load next time, no re-fetch).
+  useEffect(() => {
+    onRowsChange?.(ranked ? rows : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, ranked]);
 
   const parseTokens = (text) => {
     const out = [];
@@ -401,14 +423,21 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   };
 
   // Open the SSE stream for a resolved symbol set and populate progressively.
-  const streamSymbols = (syms) => {
+  // isRefresh: re-running an already-displayed list in the background - the
+  // currently visible rows stay put (no wipe, no progressive re-fill) until
+  // the final ranked result is ready, then swap in atomically. sourceScreen,
+  // when set, is the saved screen these rows came from; a successful refresh
+  // writes the fresh ranked data back to it automatically.
+  const streamSymbols = (syms, { isRefresh = false, sourceScreen = null } = {}) => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     lastSymsRef.current = syms;
     onTickersChange?.(syms);   // publish the current universe for Save Screen
-    setRows([]);
-    setRanked(false);
-    setFilter('all');
-    setSkipped(0);
+    if (!isRefresh) {
+      setRows([]);
+      setRanked(false);
+      setFilter('all');
+      setSkipped(0);
+    }
     setProgress({ done: 0, total: syms.length });
     setRunning(true);
 
@@ -423,7 +452,11 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
         setLogLines(prev => [...prev.slice(-80), msg.text]);
       } else if (msg.type === 'batch') {
         // Progressive: append this batch's rows (unranked) so the table fills.
-        setRows(prev => [...(prev || []), ...msg.rows]);
+        // During a background refresh, skip this - the old ranked view stays
+        // visible untouched until the authoritative result below swaps in.
+        if (!isRefresh) {
+          setRows(prev => [...(prev || []), ...msg.rows]);
+        }
         setProgress({ done: msg.done, total: msg.total });
         setSkipped(msg.skipped ?? 0);
         setShowInput(false);
@@ -433,6 +466,12 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
         setRanked(true);
         setSkipped(msg.skipped ?? 0);
         setShowInput(false);
+        setComputedAt(Date.now() / 1000);
+        if (isRefresh && sourceScreen?.name) {
+          saveScreen(sourceScreen.name, syms, msg.data)
+            .then(() => toast.success(`"${sourceScreen.name}" updated with fresh data`))
+            .catch(() => toast.error(`Could not save refreshed data to "${sourceScreen.name}"`));
+        }
       } else if (msg.type === 'done') {
         setRunning(false);
         es.close(); esRef.current = null;
@@ -484,17 +523,21 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
       setError('Fewer than 2 entries resolved to NSE symbols - nothing to rank.');
       return;
     }
+    loadedScreenRef.current = null;   // a manually-typed list isn't tied to a saved screen
+    setComputedAt(null);
     streamSymbols(syms);
   };
 
-  // Lightweight refresh: re-stream the current symbols. Cached fundamentals
-  // (4h TTL) are skipped, so this mainly re-pulls prices and re-ranks - a
-  // top-level metrics refresh without re-typing the universe. Deep per-stock
-  // analysis stays lazy (only on row click).
+  // Lightweight refresh: re-stream the current symbols in the background.
+  // Cached fundamentals (4h TTL) are skipped, so this mainly re-pulls prices
+  // and re-ranks - a top-level metrics refresh without re-typing the
+  // universe. The current view stays visible throughout (see streamSymbols'
+  // isRefresh handling); if these rows came from a saved screen, the fresh
+  // result is written back to it automatically once ready.
   const handleRefresh = () => {
     if (running || resolving || lastSymsRef.current.length < 2) return;
     setError(null);
-    streamSymbols(lastSymsRef.current);
+    streamSymbols(lastSymsRef.current, { isRefresh: true, sourceScreen: loadedScreenRef.current });
   };
 
   useEffect(() => () => { if (esRef.current) esRef.current.close(); }, []);
@@ -510,7 +553,27 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
       setError(null);
       setResolution(null);
       setLogLines([]);
-      streamRef.current(req.tickers);
+      const screenRef = req.screenId ? { id: req.screenId, name: req.screenName } : null;
+      loadedScreenRef.current = screenRef;
+
+      if (Array.isArray(req.rankedData) && req.rankedData.length > 0) {
+        // Cached rows already exist for this screen - render instantly,
+        // no live fetch. "Refresh List" still re-pulls fresh data on demand.
+        if (esRef.current) { esRef.current.close(); esRef.current = null; }
+        lastSymsRef.current = req.tickers;
+        onTickersChange?.(req.tickers);
+        setRows(req.rankedData);
+        setRanked(true);
+        setFilter('all');
+        setSkipped(0);
+        setProgress({ done: req.tickers.length, total: req.tickers.length });
+        setRunning(false);
+        setShowInput(false);
+        setComputedAt(req.computedAt || null);
+      } else {
+        setComputedAt(null);
+        streamRef.current(req.tickers);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadRequest?.nonce]);
@@ -547,7 +610,11 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
           <span style={{ fontSize: 11, color: '#94a3b8' }}>
             {count}{ranked ? ' ranked' : ` / ${progress.total}`}
             {skipped > 0 && ` · ${skipped} skipped`}
+            {ranked && computedAt && ` · ${running ? 'refreshing…' : formatAge(computedAt)}`}
           </span>
+        )}
+        {!showInput && error && (
+          <span style={{ fontSize: 10.5, color: '#ef4444' }} title={error}>{error}</span>
         )}
         {rows && lastSymsRef.current.length >= 2 && (
           <button

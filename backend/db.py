@@ -110,11 +110,13 @@ CREATE TABLE IF NOT EXISTS fundamentals_cache (
 );
 
 CREATE TABLE IF NOT EXISTS saved_screens (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL UNIQUE,
-    tickers    TEXT NOT NULL,
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL UNIQUE,
+    tickers      TEXT NOT NULL,
+    ranked_data  TEXT,
+    computed_at  REAL,
+    created_at   REAL NOT NULL,
+    updated_at   REAL NOT NULL
 );
 
 -- Forward-tested ("paper") trades logged from a Trade Plan's Position Sizer.
@@ -177,11 +179,13 @@ CREATE TABLE IF NOT EXISTS fundamentals_cache (
 );
 
 CREATE TABLE IF NOT EXISTS saved_screens (
-    id         BIGSERIAL PRIMARY KEY,
-    name       TEXT NOT NULL UNIQUE,
-    tickers    TEXT NOT NULL,
-    created_at DOUBLE PRECISION NOT NULL,
-    updated_at DOUBLE PRECISION NOT NULL
+    id           BIGSERIAL PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE,
+    tickers      TEXT NOT NULL,
+    ranked_data  TEXT,
+    computed_at  DOUBLE PRECISION,
+    created_at   DOUBLE PRECISION NOT NULL,
+    updated_at   DOUBLE PRECISION NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS paper_trades (
@@ -202,6 +206,26 @@ CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
 """
 
 
+def _migrate_saved_screens_columns() -> None:
+    """Additive migration for saved_screens.ranked_data/computed_at, added
+    after this table already existed in deployed databases — CREATE TABLE
+    IF NOT EXISTS alone never touches an existing table's columns. Safe to
+    run on every startup: each ADD COLUMN is skipped once already present,
+    on both backends, and nothing here can drop or alter existing rows."""
+    if _PG:
+        with _conn() as c:
+            with c.cursor() as cur:
+                cur.execute("ALTER TABLE saved_screens ADD COLUMN IF NOT EXISTS ranked_data TEXT")
+                cur.execute("ALTER TABLE saved_screens ADD COLUMN IF NOT EXISTS computed_at DOUBLE PRECISION")
+        return
+    with _conn() as c:
+        existing = {row[1] for row in c.execute("PRAGMA table_info(saved_screens)").fetchall()}
+        if "ranked_data" not in existing:
+            c.execute("ALTER TABLE saved_screens ADD COLUMN ranked_data TEXT")
+        if "computed_at" not in existing:
+            c.execute("ALTER TABLE saved_screens ADD COLUMN computed_at REAL")
+
+
 def init() -> None:
     """Create schema (idempotent). SQLite path also migrates legacy JSON once."""
     if _PG:
@@ -211,6 +235,7 @@ def init() -> None:
                 for stmt in _SCHEMA_PG.split(";"):
                     if stmt.strip():
                         cur.execute(stmt)
+        _migrate_saved_screens_columns()
         return
     print(f"[db] Using local SQLite at {DB_PATH} — EPHEMERAL on most hosts "
           f"(e.g. Render's free plan wipes this on every restart/redeploy). "
@@ -219,6 +244,7 @@ def init() -> None:
     with _conn() as c:
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(_SCHEMA_SQLITE)
+    _migrate_saved_screens_columns()
     _migrate_legacy_json()
 
 
@@ -411,6 +437,19 @@ def cache_put(symbol: str, exchange: str, payload: dict, origin: str) -> None:
 
 # ── saved screens (persistent, re-loadable screener universes) ────────────────
 
+def _json_nan_safe(obj):
+    """Replace NaN/Inf with None recursively before json.dumps — Python's
+    json module emits bare NaN by default (invalid per the JSON spec), which
+    a browser's JSON.parse rejects outright on the way back out over the API."""
+    if isinstance(obj, float):
+        return None if (obj != obj or obj in (float("inf"), float("-inf"))) else obj
+    if isinstance(obj, dict):
+        return {k: _json_nan_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_nan_safe(v) for v in obj]
+    return obj
+
+
 def _row_to_screen(r, with_tickers: bool = True) -> dict:
     try:
         tickers = json.loads(r["tickers"])
@@ -425,12 +464,18 @@ def _row_to_screen(r, with_tickers: bool = True) -> dict:
     }
     if with_tickers:
         out["tickers"] = tickers
+        out["computed_at"] = r["computed_at"] if "computed_at" in r.keys() else None
+        raw = r["ranked_data"] if "ranked_data" in r.keys() else None
+        try:
+            out["ranked_data"] = json.loads(raw) if raw else None
+        except Exception:
+            out["ranked_data"] = None
     return out
 
 
 def screens_all() -> list:
-    """All saved screens, newest first, WITHOUT the (large) ticker arrays —
-    enough to populate a dropdown."""
+    """All saved screens, newest first, WITHOUT the (large) ticker/ranked-data
+    payloads — enough to populate a dropdown."""
     with _conn() as c:
         rows = c.execute(_sql(
             "SELECT * FROM saved_screens ORDER BY updated_at DESC"
@@ -439,17 +484,27 @@ def screens_all() -> list:
 
 
 def screen_get(screen_id: int) -> Optional[dict]:
-    """Full payload (with tickers) for one saved screen."""
+    """Full payload (tickers + cached ranked_data/computed_at, if any) for
+    one saved screen."""
     with _conn() as c:
         r = c.execute(_sql("SELECT * FROM saved_screens WHERE id = ?"),
                       (screen_id,)).fetchone()
     return _row_to_screen(r) if r else None
 
 
-def screen_save(name: str, tickers: list) -> dict:
+def screen_save(name: str, tickers: list, ranked_data: Optional[list] = None,
+                 computed_at: Optional[float] = None) -> dict:
     """
     Create or replace a saved screen (upsert on name). Tickers are stored as a
     JSON array — deduped, upper-cased, order preserved.
+
+    ranked_data: the fully-computed, cross-sectionally-ranked rows (same
+    shape /api/screen-stream's "result" event carries), so loading this
+    screen later can render instantly instead of re-running the whole
+    fetch+rank pipeline live. Optional — a screen saved without it (or an
+    older screen from before this existed) just falls back to a live re-run
+    on load, same as before. Defaults computed_at to "now" when ranked_data
+    is given but no explicit timestamp is provided.
     """
     seen, clean = set(), []
     for t in tickers:
@@ -458,13 +513,17 @@ def screen_save(name: str, tickers: list) -> dict:
             seen.add(u)
             clean.append(u)
     now = time.time()
+    ranked_json = json.dumps(_json_nan_safe(ranked_data)) if ranked_data is not None else None
+    computed_at = computed_at if computed_at is not None else (now if ranked_data is not None else None)
     with _conn() as c:
         c.execute(
-            _sql("INSERT INTO saved_screens(name, tickers, created_at, updated_at) "
-                 "VALUES (?,?,?,?) "
+            _sql("INSERT INTO saved_screens"
+                 "(name, tickers, ranked_data, computed_at, created_at, updated_at) "
+                 "VALUES (?,?,?,?,?,?) "
                  "ON CONFLICT(name) DO UPDATE SET tickers=excluded.tickers, "
+                 "ranked_data=excluded.ranked_data, computed_at=excluded.computed_at, "
                  "updated_at=excluded.updated_at"),
-            (name.strip(), json.dumps(clean), now, now),
+            (name.strip(), json.dumps(clean), ranked_json, computed_at, now, now),
         )
         r = c.execute(_sql("SELECT * FROM saved_screens WHERE name = ?"),
                       (name.strip(),)).fetchone()

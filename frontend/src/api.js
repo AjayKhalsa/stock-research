@@ -27,7 +27,9 @@ export const getWatchlistPulse = () => API.get('/api/watchlist/pulse').then(r =>
 // Saved screens (persistent, re-loadable screener universes)
 export const getScreens = () => API.get('/api/screens').then(r => r.data);
 export const getScreen = (id) => API.get(`/api/screens/${id}`).then(r => r.data);
-export const saveScreen = (name, tickers) => API.post('/api/screens', { name, tickers }).then(r => r.data);
+export const saveScreen = (name, tickers, rankedData) => API.post('/api/screens', {
+  name, tickers, ...(Array.isArray(rankedData) && rankedData.length ? { ranked_data: rankedData } : {}),
+}).then(r => r.data);
 export const deleteScreen = (id) => API.delete(`/api/screens/${id}`).then(r => r.data);
 
 // Chartink daily auto-fetcher — saved screener URL

@@ -284,7 +284,10 @@ async def _fetch_and_rank(syms: list[str], concurrency: int = FETCH_CONCURRENCY)
         ranked = swing_engine.cross_sectional_rank(rows) if rows else []
         ranked_symbols = [r["symbol"] for r in ranked]
         if ranked_symbols:
-            db.screen_save(AUTO_SCREEN_NAME, ranked_symbols)
+            # Save the full computed rows, not just symbols — this is what
+            # lets loading "Daily Chartink Auto-Run" render instantly instead
+            # of re-running a live fetch every time it's opened.
+            db.screen_save(AUTO_SCREEN_NAME, ranked_symbols, ranked_data=ranked)
         _set_auto_screen_status(done=done, total=total, count=len(ranked_symbols))
 
         hit_rate = batch_hits / len(batch) if batch else 1.0
