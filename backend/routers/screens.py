@@ -25,17 +25,23 @@ async def list_screens():
 async def save_screen(item: dict):
     """
     Persist a saved screen.
-    Body: {"name": "My Top Picks", "tickers": ["JUSTDIAL", "PAYTM", "OFSS"]}.
-    Upserts on name (re-saving a name replaces its tickers); returns the
-    stored record including its id.
+    Body: {"name": "My Top Picks", "tickers": ["JUSTDIAL", "PAYTM", "OFSS"],
+           "ranked_data": [...]}  (ranked_data optional).
+    Upserts on name (re-saving a name replaces its tickers/ranked_data);
+    returns the stored record including its id. Including the already-computed
+    ranked rows (the frontend already has them at save time) means loading
+    this screen later renders instantly instead of re-running a live fetch.
     """
     name = (item.get("name") or "").strip()
     tickers = item.get("tickers")
+    ranked_data = item.get("ranked_data")
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
     if not isinstance(tickers, list) or not tickers:
         raise HTTPException(status_code=400, detail="tickers (non-empty array) is required")
-    return db.screen_save(name, tickers[:500])
+    if ranked_data is not None and not isinstance(ranked_data, list):
+        raise HTTPException(status_code=400, detail="ranked_data must be an array")
+    return db.screen_save(name, tickers[:500], ranked_data=ranked_data)
 
 
 @router.get("/api/screens/{screen_id}")

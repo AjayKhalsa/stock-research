@@ -219,8 +219,21 @@ async def get_intraday(instrument: str, interval: str = "1h",
     return await asyncio.to_thread(_fetch)
 
 
+_HIST_CACHE: dict = {}    # {(sym, days): {"at": epoch, "data": [...]}}
+_HIST_TTL = 1800          # 30 min - short enough to stay swing-relevant, long
+                           # enough that a Refresh List or an overlapping
+                           # saved screen minutes later skips the network
+                           # entirely instead of re-pulling 450 days per stock.
+
+
 async def get_historical(instrument: str, days: int = 300) -> list:
     sym = _yf_symbol(instrument)
+    key = (sym, days)
+    import time as _time
+    cached = _HIST_CACHE.get(key)
+    if cached and _time.time() - cached["at"] < _HIST_TTL and len(cached["data"]) > 0:
+        return cached["data"]
+
     def _fetch():
         try:
             end   = datetime.now()
@@ -235,7 +248,13 @@ async def get_historical(instrument: str, days: int = 300) -> list:
         except Exception as e:
             print(f"[price_service] historical error {sym}: {e}")
             return []
-    return await asyncio.to_thread(_fetch)
+
+    data = await asyncio.to_thread(_fetch)
+    if data:
+        _HIST_CACHE[key] = {"at": _time.time(), "data": data}
+    elif cached:
+        return cached["data"]   # stale beats nothing (e.g. rate-limited)
+    return data
 
 
 # ── fundamentals (reported financial statements) ──────────────────────────────

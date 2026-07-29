@@ -19,7 +19,7 @@ function formatAgeMinutes(mins) {
 }
 
 /* Save/load panel for named screens. Sits at the very top of the sidebar. */
-function SavedScreensPanel({ screenTickers, onLoadScreen }) {
+function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
   const [screens, setScreens] = useState([]);
   const [selected, setSelected] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -59,7 +59,7 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
   useEffect(() => {
     const poll = () => getAutoScreenStatus().then(setRunStatus).catch(() => {});
     poll();
-    const interval = setInterval(poll, 60000);
+    const interval = setInterval(poll, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -98,7 +98,7 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
     if (!trimmed || !canSave || saving) return;
     setSaving(true);
     try {
-      const rec = await saveScreen(trimmed, screenTickers);
+      const rec = await saveScreen(trimmed, screenTickers, screenRows);
       toast.success(`Saved "${rec.name}" (${rec.count} tickers)`);
       setModalOpen(false);
       setName('');
@@ -117,8 +117,10 @@ function SavedScreensPanel({ screenTickers, onLoadScreen }) {
     try {
       const rec = await getScreen(id);
       if (rec.tickers?.length) {
-        onLoadScreen(rec.tickers);
-        toast.success(`Loading "${rec.name}" (${rec.count} tickers)`);
+        onLoadScreen(rec);
+        toast.success(rec.ranked_data?.length
+          ? `Loaded "${rec.name}" (${rec.count} tickers, cached)`
+          : `Loading "${rec.name}" (${rec.count} tickers)`);
       }
     } catch {
       toast.error('Could not load screen');
@@ -309,7 +311,7 @@ function ScorecardWidget() {
 
   useEffect(() => {
     refreshStats();
-    const interval = setInterval(refreshStats, 60000);
+    const interval = setInterval(refreshStats, 15000);
     return () => clearInterval(interval);
   }, [refreshStats]);
 
@@ -407,7 +409,7 @@ function ScorecardWidget() {
   );
 }
 
-export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLoadScreen }) {
+export default function Watchlist({ onSelect, currentSymbol, screenTickers, screenRows, onLoadScreen }) {
   const [items, setItems] = useState([]);
   const [prices, setPrices] = useState({});
   const [alertsBySymbol, setAlertsBySymbol] = useState({});
@@ -499,7 +501,7 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
 
   return (
     <div className="watchlist">
-      <SavedScreensPanel screenTickers={screenTickers} onLoadScreen={onLoadScreen} />
+      <SavedScreensPanel screenTickers={screenTickers} screenRows={screenRows} onLoadScreen={onLoadScreen} />
       <ScorecardWidget />
 
       <div className="wl-header">

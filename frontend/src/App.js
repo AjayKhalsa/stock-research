@@ -79,6 +79,8 @@ export default function App() {
   const [isMasterOpen, setIsMasterOpen] = useState(true);
   // Tickers of the universe currently rendered in the screener table (for Save).
   const [screenTickers, setScreenTickers] = useState([]);
+  // Live ranked rows for that same universe, once fully computed (for Save).
+  const [screenRows, setScreenRows] = useState(null);
   // Load-a-saved-screen request bridged to the Screener ({tickers, nonce}).
   const [loadScreenReq, setLoadScreenReq] = useState(null);
   // In-app guide: fictional stock walkthrough explaining every metric
@@ -185,9 +187,17 @@ export default function App() {
           onSelect={loadStock}
           currentSymbol={currentSymbol?.symbol}
           screenTickers={screenTickers}
-          onLoadScreen={(tickers) => {
+          screenRows={screenRows}
+          onLoadScreen={(rec) => {
             setIsMasterOpen(true);
-            setLoadScreenReq({ tickers, nonce: Date.now() });
+            setLoadScreenReq({
+              tickers: rec.tickers,
+              rankedData: rec.ranked_data || null,
+              computedAt: rec.computed_at || null,
+              screenId: rec.id,
+              screenName: rec.name,
+              nonce: Date.now(),
+            });
           }}
         />
       </aside>
@@ -208,6 +218,7 @@ export default function App() {
             onSelectStock={loadStock}
             activeSymbol={currentSymbol?.symbol}
             onTickersChange={setScreenTickers}
+            onRowsChange={setScreenRows}
             loadRequest={loadScreenReq}
           />
         </div>
