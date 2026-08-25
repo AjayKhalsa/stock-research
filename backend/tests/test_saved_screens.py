@@ -138,12 +138,32 @@ class SavedScreensApiTests(unittest.TestCase):
 
         self.assertEqual(_extract_scan_clause(markup, soup), clause)
 
-    def test_unavailable_postgres_falls_back_without_hanging_api_startup(self):
+    def test_unavailable_postgres_fails_closed_by_default(self):
         original_pg = db._PG
         original_reason = db._PG_FALLBACK_REASON
+        original_allow = db._ALLOW_EPHEMERAL_FALLBACK
         try:
             db._PG = True
             db._PG_FALLBACK_REASON = None
+            db._ALLOW_EPHEMERAL_FALLBACK = False
+            with patch.object(db, "init", side_effect=RuntimeError("database unavailable")):
+                with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+                    db._initialize_with_fallback()
+            self.assertTrue(db._PG)
+            self.assertIn("database unavailable", db._PG_FALLBACK_REASON)
+        finally:
+            db._PG = original_pg
+            db._PG_FALLBACK_REASON = original_reason
+            db._ALLOW_EPHEMERAL_FALLBACK = original_allow
+
+    def test_ephemeral_database_fallback_requires_explicit_opt_in(self):
+        original_pg = db._PG
+        original_reason = db._PG_FALLBACK_REASON
+        original_allow = db._ALLOW_EPHEMERAL_FALLBACK
+        try:
+            db._PG = True
+            db._PG_FALLBACK_REASON = None
+            db._ALLOW_EPHEMERAL_FALLBACK = True
             with patch.object(db, "init", side_effect=[RuntimeError("database unavailable"), None]):
                 db._initialize_with_fallback()
             self.assertFalse(db._PG)
@@ -151,6 +171,7 @@ class SavedScreensApiTests(unittest.TestCase):
         finally:
             db._PG = original_pg
             db._PG_FALLBACK_REASON = original_reason
+            db._ALLOW_EPHEMERAL_FALLBACK = original_allow
 
     def test_screen_stream_emits_each_symbol_as_it_completes(self):
         async def fundamentals(symbol):
@@ -195,6 +216,41 @@ class SavedScreensApiTests(unittest.TestCase):
             response.headers.get("access-control-allow-origin"),
             "http://127.0.0.1:3001",
         )
+
+    def test_paper_trade_snapshot_combines_stats_and_recent_log(self):
+        created = self.client.post("/api/paper-trades", json={
+            "symbol": "tcs",
+            "entry_price": 100,
+            "stop_loss": 95,
+            "target_t1": 107.5,
+            "target_t2": 112.5,
+            "score": 81,
+            "setup_type": "Breakout",
+        })
+        self.assertEqual(created.status_code, 200)
+
+        response = self.client.get("/api/paper-trades/snapshot")
+        self.assertEqual(response.status_code, 200)
+        snapshot = response.json()
+        self.assertGreaterEqual(snapshot["stats"]["total_trades"], 1)
+        self.assertGreaterEqual(snapshot["stats"]["active_count"], 1)
+        self.assertEqual(snapshot["trades"][0]["symbol"], "TCS")
+        self.assertIn("Server-Timing", response.headers)
+
+    def test_auto_screen_requires_bearer_secret_and_starts_once(self):
+        with patch.object(screener_router.config, "CRON_SECRET_KEY", "test-secret"), \
+                patch.object(db, "get_setting", return_value="https://chartink.com/screener/test"), \
+                patch.object(screener_router, "_run_auto_screen", new=AsyncMock()) as run_mock:
+            denied = self.client.post("/api/auto-screen")
+            self.assertEqual(denied.status_code, 403)
+
+            started = self.client.post(
+                "/api/auto-screen",
+                headers={"Authorization": "Bearer test-secret"},
+            )
+            self.assertEqual(started.status_code, 200)
+            self.assertEqual(started.json()["status"], "started")
+            run_mock.assert_awaited_once_with("https://chartink.com/screener/test")
 
 
 if __name__ == "__main__":

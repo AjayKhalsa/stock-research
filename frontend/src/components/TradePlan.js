@@ -118,6 +118,7 @@ function PositionSizer({ plan, symbol, score, readOnly }) {
         score: score ?? null,
         setup_type: plan.setup || null,
       });
+      window.dispatchEvent(new CustomEvent('stocklens:paper-trade-changed'));
       toast.success(`Paper trade logged for ${symbol}`);
     } catch {
       toast.error('Failed to log paper trade — is the backend running?');

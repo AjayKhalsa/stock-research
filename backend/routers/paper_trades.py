@@ -11,6 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 import db
 import price_service as price
@@ -41,7 +42,7 @@ class PaperTradeCreate(BaseModel):
 
 
 @router.post("/api/paper-trades")
-async def create_paper_trade(body: PaperTradeCreate):
+def create_paper_trade(body: PaperTradeCreate):
     """Log a new forward-test trade. target_t2 falls back to target_t1 when
     a plan only has one target, since the column is NOT NULL."""
     if body.entry_price <= 0 or body.stop_loss <= 0 or body.target_t1 <= 0:
@@ -59,13 +60,19 @@ async def create_paper_trade(body: PaperTradeCreate):
 
 
 @router.get("/api/paper-trades/stats")
-async def paper_trade_stats():
+def paper_trade_stats():
     return db.paper_trades_stats()
 
 
 @router.get("/api/paper-trades/list")
-async def list_paper_trades():
+def list_paper_trades():
     return db.paper_trades_all()
+
+
+@router.get("/api/paper-trades/snapshot")
+def paper_trade_snapshot(limit: int = 100):
+    """Fast sidebar bootstrap: aggregate stats and recent trades together."""
+    return db.paper_trades_snapshot(limit=limit)
 
 
 @router.post("/api/paper-trades/evaluate")
@@ -77,7 +84,7 @@ async def evaluate_paper_trades():
     conviction_engine's own base-rate backtester uses. Skips (leaves ACTIVE)
     any symbol whose quote can't be fetched right now.
     """
-    active = db.paper_trades_active()
+    active = await run_in_threadpool(db.paper_trades_active)
     if not active:
         return {"evaluated": 0, "updated": 0, "results": []}
 
@@ -102,7 +109,7 @@ async def evaluate_paper_trades():
             else:
                 return None   # still active, nothing to update
 
-            db.paper_trade_update_status(trade["id"], status, pnl_r)
+            await run_in_threadpool(db.paper_trade_update_status, trade["id"], status, pnl_r)
             return {"id": trade["id"], "symbol": trade["symbol"],
                     "status": status, "pnl_r": pnl_r}
 

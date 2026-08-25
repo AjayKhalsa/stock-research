@@ -4,15 +4,26 @@ routers/, business logic in stock_service.py, scraping in
 screener_scraper.py, indicator math in indicators.py.
 """
 
+import time
+import uuid
+from contextlib import asynccontextmanager
+
 import config  # noqa: F401  — loads .env before anything reads the environment
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import paper_trades, screener, screens, stocks, watchlist
 import db
 
-app = FastAPI(title="Stock Research API", version="2.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    db.close()
+
+
+app = FastAPI(title="Stock Research API", version="2.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,10 +44,31 @@ app.include_router(screens.router)
 app.include_router(paper_trades.router)
 
 
-@app.get("/api/health")
-async def health():
-    return {"ok": True, "storage": db.storage_status()}
+@app.middleware("http")
+async def request_observability(request: Request, call_next):
+    """Expose latency and a request id without leaking payloads or secrets."""
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:  # noqa: BLE001 — preserve FastAPI's registered handlers
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        print(f"[api] {request_id} {request.method} {request.url.path} "
+              f"500 {elapsed_ms:.1f}ms unhandled")
+        raise
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Request-ID"] = request_id
+    response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    print(f"[api] {request_id} {request.method} {request.url.path} "
+          f"{response.status_code} {elapsed_ms:.1f}ms")
+    return response
 
+
+@app.get("/api/health")
+def health():
+    return {"ok": db.ping(), "storage": db.storage_status(), "version": app.version}
 
 if __name__ == "__main__":
     import uvicorn

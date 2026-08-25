@@ -21,8 +21,9 @@ active. SQL is written with `?` placeholders and translated to `%s` for
 Postgres; the handful of dialect differences (schema types, autoincrement) are
 isolated in the two schema strings and `_conn`.
 
-Connections are short-lived per operation. On the SQLite path, existing
-data/watchlist.json and data/alerts.json are migrated in on first run.
+Postgres connections come from a small bounded pool so concurrent dashboard
+requests do not each pay for a new TLS/database handshake. On the SQLite path,
+existing data/watchlist.json and data/alerts.json are migrated in on first run.
 """
 
 from __future__ import annotations
@@ -41,14 +42,38 @@ from config import DATA_DIR
 _DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 _PG = _DATABASE_URL.startswith(("postgres://", "postgresql://"))
 _PG_FALLBACK_REASON: str | None = None
+_ALLOW_EPHEMERAL_FALLBACK = os.environ.get(
+    "ALLOW_EPHEMERAL_DB_FALLBACK", ""
+).strip().lower() in {"1", "true", "yes"}
+
+
+def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return min(maximum, max(minimum, value))
 
 DB_PATH = os.path.join(DATA_DIR, "stocklens.db")   # SQLite fallback path
 
 if _PG:
-    import psycopg
+    from psycopg_pool import ConnectionPool
     from psycopg.rows import dict_row
     # libpq accepts both schemes, but normalize the legacy one for clarity.
     _DSN = _DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    _POOL = ConnectionPool(
+        conninfo=_DSN,
+        min_size=1,
+        max_size=_bounded_env_int("DB_POOL_SIZE", 6, 2, 20),
+        timeout=5,
+        max_idle=300,
+        max_lifetime=1800,
+        reconnect_timeout=10,
+        kwargs={"row_factory": dict_row, "connect_timeout": 5},
+        open=False,
+    )
+else:
+    _POOL = None
 
 
 def _sql(q: str) -> str:
@@ -59,16 +84,15 @@ def _sql(q: str) -> str:
 
 @contextmanager
 def _conn() -> Iterator[Any]:
-    """A fresh connection with dict-style row access on both backends.
+    """A pooled Postgres or short-lived SQLite connection.
 
-    Used as `with _conn() as c: ...`; transactions commit on a clean exit and
-    every connection is explicitly closed on both backends.
+    Used as `with _conn() as c: ...`; transactions commit on a clean exit.
+    Postgres sessions return to the pool and SQLite connections close.
     """
     if _PG:
-        # A stale hosted DATABASE_URL must not hang the entire API startup.
-        # Render/Neon connection failures now surface quickly, after which
-        # initialization can fall back to local SQLite for availability.
-        with psycopg.connect(_DSN, row_factory=dict_row, connect_timeout=8) as c:
+        # The pool bounds concurrency and reuses warm TLS sessions. Its timeout
+        # prevents a saturated/unavailable database from stalling the API.
+        with _POOL.connection(timeout=5) as c:
             yield c
         return
     c = sqlite3.connect(DB_PATH, timeout=5)
@@ -244,6 +268,7 @@ def init() -> None:
     """Create schema (idempotent). SQLite path also migrates legacy JSON once."""
     if _PG:
         print("[db] Using Postgres — persistent across restarts.")
+        _POOL.open(wait=True, timeout=8)
         with _conn() as c:
             with c.cursor() as cur:
                 for stmt in _SCHEMA_PG.split(";"):
@@ -263,11 +288,21 @@ def init() -> None:
 
 
 def storage_status() -> dict:
-    return {
+    status = {
         "backend": "postgres" if _PG else "sqlite",
         "durable": bool(_PG),
         "fallback_reason": _PG_FALLBACK_REASON,
     }
+    if _PG and _POOL is not None:
+        status["pool"] = _POOL.get_stats()
+    return status
+
+
+def ping() -> bool:
+    """Verify that the active persistence backend can serve a trivial query."""
+    with _conn() as c:
+        c.execute("SELECT 1").fetchone()
+    return True
 
 
 def _initialize_with_fallback() -> None:
@@ -278,10 +313,23 @@ def _initialize_with_fallback() -> None:
         if not _PG:
             raise
         _PG_FALLBACK_REASON = f"{type(exc).__name__}: {exc}"
-        print("[db] Postgres initialization failed; falling back to local SQLite "
-              f"so the API remains available. Reason: {_PG_FALLBACK_REASON}")
+        if _POOL is not None:
+            _POOL.close()
+        if not _ALLOW_EPHEMERAL_FALLBACK:
+            print("[db] Postgres initialization failed; refusing an ephemeral "
+                  "fallback to protect durable data. Render should restart the "
+                  f"service. Reason: {_PG_FALLBACK_REASON}")
+            raise
+        print("[db] Postgres initialization failed; ALLOW_EPHEMERAL_DB_FALLBACK "
+              f"is enabled. Using local SQLite. Reason: {_PG_FALLBACK_REASON}")
         _PG = False
         init()
+
+
+def close() -> None:
+    """Release pooled database connections during a graceful API shutdown."""
+    if _POOL is not None:
+        _POOL.close()
 
 
 # ── one-time migration from the old JSON files (SQLite path only) ─────────────
@@ -631,22 +679,54 @@ def paper_trade_update_status(trade_id: int, status: str, pnl_r: float) -> bool:
 
 
 def paper_trades_stats() -> dict:
-    """Aggregate scorecard stats — computed in Python so the query stays
-    identical (and trivially correct) on both backends."""
-    trades = paper_trades_all()
-    wins = sum(1 for t in trades if t["status"] in ("WIN_T1", "WIN_T2"))
-    losses = sum(1 for t in trades if t["status"] == "STOPPED_OUT")
-    active = sum(1 for t in trades if t["status"] == "ACTIVE")
+    """Aggregate the scorecard without loading every trade into Python."""
+    with _conn() as c:
+        row = c.execute(_sql(
+            "SELECT COUNT(*) AS total_trades, "
+            "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2') THEN 1 ELSE 0 END) AS wins, "
+            "SUM(CASE WHEN status = 'STOPPED_OUT' THEN 1 ELSE 0 END) AS losses, "
+            "SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_count, "
+            "COALESCE(SUM(pnl_r), 0) AS net_pnl_r FROM paper_trades"
+        )).fetchone()
+    wins = int(row["wins"] or 0)
+    losses = int(row["losses"] or 0)
     closed = wins + losses
-    net_pnl_r = round(sum(t["pnl_r"] or 0.0 for t in trades), 2)
     return {
-        "total_trades": len(trades),
+        "total_trades": int(row["total_trades"] or 0),
         "wins": wins,
         "losses": losses,
         "win_rate_pct": round(wins / closed * 100, 1) if closed else 0.0,
-        "net_pnl_r": net_pnl_r,
-        "active_count": active,
+        "net_pnl_r": round(float(row["net_pnl_r"] or 0.0), 2),
+        "active_count": int(row["active_count"] or 0),
     }
+
+
+def paper_trades_snapshot(limit: int = 100) -> dict:
+    """Return scorecard and recent log using one pooled connection checkout."""
+    safe_limit = max(1, min(int(limit), 500))
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT * FROM paper_trades ORDER BY id DESC LIMIT ?"
+        ), (safe_limit,)).fetchall()
+        aggregate = c.execute(_sql(
+            "SELECT COUNT(*) AS total_trades, "
+            "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2') THEN 1 ELSE 0 END) AS wins, "
+            "SUM(CASE WHEN status = 'STOPPED_OUT' THEN 1 ELSE 0 END) AS losses, "
+            "SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_count, "
+            "COALESCE(SUM(pnl_r), 0) AS net_pnl_r FROM paper_trades"
+        )).fetchone()
+    wins = int(aggregate["wins"] or 0)
+    losses = int(aggregate["losses"] or 0)
+    closed = wins + losses
+    stats = {
+        "total_trades": int(aggregate["total_trades"] or 0),
+        "wins": wins,
+        "losses": losses,
+        "win_rate_pct": round(wins / closed * 100, 1) if closed else 0.0,
+        "net_pnl_r": round(float(aggregate["net_pnl_r"] or 0.0), 2),
+        "active_count": int(aggregate["active_count"] or 0),
+    }
+    return {"stats": stats, "trades": [_row_to_trade(r) for r in rows]}
 
 
 # Schema is created on import so any entry point gets a working DB.

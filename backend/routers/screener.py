@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import time
 import re
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 import config
 import db
@@ -41,6 +43,7 @@ FETCH_CONCURRENCY = 6
 AUTO_SCREEN_FETCH_CONCURRENCY = 12
 
 AUTO_SCREEN_STATUS_KEY = "auto_screen_last_run"
+AUTO_SCREEN_LOCK = asyncio.Lock()
 
 
 def _json_clean(obj):
@@ -220,24 +223,24 @@ def _clean_chartink_url(value: str) -> str:
 
 
 @router.get("/api/settings/chartink-url")
-async def get_chartink_url():
+def get_chartink_url():
     return {"url": db.get_setting("chartink_url", config.DEFAULT_CHARTINK_URL)}
 
 
 @router.post("/api/settings/chartink-url")
-async def set_chartink_url(body: ChartinkUrlBody):
+def set_chartink_url(body: ChartinkUrlBody):
     url = _clean_chartink_url(body.url) if body.url.strip() else ""
     db.set_setting("chartink_url", url)
     return {"url": url}
 
 
 @router.get("/api/settings/chartink-scan-clause")
-async def get_chartink_scan_clause():
+def get_chartink_scan_clause():
     return {"scan_clause": db.get_setting("chartink_scan_clause", "")}
 
 
 @router.post("/api/settings/chartink-scan-clause")
-async def set_chartink_scan_clause(body: ChartinkScanClauseBody):
+def set_chartink_scan_clause(body: ChartinkScanClauseBody):
     """
     Optional override: most Chartink screener pages build the scan_clause
     with client-side JS right before submission, so chartink_scraper's
@@ -259,17 +262,19 @@ async def fetch_chartink_matches(body: ChartinkFetchBody):
     immediately instead of opening a second 400+-stock stream and attempting
     a fundamentals scrape for every symbol.
     """
-    requested = body.url.strip() or db.get_setting("chartink_url", config.DEFAULT_CHARTINK_URL)
+    requested = body.url.strip() or await run_in_threadpool(
+        db.get_setting, "chartink_url", config.DEFAULT_CHARTINK_URL
+    )
     if not requested:
         raise HTTPException(status_code=400, detail="Save a Chartink screener URL first")
     url = _clean_chartink_url(requested)
-    db.set_setting("chartink_url", url)
+    await run_in_threadpool(db.set_setting, "chartink_url", url)
 
     # Prefer the query embedded in the live page so edits to the Chartink
     # screener are picked up automatically. Retain the stored manual clause
     # only as a fallback for older pages that do not expose atlas_query.
     tickers = await chartink_scraper.fetch_screener_tickers(url)
-    scan_clause = db.get_setting("chartink_scan_clause", "") or None
+    scan_clause = await run_in_threadpool(db.get_setting, "chartink_scan_clause", "") or None
     if not tickers and scan_clause:
         tickers = await chartink_scraper.fetch_screener_tickers(url, scan_clause)
     if not tickers:
@@ -286,17 +291,19 @@ async def fetch_chartink_matches(body: ChartinkFetchBody):
             detail="Chartink returned symbols, but market history was unavailable for all of them.",
         )
     ranked_symbols = [row["symbol"] for row in ranked]
-    screen = db.screen_save(AUTO_SCREEN_NAME, ranked_symbols, ranked_data=ranked)
+    screen = await run_in_threadpool(
+        db.screen_save, AUTO_SCREEN_NAME, ranked_symbols, ranked
+    )
     return {**screen, "url": url}
 
 
-def _set_auto_screen_status(**fields) -> None:
+async def _set_auto_screen_status(**fields) -> None:
     """Merge-update the persisted last-run record for the daily cron job —
     read via GET /api/auto-screen/status. Backed by the existing generic
     settings table (db.get_setting/set_setting), no new schema needed."""
-    current = db.get_setting(AUTO_SCREEN_STATUS_KEY, {}) or {}
+    current = await run_in_threadpool(db.get_setting, AUTO_SCREEN_STATUS_KEY, {}) or {}
     current.update(fields)
-    db.set_setting(AUTO_SCREEN_STATUS_KEY, current)
+    await run_in_threadpool(db.set_setting, AUTO_SCREEN_STATUS_KEY, current)
 
 
 async def _fetch_and_rank(
@@ -333,7 +340,7 @@ async def _fetch_and_rank(
             if row is not None:
                 rows.append(row)
             if track_status and (done % BATCH_SIZE == 0 or done == total):
-                _set_auto_screen_status(done=done, total=total, count=len(rows))
+                await _set_auto_screen_status(done=done, total=total, count=len(rows))
     finally:
         for task in tasks:
             if not task.done():
@@ -346,43 +353,50 @@ async def _run_auto_screen(url: str) -> None:
     """The actual scrape -> fetch/rank -> save sequence, run in the
     background (see auto_screen() below) so the HTTP request that triggers
     it returns immediately regardless of how long this takes."""
-    _set_auto_screen_status(status="running", started_at=time.time(), finished_at=None,
-                             done=0, total=0, count=0, error=None)
-    try:
-        scan_clause = db.get_setting("chartink_scan_clause", "") or None
-        tickers = await chartink_scraper.fetch_screener_tickers(url, scan_clause)
-        if not tickers:
-            _set_auto_screen_status(status="done", finished_at=time.time(),
-                                     count=0, error="Chartink returned no tickers")
-            return
+    async with AUTO_SCREEN_LOCK:
+        await _set_auto_screen_status(status="running", started_at=time.time(), finished_at=None,
+                                      done=0, total=0, count=0, error=None)
+        try:
+            scan_clause = await run_in_threadpool(db.get_setting, "chartink_scan_clause", "") or None
+            tickers = await chartink_scraper.fetch_screener_tickers(url, scan_clause)
+            if not tickers:
+                await _set_auto_screen_status(status="done", finished_at=time.time(),
+                                               count=0, error="Chartink returned no tickers")
+                return
 
-        tickers = list(dict.fromkeys(tickers))[:500]
-        _set_auto_screen_status(total=len(tickers))
-        ranked = await _fetch_and_rank(
-            tickers,
-            concurrency=AUTO_SCREEN_FETCH_CONCURRENCY,
-            track_status=True,
-        )
-        ranked_symbols = [row["symbol"] for row in ranked]
-        if ranked_symbols:
-            db.screen_save(AUTO_SCREEN_NAME, ranked_symbols, ranked_data=ranked)
+            tickers = list(dict.fromkeys(tickers))[:500]
+            await _set_auto_screen_status(total=len(tickers))
+            ranked = await _fetch_and_rank(
+                tickers,
+                concurrency=AUTO_SCREEN_FETCH_CONCURRENCY,
+                track_status=True,
+            )
+            ranked_symbols = [row["symbol"] for row in ranked]
+            if ranked_symbols:
+                await run_in_threadpool(
+                    db.screen_save, AUTO_SCREEN_NAME, ranked_symbols, ranked
+                )
 
-        final_count = len(ranked_symbols)
-        _set_auto_screen_status(
-            status="done", finished_at=time.time(), count=final_count,
-            error=None if final_count else "No usable data for any matched ticker",
-        )
-    except Exception as e:                                        # noqa: BLE001
-        _set_auto_screen_status(status="error", finished_at=time.time(), error=str(e))
+            final_count = len(ranked_symbols)
+            await _set_auto_screen_status(
+                status="done", finished_at=time.time(), count=final_count,
+                error=None if final_count else "No usable data for any matched ticker",
+            )
+        except Exception as e:                                    # noqa: BLE001
+            await _set_auto_screen_status(status="error", finished_at=time.time(), error=str(e))
 
 
 @router.post("/api/auto-screen")
-async def auto_screen(background_tasks: BackgroundTasks, secret: str = ""):
+async def auto_screen(
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(default=None),
+):
     """
     Daily cron target: scrape the saved Chartink screener URL, cross-sectionally
     rank the matches, and upsert them as the "Daily Chartink Auto-Run" saved
-    screen. Gated by CRON_SECRET_KEY — an unset key disables the endpoint
-    entirely (an empty secret must never be accepted as valid).
+    screen. Gated by a Bearer token matching CRON_SECRET_KEY — an unset key
+    disables the endpoint entirely. Keeping the secret in a header prevents
+    it from leaking through URL and proxy logs.
 
     Runs in the background: a cold run over hundreds of symbols can take
     minutes, well past what Render's proxy, Cloudflare's edge, or a cron
@@ -390,10 +404,15 @@ async def auto_screen(background_tasks: BackgroundTasks, secret: str = ""):
     validates the secret and the configured URL, schedules the real work,
     and returns immediately. Progress/outcome: GET /api/auto-screen/status.
     """
-    if not config.CRON_SECRET_KEY or secret != config.CRON_SECRET_KEY:
+    supplied = authorization.removeprefix("Bearer ").strip() if authorization else ""
+    if (not config.CRON_SECRET_KEY
+            or not hmac.compare_digest(supplied, config.CRON_SECRET_KEY)):
         raise HTTPException(status_code=403, detail="Invalid or missing secret")
 
-    url = db.get_setting("chartink_url", "")
+    if AUTO_SCREEN_LOCK.locked():
+        return {"status": "already_running"}
+
+    url = await run_in_threadpool(db.get_setting, "chartink_url", "")
     if not url:
         raise HTTPException(
             status_code=400,
@@ -405,7 +424,7 @@ async def auto_screen(background_tasks: BackgroundTasks, secret: str = ""):
 
 
 @router.get("/api/auto-screen/status")
-async def auto_screen_status():
+def auto_screen_status():
     """Last (or in-progress) daily auto-fetch run: status/done/total/count/
     error, so the outcome is visible in the UI instead of only in server
     logs."""

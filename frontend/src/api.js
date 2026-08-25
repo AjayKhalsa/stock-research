@@ -1,12 +1,26 @@
 import axios from 'axios';
 
 const DEFAULT_API_BASE = process.env.NODE_ENV === 'production'
-  ? 'https://stocklens-api.onrender.com'
+  ? 'https://stock-research-vtmf.onrender.com'
   : 'http://localhost:8000';
 
 export const API_BASE = (process.env.REACT_APP_API_URL || DEFAULT_API_BASE).replace(/\/+$/, '');
 
 const API = axios.create({ baseURL: API_BASE, timeout: 45000 });
+
+// A free/idle host may wake only after the first request has already timed
+// out. Retry idempotent reads once; never retry writes, which could duplicate
+// a saved screen or paper trade after an ambiguous network failure.
+API.interceptors.response.use(undefined, async (error) => {
+  const config = error?.config;
+  const status = error?.response?.status;
+  const retryable = config?.method?.toLowerCase() === 'get'
+    && (error?.code === 'ECONNABORTED' || !error?.response || [502, 503, 504].includes(status));
+  if (!retryable || config.__stocklensRetried) return Promise.reject(error);
+  config.__stocklensRetried = true;
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  return API.request(config);
+});
 
 export function describeApiError(error, fallback = 'Request failed') {
   const detail = error?.response?.data?.detail;
@@ -65,4 +79,5 @@ export const getHealth = () => API.get('/api/health').then(r => r.data);
 export const createPaperTrade = (trade) => API.post('/api/paper-trades', trade).then(r => r.data);
 export const getPaperTradeStats = () => API.get('/api/paper-trades/stats').then(r => r.data);
 export const getPaperTradesList = () => API.get('/api/paper-trades/list').then(r => r.data);
+export const getPaperTradeSnapshot = () => API.get('/api/paper-trades/snapshot').then(r => r.data);
 export const evaluatePaperTrades = () => API.post('/api/paper-trades/evaluate').then(r => r.data);
