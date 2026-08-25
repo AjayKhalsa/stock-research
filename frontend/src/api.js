@@ -29,7 +29,8 @@ export const removeFromWatchlist = (symbol) => API.delete(`/api/watchlist/${path
 export const getWatchlistPrices = () => API.get('/api/watchlist/prices').then(r => r.data);
 
 export const getPlan = (symbol, exchange = 'NSE') => API.get(`/api/stock/${pathSymbol(symbol)}/plan`, { params: { exchange } }).then(r => r.data);
-export const resolveSymbols = (queries) => API.post('/api/resolve', { queries }).then(r => r.data);
+export const resolveSymbols = (queries, requestConfig = {}) =>
+  API.post('/api/resolve', { queries }, requestConfig).then(r => r.data);
 export const getMarketRegime = () => API.get('/api/market-regime').then(r => r.data);
 export const getAlerts = (symbol) => API.get('/api/alerts', { params: symbol ? { symbol } : {} }).then(r => r.data);
 export const createAlert = (alert) => API.post('/api/alerts', alert).then(r => r.data);

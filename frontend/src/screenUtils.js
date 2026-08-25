@@ -87,3 +87,21 @@ export function parseScreenInput(text) {
 export function symbolsFromRows(rows) {
   return [...new Set((rows || []).map(row => cleanSymbol(row?.symbol)).filter(Boolean))];
 }
+
+export function isTickerOnlyInput(text) {
+  const segments = String(text || '')
+    .replace(/^\uFEFF/, '')
+    .split(/[,;\n\r\t]+/)
+    .map(value => value.trim())
+    .filter(Boolean);
+
+  if (!segments.length) return false;
+  return segments.every(value => {
+    const symbol = cleanSymbol(value);
+    if (!symbol) return false;
+    // A single title-cased word such as "Infosys" may be a company name.
+    // Uppercase ticker lists (including NSE:TCS / INFY.NS) are safe to send
+    // directly to the screen stream without a separate resolver round trip.
+    return value === value.toUpperCase();
+  });
+}

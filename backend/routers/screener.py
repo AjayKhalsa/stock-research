@@ -117,44 +117,61 @@ async def screen_stream(symbols: str):
 
     async def _gen():
         total = len(syms)
-        yield _sse({"type": "log", "text": f"Screening {total} stocks in "
-                    f"batches of {BATCH_SIZE}..."})
+        yield _sse({"type": "log", "text": f"Building swing-trade evidence for "
+                    f"{total} stock{'s' if total != 1 else ''}..."})
 
         sem = asyncio.Semaphore(FETCH_CONCURRENCY)
 
         async def fetch_one(sym: str):
             async with sem:
+                started = time.perf_counter()
                 try:
-                    sdata, _meta = await data_cache.get_fundamentals(sym)
-                    hist = await price.get_historical(f"NSE:{sym}", days=450)
-                    return sym, sdata, hist, None
+                    # Fundamentals and price history are independent. Fetching
+                    # them sequentially made even a seven-symbol cold run wait
+                    # for two network round trips per stock.
+                    (sdata, _meta), hist = await asyncio.gather(
+                        data_cache.get_fundamentals(sym),
+                        price.get_historical(f"NSE:{sym}", days=450),
+                    )
+                    elapsed_ms = round((time.perf_counter() - started) * 1000)
+                    return sym, sdata, hist, None, elapsed_ms
                 except Exception as e:                       # noqa: BLE001
-                    return sym, {}, [], str(e)
+                    elapsed_ms = round((time.perf_counter() - started) * 1000)
+                    return sym, {}, [], str(e), elapsed_ms
 
         rows, done, skipped = [], 0, 0
         for batch in _chunks(syms, BATCH_SIZE):
-            results = await asyncio.gather(*(fetch_one(s) for s in batch))
-            batch_rows = []
-            for sym, sdata, hist, err in results:
-                done += 1
-                if err:
-                    skipped += 1
-                    yield _sse({"type": "log",
-                                "text": f"ERR {sym}: {err} ({done}/{total})"})
-                    continue
-                row = _build_row(sym, sdata, hist)
-                if row is None:
-                    skipped += 1
-                    yield _sse({"type": "log",
-                                "text": f"SKIP {sym} - no data ({done}/{total})"})
-                    continue
-                rows.append(row)
-                batch_rows.append(row)
+            tasks = [asyncio.create_task(fetch_one(s)) for s in batch]
+            try:
+                # Emit each symbol as soon as it finishes. asyncio.gather made
+                # the progress indicator sit at 0/N until the slowest stock in
+                # a 25-symbol batch completed, which looked like a frozen app.
+                for completed in asyncio.as_completed(tasks):
+                    sym, sdata, hist, err, elapsed_ms = await completed
+                    done += 1
+                    completed_rows = []
+                    if err:
+                        skipped += 1
+                        yield _sse({"type": "log",
+                                    "text": f"Could not analyze {sym}: {err}"})
+                    else:
+                        row = _build_row(sym, sdata, hist)
+                        if row is None:
+                            skipped += 1
+                            yield _sse({"type": "log",
+                                        "text": f"No usable data for {sym}"})
+                        else:
+                            rows.append(row)
+                            completed_rows.append(row)
 
-            # Progressive push: the client appends these immediately (unranked).
-            yield _sse({"type": "batch", "rows": batch_rows,
-                        "done": done, "total": total, "kept": len(rows),
-                        "skipped": skipped})
+                    yield _sse({"type": "batch", "rows": completed_rows,
+                                "symbol": sym, "elapsed_ms": elapsed_ms,
+                                "done": done, "total": total,
+                                "kept": len(rows), "skipped": skipped})
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
 
         if not rows:
             yield _sse({"type": "error",

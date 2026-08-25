@@ -52,7 +52,7 @@ test('renders the research workspace and primary discovery actions', async () =>
   expect(screen.getByText('StockLens')).toBeInTheDocument();
   expect(screen.getByText('Stock Screener')).toBeInTheDocument();
   expect(screen.getByPlaceholderText(/Search stock by name or symbol/i)).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /Run Screen/i })).toBeDisabled();
+  expect(screen.getByRole('button', { name: /Analyze stocks/i })).toBeDisabled();
   await waitFor(() => {
     expect(api.getMarketRegime).toHaveBeenCalled();
     expect(api.getWatchlist).toHaveBeenCalled();

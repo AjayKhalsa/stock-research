@@ -1,4 +1,4 @@
-import { parseScreenInput, symbolsFromRows } from './screenUtils';
+import { isTickerOnlyInput, parseScreenInput, symbolsFromRows } from './screenUtils';
 
 test('extracts only symbols from a Chartink CSV export', () => {
   const csv = [
@@ -23,4 +23,10 @@ test('derives a deduplicated saved universe from rendered rows', () => {
   expect(symbolsFromRows([
     { symbol: 'tcs' }, { symbol: 'TCS' }, { symbol: 'INFY.NS' }, { symbol: null },
   ])).toEqual(['TCS', 'INFY']);
+});
+
+test('recognizes explicit ticker lists that can skip company-name resolution', () => {
+  expect(isTickerOnlyInput('RELIANCE, TCS, M&M, NSE:INFY, HDFCBANK.NS')).toBe(true);
+  expect(isTickerOnlyInput('Infosys, TCS')).toBe(false);
+  expect(isTickerOnlyInput('HDFC Bank Limited\nTCS')).toBe(false);
 });
