@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from chartink_scraper import _extract_scan_clause  # noqa: E402
 from main import app  # noqa: E402
 import db  # noqa: E402
+from routers import screener as screener_router  # noqa: E402
 
 
 class SavedScreensApiTests(unittest.TestCase):
@@ -77,23 +78,57 @@ class SavedScreensApiTests(unittest.TestCase):
 
     def test_fetch_chartink_matches_persists_refreshed_universe(self):
         url = "https://chartink.com/screener/copy-general-scanner-simply-above-mas-3"
+        ranked = [
+            {"symbol": "INFY", "rank": 1, "score": 82.0},
+            {"symbol": "TCS", "rank": 2, "score": 78.0},
+        ]
         with patch(
             "routers.screener.chartink_scraper.fetch_screener_tickers",
             new=AsyncMock(return_value=["TCS", "INFY", "TCS"]),
-        ):
+        ), patch(
+            "routers.screener._fetch_and_rank",
+            new=AsyncMock(return_value=ranked),
+        ) as rank_mock:
             response = self.client.post("/api/chartink/fetch", json={"url": url})
 
         self.assertEqual(response.status_code, 200)
         record = response.json()
         self.assertEqual(record["name"], "Daily Chartink Auto-Run")
-        self.assertEqual(record["tickers"], ["TCS", "INFY"])
+        self.assertEqual(record["tickers"], ["INFY", "TCS"])
+        self.assertEqual(record["ranked_data"], ranked)
         self.assertEqual(record["count"], 2)
+        rank_mock.assert_awaited_once_with(
+            ["TCS", "INFY"],
+            concurrency=screener_router.AUTO_SCREEN_FETCH_CONCURRENCY,
+        )
 
         invalid = self.client.post(
             "/api/chartink/fetch",
             json={"url": "https://chartink.com.example.com/screener/not-chartink"},
         )
         self.assertEqual(invalid.status_code, 400)
+
+    def test_chartink_ranker_is_price_first_and_skips_bulk_fundamentals(self):
+        async def history(instrument, days=450):
+            symbol = instrument.split(":", 1)[-1]
+            return [{"close": 100.0, "symbol": symbol}] * 30
+
+        def row(symbol, fundamentals, candles):
+            self.assertEqual(fundamentals, {})
+            return {"symbol": symbol, "score": 50, "candles": len(candles)}
+
+        fundamentals = AsyncMock()
+        with patch("routers.screener.price.get_historical", side_effect=history), \
+                patch("routers.screener.data_cache.get_fundamentals", fundamentals), \
+                patch("routers.screener._build_row", side_effect=row), \
+                patch(
+                    "routers.screener.swing_engine.cross_sectional_rank",
+                    side_effect=lambda rows: sorted(rows, key=lambda item: item["symbol"]),
+                ):
+            ranked = asyncio.run(screener_router._fetch_and_rank(["TCS", "INFY"], concurrency=2))
+
+        self.assertEqual([item["symbol"] for item in ranked], ["INFY", "TCS"])
+        fundamentals.assert_not_called()
 
     def test_extracts_atlas_query_from_public_chartink_markup(self):
         clause = "( {cash} ( latest close > latest sma( latest close , 20 ) ) )"
