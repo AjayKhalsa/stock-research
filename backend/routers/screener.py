@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -16,6 +17,7 @@ import data_cache
 from stock_service import _plan_summary, _screen_row
 
 router = APIRouter()
+SYMBOL_RE = re.compile(r"^[A-Z0-9&.-]{1,30}$")
 
 # Stocks per streamed batch. Each batch is fetched concurrently (bounded by
 # the semaphore below) and its rows are pushed to the client as soon as the
@@ -89,7 +91,7 @@ async def screen_stream(symbols: str):
     syms, seen = [], set()
     for s in symbols.replace("\n", ",").replace(" ", ",").split(","):
         s = s.strip().upper()
-        if s and s not in seen:
+        if SYMBOL_RE.fullmatch(s) and s not in seen:
             seen.add(s)
             syms.append(s)
     syms = syms[:500]

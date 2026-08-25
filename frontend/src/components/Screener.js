@@ -1,5 +1,10 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { API_BASE, resolveSymbols } from '../api';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import toast from 'react-hot-toast';
+import {
+  API_BASE, resolveSymbols, getScreens, getScreen, saveScreen, deleteScreen,
+} from '../api';
+import { parseScreenInput, symbolsFromRows } from '../screenUtils';
+import './Screener.css';
 
 const STREAM_URL = `${API_BASE}/api/screen-stream`;
 const ROW_HEIGHT = 86;          // fixed height enables list windowing
@@ -207,6 +212,15 @@ function MasterRow({ r, active, onSelect, style }) {
   return (
     <div
       onClick={() => onSelect(r.symbol, r)}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(r.symbol, r);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${r.symbol}, rank ${r.rank ?? 'not available'}, score ${r.score ?? 'not available'}`}
       style={{
         ...style,
         boxSizing: 'border-box', height: ROW_HEIGHT,
@@ -359,7 +373,7 @@ function FilterBar({ active, counts, onChange }) {
 
 const EXAMPLE = 'RELIANCE, TCS, INFY, HDFCBANK, ITC, LT, SUNPHARMA';
 
-export default function Screener({ onSelectStock, activeSymbol, onTickersChange, loadRequest }) {
+export default function Screener({ onSelectStock, activeSymbol }) {
   const [input,      setInput]      = useState('');
   const [running,    setRunning]    = useState(false);
   const [logLines,   setLogLines]   = useState([]);
@@ -371,30 +385,50 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   const [resolution, setResolution] = useState(null);
   const [showInput,  setShowInput]  = useState(true);
   const [filter,     setFilter]     = useState('all');   // all | buy | wait
+  const [importNote, setImportNote] = useState('');
+  const [screens, setScreens] = useState([]);
+  const [selectedScreen, setSelectedScreen] = useState('');
+  const [screensError, setScreensError] = useState('');
+  const [screenBusy, setScreenBusy] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
 
   const esRef = useRef(null);
   const fileRef = useRef(null);
+  const saveInputRef = useRef(null);
   const lastSymsRef = useRef([]);     // symbols of the current list (for Refresh)
 
-  const parseTokens = (text) => {
-    const out = [];
-    for (const seg of text.split(/[,;\n\r\t]+/)) {
-      const s = seg.trim().replace(/\s+/g, ' ');
-      if (!s) continue;
-      if (s.includes(' ') && /^[A-Z0-9.&\- ]+$/.test(s) && !/\b(LTD|LIMITED)\b/.test(s)) {
-        out.push(...s.split(' '));
-      } else {
-        out.push(s);
-      }
+  const parseTokens = (text) => parseScreenInput(text).tokens;
+
+  const refreshScreens = useCallback(async () => {
+    setScreensError('');
+    try {
+      const records = await getScreens();
+      setScreens(Array.isArray(records) ? records : []);
+    } catch (err) {
+      setScreensError(err.response?.data?.detail || 'Saved screens are unavailable.');
     }
-    return [...new Set(out)];
-  };
+  }, []);
+
+  useEffect(() => { refreshScreens(); }, [refreshScreens]);
+  useEffect(() => {
+    if (!saveOpen) return undefined;
+    const timer = setTimeout(() => saveInputRef.current?.focus(), 30);
+    return () => clearTimeout(timer);
+  }, [saveOpen]);
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => setInput(parseTokens(String(reader.result)).join('\n'));
+    reader.onload = () => {
+      const parsed = parseScreenInput(String(reader.result));
+      setInput(parsed.tokens.join('\n'));
+      setImportNote(parsed.tokens.length
+        ? `${parsed.tokens.length} ${parsed.source === 'chartink' ? 'Chartink ' : ''}symbols imported`
+        : 'No valid symbols found in this file');
+      if (!parsed.tokens.length) setError('The file did not contain a Symbol/Ticker column or valid NSE symbols.');
+    };
     reader.readAsText(file);
     e.target.value = '';
   };
@@ -402,18 +436,20 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   // Open the SSE stream for a resolved symbol set and populate progressively.
   const streamSymbols = (syms) => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
-    lastSymsRef.current = syms;
-    onTickersChange?.(syms);   // publish the current universe for Save Screen
+    const cleanSyms = [...new Set(syms.map(s => String(s).trim().toUpperCase()).filter(Boolean))].slice(0, 500);
+    lastSymsRef.current = cleanSyms;
+    setError(null);
     setRows([]);
     setRanked(false);
     setFilter('all');
-    setProgress({ done: 0, total: syms.length });
+    setProgress({ done: 0, total: cleanSyms.length });
     setRunning(true);
 
-    const es = new EventSource(`${STREAM_URL}?symbols=${encodeURIComponent(syms.join(','))}`);
+    const es = new EventSource(`${STREAM_URL}?symbols=${encodeURIComponent(cleanSyms.join(','))}`);
     esRef.current = es;
 
     es.onmessage = (evt) => {
+      if (esRef.current !== es) return;
       let msg;
       try { msg = JSON.parse(evt.data); } catch { return; }
 
@@ -440,7 +476,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     };
 
     es.onerror = () => {
-      if (esRef.current) {
+      if (esRef.current === es) {
         setError('Connection lost - is the backend running?');
         setRunning(false);
         es.close(); esRef.current = null;
@@ -495,21 +531,64 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
 
   useEffect(() => () => { if (esRef.current) esRef.current.close(); }, []);
 
-  // Load workflow: a saved screen selected in the sidebar streams here.
-  // Keep the latest streamSymbols in a ref so the nonce-keyed effect never
-  // fires on a stale closure.
-  const streamRef = useRef();
-  streamRef.current = streamSymbols;
-  useEffect(() => {
-    const req = loadRequest;
-    if (req && Array.isArray(req.tickers) && req.tickers.length >= 2) {
+  const currentTickers = symbolsFromRows(ranked ? rows : []);
+
+  const handleSaveScreen = async () => {
+    const name = saveName.trim();
+    if (!name || currentTickers.length < 2 || screenBusy) return;
+    setScreenBusy(true);
+    try {
+      const record = await saveScreen(name, currentTickers);
+      await refreshScreens();
+      setSelectedScreen(String(record.id));
+      setSaveName('');
+      setSaveOpen(false);
+      toast.success(`Saved ${record.name} with ${record.count} ranked stocks`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Could not save this screen');
+    } finally {
+      setScreenBusy(false);
+    }
+  };
+
+  const handleLoadScreen = async () => {
+    if (!selectedScreen || screenBusy || running || resolving) return;
+    setScreenBusy(true);
+    try {
+      const record = await getScreen(selectedScreen);
+      if (!Array.isArray(record.tickers) || record.tickers.length < 2) {
+        throw new Error('This saved screen does not contain enough valid symbols.');
+      }
+      setInput(record.tickers.join('\n'));
+      setImportNote(`Loaded ${record.count} saved symbols`);
       setError(null);
       setResolution(null);
       setLogLines([]);
-      streamRef.current(req.tickers);
+      streamSymbols(record.tickers);
+      toast.success(`Loading ${record.name}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message || 'Could not load this screen');
+    } finally {
+      setScreenBusy(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadRequest?.nonce]);
+  };
+
+  const handleDeleteScreen = async () => {
+    if (!selectedScreen || screenBusy) return;
+    const record = screens.find(s => String(s.id) === String(selectedScreen));
+    if (!window.confirm(`Delete saved screen "${record?.name || 'this screen'}"?`)) return;
+    setScreenBusy(true);
+    try {
+      await deleteScreen(selectedScreen);
+      setSelectedScreen('');
+      await refreshScreens();
+      toast.success('Saved screen deleted');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Could not delete this screen');
+    } finally {
+      setScreenBusy(false);
+    }
+  };
 
   const busy = running || resolving;
   const count = rows?.length || 0;
@@ -531,87 +610,90 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   }, [rows, filter]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div className="screener-workspace">
 
       {/* panel header */}
-      <div style={{
-        padding: '14px 14px 10px', borderBottom: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-      }}>
-        <span style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>Master Screener</span>
+      <div className="scr-header">
+        <div>
+          <span className="scr-eyebrow">Discover</span>
+          <span className="scr-title">Stock Screener</span>
+        </div>
         {count > 0 && (
-          <span style={{ fontSize: 11, color: '#94a3b8' }}>
+          <span className={`scr-count ${ranked ? 'complete' : ''}`}>
             {count}{ranked ? ' ranked' : ` / ${progress.total}`}
           </span>
         )}
         {rows && lastSymsRef.current.length >= 2 && (
-          <button
+          <button className="scr-icon-btn scr-refresh"
             onClick={handleRefresh}
             disabled={busy}
             title="Re-pull prices and re-rank the current list (top-level metrics only)"
-            style={{
-              marginLeft: 'auto', background: 'none', border: '1px solid var(--border-strong)',
-              borderRadius: 6, fontSize: 11, color: busy ? '#cbd5e1' : '#4f46e5',
-              cursor: busy ? 'not-allowed' : 'pointer', padding: '3px 9px', fontWeight: 600,
-            }}
-          >{running ? 'Refreshing...' : 'Refresh List'}</button>
+          >{running ? 'Refreshing...' : 'Refresh'}</button>
         )}
-        <button
+        <button className="scr-icon-btn"
           onClick={() => setShowInput(s => !s)}
-          style={{
-            marginLeft: (rows && lastSymsRef.current.length >= 2) ? 0 : 'auto',
-            background: 'none', border: '1px solid var(--border-strong)',
-            borderRadius: 6, fontSize: 11, color: '#64748b', cursor: 'pointer', padding: '3px 9px',
-          }}
-        >{showInput ? 'Hide input' : 'New screen'}</button>
+        >{showInput ? 'Hide' : '+ New'}</button>
+      </div>
+
+      <div className="scr-saved-bar">
+        <label htmlFor="saved-screen-select">Saved screens</label>
+        <div className="scr-saved-controls">
+          <select id="saved-screen-select" value={selectedScreen}
+            onChange={e => setSelectedScreen(e.target.value)} disabled={screenBusy}>
+            <option value="">Choose a saved screen</option>
+            {screens.map(screen => (
+              <option key={screen.id} value={screen.id}>{screen.name} ({screen.count})</option>
+            ))}
+          </select>
+          <button onClick={handleLoadScreen} disabled={!selectedScreen || busy || screenBusy}>Load</button>
+          <button className="scr-delete-btn" onClick={handleDeleteScreen}
+            disabled={!selectedScreen || screenBusy} aria-label="Delete selected saved screen" title="Delete saved screen">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2m2 0-.7 10H6.7L6 6" /></svg>
+          </button>
+        </div>
+        <button className="scr-save-btn" onClick={() => setSaveOpen(true)}
+          disabled={!ranked || running || currentTickers.length < 2}
+          title={ranked ? 'Save the stocks in the ranked results' : 'Finish a screen before saving'}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3h10l2 2v12H4zM7 3v5h6V3M7 14h6" /></svg>
+          Save results
+        </button>
+        {screensError && <div className="scr-saved-error">{screensError} <button onClick={refreshScreens}>Retry</button></div>}
       </div>
 
       {/* input area (collapsible) */}
       {showInput && (
-        <div style={{ padding: 12, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <div className="scr-input-area">
+          <div className="scr-input-label">
+            <span>Symbols or company names</span>
+            <span>{parseTokens(input).length}/500</span>
+          </div>
           <textarea
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => { setInput(e.target.value); setImportNote(''); }}
             placeholder={`NSE symbols or company names\n(one name per line), e.g.\n${EXAMPLE}`}
             rows={3}
-            style={{
-              width: '100%', boxSizing: 'border-box', resize: 'vertical',
-              background: 'var(--bg-inset)', color: '#0f172a',
-              border: '1px solid var(--border-strong)', borderRadius: 8,
-              padding: '8px 10px', fontSize: 12, fontFamily: 'var(--font-mono)',
-            }}
           />
-          <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="scr-input-actions">
             <button
+              className="scr-run-btn"
               onClick={handleRun}
-              disabled={busy}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
-                cursor: busy ? 'not-allowed' : 'pointer',
-                background: busy ? 'var(--bg-hover)' : 'linear-gradient(135deg, #2f6feb, #5b4ee9)',
-                border: busy ? '1px solid var(--border-strong)' : '1px solid transparent',
-                color: busy ? '#64748b' : '#fff',
-              }}
+              disabled={busy || parseTokens(input).length < 2}
             >
               {resolving ? <><Spinner /> Resolving...</>
                 : running ? <><Spinner /> {progress.done}/{progress.total}...</>
                 : 'Run Screen'}
             </button>
-            <button onClick={() => fileRef.current?.click()} disabled={busy}
-              style={{ padding: '6px 10px', borderRadius: 7, fontSize: 11, cursor: busy ? 'not-allowed' : 'pointer',
-                       background: 'var(--bg-hover)', border: '1px solid var(--border-strong)', color: '#64748b' }}>
-              Upload
+            <button className="scr-secondary-btn" onClick={() => fileRef.current?.click()} disabled={busy}>
+              Import CSV
             </button>
             <input ref={fileRef} type="file" accept=".txt,.csv" onChange={handleFile} style={{ display: 'none' }} />
-            <button onClick={() => setInput(EXAMPLE)} disabled={busy}
-              style={{ padding: '6px 10px', borderRadius: 7, fontSize: 11, cursor: 'pointer',
-                       background: 'none', border: '1px dashed var(--border-strong)', color: '#94a3b8' }}>
+            <button className="scr-link-btn" onClick={() => { setInput(EXAMPLE); setImportNote(''); }} disabled={busy}>
               Example
             </button>
-            <span style={{ fontSize: 10.5, color: '#94a3b8', marginLeft: 'auto' }}>
-              {parseTokens(input).length}/500
-            </span>
+          </div>
+          <div className="scr-import-help">
+            Chartink CSV supported - only the Symbol column is imported.
+            {importNote && <strong>{importNote}</strong>}
           </div>
 
           {running && (
@@ -652,6 +734,33 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {error && !showInput && <div className="scr-inline-error">{error}</div>}
+
+      {saveOpen && (
+        <div className="scr-modal-backdrop" onMouseDown={() => !screenBusy && setSaveOpen(false)}>
+          <div className="scr-modal" role="dialog" aria-modal="true" aria-labelledby="save-screen-title"
+            onMouseDown={e => e.stopPropagation()}>
+            <span className="scr-modal-kicker">Save ranked universe</span>
+            <h2 id="save-screen-title">Name this screen</h2>
+            <p>{currentTickers.length} successfully ranked stocks will be saved. Re-loading refreshes their data.</p>
+            <input ref={saveInputRef} value={saveName} maxLength={60}
+              placeholder="e.g. Quality momentum shortlist"
+              onChange={e => setSaveName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSaveScreen();
+                if (e.key === 'Escape' && !screenBusy) setSaveOpen(false);
+              }}
+            />
+            <div className="scr-modal-actions">
+              <button onClick={() => setSaveOpen(false)} disabled={screenBusy}>Cancel</button>
+              <button className="primary" onClick={handleSaveScreen} disabled={!saveName.trim() || screenBusy}>
+                {screenBusy ? 'Saving...' : 'Save screen'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

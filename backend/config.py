@@ -32,7 +32,9 @@ GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 # it at a persistent disk mount — on ephemeral hosts (e.g. Render's free plan)
 # the default backend/data path is wiped on every restart, taking the
 # watchlist and saved screens with it. Defaults to backend/data for local dev.
-DATA_DIR = os.environ.get("STOCKLENS_DATA_DIR") or os.path.join(BACKEND_DIR, "data")
+DATA_DIR = os.path.abspath(os.path.expanduser(
+    os.environ.get("STOCKLENS_DATA_DIR", os.path.join(BACKEND_DIR, "data"))
+))
 os.makedirs(DATA_DIR, exist_ok=True)
 WATCHLIST_FILE = os.path.join(DATA_DIR, "watchlist.json")
 

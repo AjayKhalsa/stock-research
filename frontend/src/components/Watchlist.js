@@ -2,148 +2,16 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import toast from 'react-hot-toast';
 import {
   getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
-  getScreens, getScreen, saveScreen, deleteScreen,
 } from '../api';
 import './Watchlist.css';
 
-/* Save/load panel for named screens. Sits at the very top of the sidebar. */
-function SavedScreensPanel({ screenTickers, onLoadScreen }) {
-  const [screens, setScreens] = useState([]);
-  const [selected, setSelected] = useState('');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [saving, setSaving] = useState(false);
-  const inputRef = useRef(null);
-
-  const refresh = useCallback(async () => {
-    try { setScreens(await getScreens()); } catch {}
-  }, []);
-
-  useEffect(() => { refresh(); }, [refresh]);
-  useEffect(() => { if (modalOpen) setTimeout(() => inputRef.current?.focus(), 30); }, [modalOpen]);
-
-  const canSave = Array.isArray(screenTickers) && screenTickers.length > 0;
-
-  const handleSave = async () => {
-    const trimmed = name.trim();
-    if (!trimmed || !canSave || saving) return;
-    setSaving(true);
-    try {
-      const rec = await saveScreen(trimmed, screenTickers);
-      toast.success(`Saved "${rec.name}" (${rec.count} tickers)`);
-      setModalOpen(false);
-      setName('');
-      await refresh();
-      setSelected(String(rec.id));
-    } catch {
-      toast.error('Could not save screen');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleLoad = async (id) => {
-    setSelected(id);
-    if (!id) return;
-    try {
-      const rec = await getScreen(id);
-      if (rec.tickers?.length) {
-        onLoadScreen(rec.tickers);
-        toast.success(`Loading "${rec.name}" (${rec.count} tickers)`);
-      }
-    } catch {
-      toast.error('Could not load screen');
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!selected) return;
-    const rec = screens.find(s => String(s.id) === String(selected));
-    if (!window.confirm(`Delete saved screen "${rec?.name || 'this screen'}"? This cannot be undone.`)) return;
-    try {
-      await deleteScreen(selected);
-      toast.success(`Deleted "${rec?.name || 'screen'}"`);
-      setSelected('');
-      await refresh();
-    } catch {
-      toast.error('Could not delete screen');
-    }
-  };
-
-  return (
-    <div className="ss-panel">
-      <div className="ss-header">
-        <span className="ss-title">Saved Screens</span>
-        <button
-          className="ss-save-btn"
-          onClick={() => setModalOpen(true)}
-          disabled={!canSave}
-          title={canSave ? 'Save the current screen results as a named list'
-            : 'Run a screen first, then save its results'}
-        >Save Screen</button>
-      </div>
-
-      <div className="ss-load-row">
-        <select
-          className="ss-select"
-          value={selected}
-          onChange={(e) => handleLoad(e.target.value)}
-        >
-          <option value="">Load a saved screen...</option>
-          {screens.map(s => (
-            <option key={s.id} value={s.id}>{s.name} ({s.count})</option>
-          ))}
-        </select>
-        {selected && (
-          <button
-            className="ss-delete-btn"
-            onClick={handleDelete}
-            title="Delete the selected saved screen"
-            aria-label="Delete selected screen"
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M3 4.5h10M6.5 4.5V3.2h3V4.5M4.2 4.5l.6 8.3a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9l.6-8.3"
-                fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        )}
-      </div>
-
-      {modalOpen && (
-        <div className="ss-modal-overlay" onMouseDown={() => setModalOpen(false)}>
-          <div className="ss-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="ss-modal-title">Save Screen</div>
-            <div className="ss-modal-sub">
-              {screenTickers.length} ticker{screenTickers.length === 1 ? '' : 's'} from the current results
-            </div>
-            <input
-              ref={inputRef}
-              className="ss-modal-input"
-              placeholder="Screen name, e.g. My Top Picks"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setModalOpen(false); }}
-              maxLength={60}
-            />
-            <div className="ss-modal-actions">
-              <button className="ss-modal-cancel" onClick={() => setModalOpen(false)}>Cancel</button>
-              <button className="ss-modal-confirm" onClick={handleSave} disabled={!name.trim() || saving}>
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLoadScreen }) {
+export default function Watchlist({ onSelect, currentSymbol }) {
   const [items, setItems] = useState([]);
   const [prices, setPrices] = useState({});
   const [alertsBySymbol, setAlertsBySymbol] = useState({});
   const [showAlerts, setShowAlerts] = useState(false);
   const [alerts, setAlerts] = useState([]);
+  const [syncError, setSyncError] = useState(false);
   // Guard against duplicate toasts if a pulse response races the next poll
   const toastedRef = useRef(new Set());
 
@@ -151,18 +19,23 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
     try {
       const wl = await getWatchlist();
       setItems(wl);
-    } catch {}
+    } catch {
+      toast.error('Could not load the watchlist', { id: 'watchlist-load-error' });
+    }
   }, []);
 
   const loadAlertList = useCallback(async () => {
     try {
       setAlerts(await getAlerts());
-    } catch {}
+    } catch {
+      toast.error('Could not load alerts', { id: 'alerts-load-error' });
+    }
   }, []);
 
   const pulse = useCallback(async () => {
     try {
       const p = await getWatchlistPulse();
+      setSyncError(false);
       setPrices(p.prices || {});
       setAlertsBySymbol(p.alerts_by_symbol || {});
       (p.newly_triggered || []).forEach(a => {
@@ -172,11 +45,15 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
         if (a.kind === 'stop') toast.error(msg, { duration: 10000, icon: '🛑' });
         else toast.success(msg, { duration: 10000, icon: '🔔' });
       });
-    } catch {}
+    } catch {
+      setSyncError(true);
+    }
   }, []);
 
   useEffect(() => {
     loadWatchlist();
+    window.addEventListener('stocklens:watchlist-changed', loadWatchlist);
+    return () => window.removeEventListener('stocklens:watchlist-changed', loadWatchlist);
   }, [loadWatchlist]);
 
   useEffect(() => {
@@ -205,7 +82,9 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
       await ackAlert(id);
       loadAlertList();
       pulse();
-    } catch {}
+    } catch {
+      toast.error('Could not acknowledge this alert');
+    }
   };
 
   const handleDeleteAlert = async (id) => {
@@ -213,7 +92,9 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
       await deleteAlert(id);
       loadAlertList();
       pulse();
-    } catch {}
+    } catch {
+      toast.error('Could not delete this alert');
+    }
   };
 
   const getPrice = (item) => {
@@ -230,11 +111,12 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
 
   return (
     <div className="watchlist">
-      <SavedScreensPanel screenTickers={screenTickers} onLoadScreen={onLoadScreen} />
-
       <div className="wl-header">
         <span className="wl-title">Watchlist</span>
-        <span className="wl-count">{items.length}</span>
+        <span className="wl-header-meta">
+          {syncError && <span className="wl-sync-error" title="Price sync unavailable">offline</span>}
+          <span className="wl-count">{items.length}</span>
+        </span>
       </div>
 
       {items.length === 0 && (
@@ -253,6 +135,14 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
               key={item.symbol}
               className={`wl-item ${isActive ? 'active' : ''}`}
               onClick={() => onSelect(item.symbol, item.exchange)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect(item.symbol, item.exchange);
+                }
+              }}
+              role="button"
+              tabIndex={0}
             >
               <div className="wl-item-left">
                 <span className="wl-symbol">
@@ -278,6 +168,7 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, onLo
                   className="wl-remove"
                   onClick={(e) => handleRemove(e, item.symbol)}
                   title="Remove"
+                  aria-label={`Remove ${item.symbol} from watchlist`}
                 >
                   ×
                 </button>

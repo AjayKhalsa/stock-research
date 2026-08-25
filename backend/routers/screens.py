@@ -8,11 +8,43 @@ single active list of individually-tracked stocks).
 
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field, field_validator
 
 import db
 
 router = APIRouter()
+SYMBOL_RE = re.compile(r"^[A-Z0-9&.-]{1,30}$")
+
+
+class ScreenCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    tickers: list[str] = Field(min_length=2, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("name is required")
+        return cleaned
+
+    @field_validator("tickers")
+    @classmethod
+    def clean_tickers(cls, values: list[str]) -> list[str]:
+        seen, cleaned = set(), []
+        for raw in values:
+            symbol = str(raw).strip().upper()
+            if symbol and not SYMBOL_RE.fullmatch(symbol):
+                raise ValueError(f"invalid NSE ticker: {symbol}")
+            if symbol and symbol not in seen:
+                seen.add(symbol)
+                cleaned.append(symbol)
+        if len(cleaned) < 2:
+            raise ValueError("at least 2 unique tickers are required")
+        return cleaned
 
 
 @router.get("/api/screens")
@@ -22,20 +54,14 @@ async def list_screens():
 
 
 @router.post("/api/screens")
-async def save_screen(item: dict):
+async def save_screen(item: ScreenCreate):
     """
     Persist a saved screen.
     Body: {"name": "My Top Picks", "tickers": ["JUSTDIAL", "PAYTM", "OFSS"]}.
     Upserts on name (re-saving a name replaces its tickers); returns the
     stored record including its id.
     """
-    name = (item.get("name") or "").strip()
-    tickers = item.get("tickers")
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-    if not isinstance(tickers, list) or not tickers:
-        raise HTTPException(status_code=400, detail="tickers (non-empty array) is required")
-    return db.screen_save(name, tickers[:500])
+    return db.screen_save(item.name, item.tickers)
 
 
 @router.get("/api/screens/{screen_id}")
