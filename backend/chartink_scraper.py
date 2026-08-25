@@ -16,6 +16,7 @@ that calls it treats an empty list as "nothing to do", not an error.
 
 from __future__ import annotations
 
+import json
 import re
 
 import httpx
@@ -45,6 +46,21 @@ def _extract_scan_clause(html: str, soup: BeautifulSoup) -> str | None:
             val = el.get("value") or el.text
             if val and val.strip():
                 return val.strip()
+    # Current public screener pages expose their definition as JSON on the
+    # root <scanner> component. BeautifulSoup decodes the HTML entities in
+    # the attribute, leaving a normal JSON object whose atlas_query is the
+    # exact clause accepted by /screener/process.
+    scanner = soup.find("scanner")
+    if scanner is not None:
+        raw = scanner.get(":scan-json") or scanner.get("scan-json")
+        if raw:
+            try:
+                scan = json.loads(raw)
+                clause = scan.get("atlas_query") or scan.get("scan_clause")
+                if clause and str(clause).strip():
+                    return str(clause).strip()
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
     # Fallback: some pages only expose it inline in a <script> block.
     m = _SCAN_CLAUSE_JS_RE.search(html)
     if m:

@@ -477,9 +477,9 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
         setSkipped(msg.skipped ?? 0);
         setShowInput(false);
         setComputedAt(Date.now() / 1000);
-        if (isRefresh && sourceScreen?.name) {
+        if (sourceScreen?.name) {
           saveScreen(sourceScreen.name, cleanSyms, msg.data)
-            .then(() => toast.success(`"${sourceScreen.name}" updated with fresh data`))
+            .then(() => toast.success(`"${sourceScreen.name}" saved with fresh ranked data`))
             .catch(() => toast.error(`Could not save refreshed data to "${sourceScreen.name}"`));
         }
       } else if (msg.type === 'done') {
@@ -582,7 +582,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
         setComputedAt(req.computedAt || null);
       } else {
         setComputedAt(null);
-        streamRef.current(req.tickers);
+        streamRef.current(req.tickers, { sourceScreen: screenRef });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

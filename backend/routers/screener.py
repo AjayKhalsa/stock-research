@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 import re
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
@@ -186,17 +187,30 @@ class ChartinkScanClauseBody(BaseModel):
     scan_clause: str
 
 
+class ChartinkFetchBody(BaseModel):
+    url: str = ""
+
+
+def _clean_chartink_url(value: str) -> str:
+    url = value.strip()
+    parsed = urlparse(url)
+    if (parsed.scheme != "https" or parsed.hostname not in {"chartink.com", "www.chartink.com"}
+            or not parsed.path.startswith("/screener/")):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter a valid https://chartink.com/screener/... URL",
+        )
+    return url
+
+
 @router.get("/api/settings/chartink-url")
 async def get_chartink_url():
-    return {"url": db.get_setting("chartink_url", "")}
+    return {"url": db.get_setting("chartink_url", config.DEFAULT_CHARTINK_URL)}
 
 
 @router.post("/api/settings/chartink-url")
 async def set_chartink_url(body: ChartinkUrlBody):
-    url = body.url.strip()
-    if url and not url.startswith("https://chartink.com/"):
-        raise HTTPException(status_code=400,
-                             detail="Must be a chartink.com screener URL")
+    url = _clean_chartink_url(body.url) if body.url.strip() else ""
     db.set_setting("chartink_url", url)
     return {"url": url}
 
@@ -218,6 +232,37 @@ async def set_chartink_scan_clause(body: ChartinkScanClauseBody):
     """
     db.set_setting("chartink_scan_clause", body.scan_clause.strip())
     return {"scan_clause": body.scan_clause.strip()}
+
+
+@router.post("/api/chartink/fetch")
+async def fetch_chartink_matches(body: ChartinkFetchBody):
+    """Fetch the current NSE matches for a public Chartink screener.
+
+    This is the interactive, ticker-only path: it returns quickly, persists
+    the refreshed universe, and lets the frontend stream/rank those symbols.
+    The slower unattended /api/auto-screen path remains available for cron.
+    """
+    requested = body.url.strip() or db.get_setting("chartink_url", config.DEFAULT_CHARTINK_URL)
+    if not requested:
+        raise HTTPException(status_code=400, detail="Save a Chartink screener URL first")
+    url = _clean_chartink_url(requested)
+    db.set_setting("chartink_url", url)
+
+    # Prefer the query embedded in the live page so edits to the Chartink
+    # screener are picked up automatically. Retain the stored manual clause
+    # only as a fallback for older pages that do not expose atlas_query.
+    tickers = await chartink_scraper.fetch_screener_tickers(url)
+    scan_clause = db.get_setting("chartink_scan_clause", "") or None
+    if not tickers and scan_clause:
+        tickers = await chartink_scraper.fetch_screener_tickers(url, scan_clause)
+    if not tickers:
+        raise HTTPException(
+            status_code=502,
+            detail="Chartink returned no symbols. The screener may have no current matches or may be rate-limited.",
+        )
+
+    screen = db.screen_save(AUTO_SCREEN_NAME, tickers[:500])
+    return {**screen, "url": url}
 
 
 def _set_auto_screen_status(**fields) -> None:
