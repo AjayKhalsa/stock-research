@@ -1,3 +1,4 @@
+import asyncio
 import html
 import json
 import os
@@ -115,6 +116,50 @@ class SavedScreensApiTests(unittest.TestCase):
         finally:
             db._PG = original_pg
             db._PG_FALLBACK_REASON = original_reason
+
+    def test_screen_stream_emits_each_symbol_as_it_completes(self):
+        async def fundamentals(symbol):
+            await asyncio.sleep(0.025 if symbol == "SLOW" else 0.001)
+            return {}, {"source": "test"}
+
+        async def history(_instrument, days=450):
+            return [{"close": 100.0}] * 30
+
+        def row(symbol, _fundamentals, _history):
+            return {"symbol": symbol, "score": 50}
+
+        with patch("routers.screener.data_cache.get_fundamentals", side_effect=fundamentals), \
+                patch("routers.screener.price.get_historical", side_effect=history), \
+                patch("routers.screener._build_row", side_effect=row), \
+                patch("routers.screener.swing_engine.cross_sectional_rank", side_effect=lambda rows: rows):
+            response = self.client.get(
+                "/api/screen-stream", params={"symbols": "SLOW,FAST"}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        batches = [event for event in events if event.get("type") == "batch"]
+        self.assertEqual([event["symbol"] for event in batches], ["FAST", "SLOW"])
+        self.assertEqual([event["done"] for event in batches], [1, 2])
+        self.assertEqual([event["total"] for event in batches], [2, 2])
+
+    def test_cors_accepts_local_preview_ports(self):
+        response = self.client.options(
+            "/api/health",
+            headers={
+                "Origin": "http://127.0.0.1:3001",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("access-control-allow-origin"),
+            "http://127.0.0.1:3001",
+        )
 
 
 if __name__ == "__main__":

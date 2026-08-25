@@ -17,7 +17,10 @@ app = FastAPI(title="Stock Research API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     # Local dev (any LAN host on :3000) + any *.vercel.app deployment
-    allow_origin_regex=r"(http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+):3000|https://.*\.vercel\.app)",
+    # Accept any local development port. Locking this to :3000 made preview
+    # and QA builds on :3001/:3002 look like the backend was offline even
+    # though the API itself was healthy.
+    allow_origin_regex=r"(http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+):\d{2,5}|https://.*\.vercel\.app)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

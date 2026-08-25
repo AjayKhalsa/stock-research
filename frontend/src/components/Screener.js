@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import toast from 'react-hot-toast';
 import { API_BASE, resolveSymbols, saveScreen } from '../api';
-import { parseScreenInput } from '../screenUtils';
+import { isTickerOnlyInput, parseScreenInput } from '../screenUtils';
 import './Screener.css';
 
 const STREAM_URL = `${API_BASE}/api/screen-stream`;
@@ -396,8 +396,13 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   const [skipped,    setSkipped]    = useState(0);        // symbols with no usable data
   const [computedAt, setComputedAt] = useState(null);     // epoch seconds of current rows
   const [importNote, setImportNote] = useState('');
+  const [runStage,   setRunStage]   = useState('idle');
+  const [runSymbol,  setRunSymbol]  = useState('');
+  const [elapsed,    setElapsed]    = useState(0);
 
   const esRef = useRef(null);
+  const resolverAbortRef = useRef(null);
+  const runStartedAtRef = useRef(null);
   const fileRef = useRef(null);
   const lastSymsRef = useRef([]);     // symbols of the current list (for Refresh)
   // The saved screen (id/name) the current rows were loaded from, if any -
@@ -435,7 +440,9 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   // the final ranked result is ready, then swap in atomically. sourceScreen,
   // when set, is the saved screen these rows came from; a successful refresh
   // writes the fresh ranked data back to it automatically.
-  const streamSymbols = (syms, { isRefresh = false, sourceScreen = null } = {}) => {
+  const streamSymbols = (syms, {
+    isRefresh = false, sourceScreen = null, continueTiming = false,
+  } = {}) => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     const cleanSyms = [...new Set(syms.map(s => String(s).trim().toUpperCase()).filter(Boolean))].slice(0, 500);
     lastSymsRef.current = cleanSyms;
@@ -448,6 +455,12 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
       setSkipped(0);
     }
     setProgress({ done: 0, total: cleanSyms.length });
+    setRunStage('analyzing');
+    setRunSymbol('');
+    if (!continueTiming) {
+      runStartedAtRef.current = Date.now();
+      setElapsed(0);
+    }
     setRunning(true);
 
     const es = new EventSource(`${STREAM_URL}?symbols=${encodeURIComponent(cleanSyms.join(','))}`);
@@ -460,14 +473,18 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
 
       if (msg.type === 'log') {
         setLogLines(prev => [...prev.slice(-80), msg.text]);
+        if (String(msg.text || '').toLowerCase().startsWith('ranking')) {
+          setRunStage('ranking');
+        }
       } else if (msg.type === 'batch') {
         // Progressive: append this batch's rows (unranked) so the table fills.
         // During a background refresh, skip this - the old ranked view stays
         // visible untouched until the authoritative result below swaps in.
         if (!isRefresh) {
-          setRows(prev => [...(prev || []), ...msg.rows]);
+          setRows(prev => [...(prev || []), ...(msg.rows || [])]);
         }
         setProgress({ done: msg.done, total: msg.total });
+        setRunSymbol(msg.symbol || '');
         setSkipped(msg.skipped ?? 0);
         setShowInput(false);
       } else if (msg.type === 'result') {
@@ -483,9 +500,11 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
             .catch(() => toast.error(`Could not save refreshed data to "${sourceScreen.name}"`));
         }
       } else if (msg.type === 'done') {
+        setRunStage('complete');
         setRunning(false);
         es.close(); esRef.current = null;
       } else if (msg.type === 'error') {
+        setRunStage('error');
         setError(msg.text || 'Screen failed.');
         setRunning(false);
         es.close(); esRef.current = null;
@@ -494,6 +513,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
 
     es.onerror = () => {
       if (esRef.current === es) {
+        setRunStage('error');
         setError('Connection lost - is the backend running?');
         setRunning(false);
         es.close(); esRef.current = null;
@@ -501,8 +521,22 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     };
   };
 
+  const handleCancel = () => {
+    resolverAbortRef.current?.abort();
+    resolverAbortRef.current = null;
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    setResolving(false);
+    setRunning(false);
+    setRunStage('cancelled');
+    setRunSymbol('');
+  };
+
   const handleRun = async () => {
-    const tokens = parseTokens(input);
+    const parsed = parseScreenInput(input);
+    const tokens = parsed.tokens;
     if (tokens.length < 2) {
       setError('Enter at least 2 symbols or company names to rank them against each other.');
       return;
@@ -512,21 +546,35 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     setError(null);
     setResolution(null);
     setLogLines([]);
+    setElapsed(0);
+    runStartedAtRef.current = Date.now();
 
     let syms;
-    setResolving(true);
-    try {
-      const resolved = await resolveSymbols(tokens);
-      setResolution(resolved);
-      syms = [...new Set(resolved.filter(r => r.symbol).map(r => r.symbol))];
-      const unresolved = resolved.filter(r => !r.symbol);
-      if (unresolved.length > 0) {
-        setError(`Could not resolve: ${unresolved.map(r => `"${r.query}"`).join(', ')} - screening the rest.`);
+    if (isTickerOnlyInput(input)) {
+      // Explicit uppercase ticker lists are already unambiguous. Avoid a
+      // redundant resolver request before opening the analysis stream.
+      syms = tokens.map(token => token.toUpperCase());
+      setRunStage('analyzing');
+    } else {
+      const controller = new AbortController();
+      resolverAbortRef.current = controller;
+      setResolving(true);
+      setRunStage('resolving');
+      try {
+        const resolved = await resolveSymbols(tokens, { signal: controller.signal });
+        setResolution(resolved);
+        syms = [...new Set(resolved.filter(r => r.symbol).map(r => r.symbol))];
+        const unresolved = resolved.filter(r => !r.symbol);
+        if (unresolved.length > 0) {
+          setError(`Could not resolve: ${unresolved.map(r => `"${r.query}"`).join(', ')} - screening the rest.`);
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        syms = tokens.filter(t => !t.includes(' ')).map(t => t.toUpperCase());
+      } finally {
+        if (resolverAbortRef.current === controller) resolverAbortRef.current = null;
+        setResolving(false);
       }
-    } catch {
-      syms = tokens.filter(t => !t.includes(' ')).map(t => t.toUpperCase());
-    } finally {
-      setResolving(false);
     }
 
     if (syms.length < 2) {
@@ -535,7 +583,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     }
     loadedScreenRef.current = null;   // a manually-typed list isn't tied to a saved screen
     setComputedAt(null);
-    streamSymbols(syms);
+    streamSymbols(syms, { continueTiming: true });
   };
 
   // Lightweight refresh: re-stream the current symbols in the background.
@@ -550,7 +598,10 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     streamSymbols(lastSymsRef.current, { isRefresh: true, sourceScreen: loadedScreenRef.current });
   };
 
-  useEffect(() => () => { if (esRef.current) esRef.current.close(); }, []);
+  useEffect(() => () => {
+    resolverAbortRef.current?.abort();
+    if (esRef.current) esRef.current.close();
+  }, []);
 
   // Load workflow: a saved screen selected in the sidebar streams here. Keep
   // the latest stream function in a ref so the nonce-keyed effect cannot call
@@ -590,6 +641,21 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
 
   const busy = running || resolving;
   const count = rows?.length || 0;
+  const inputCount = parseTokens(input).length;
+
+  useEffect(() => {
+    if (!busy || !runStartedAtRef.current) return undefined;
+    const update = () => setElapsed(Math.max(0, Date.now() - runStartedAtRef.current));
+    update();
+    const timer = setInterval(update, 250);
+    return () => clearInterval(timer);
+  }, [busy]);
+
+  const stageLabel = {
+    resolving: 'Matching company names',
+    analyzing: progress.done ? 'Reviewing market evidence' : 'Starting analysis',
+    ranking: 'Ranking trade candidates',
+  }[runStage] || 'Preparing analysis';
 
   // Bucket counts for the filter chips + the list actually rendered.
   const counts = useMemo(() => {
@@ -641,9 +707,17 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
       {/* input area (collapsible) */}
       {showInput && (
         <div className="scr-input-area">
+          <div className="scr-decision-intro">
+            <span className="scr-decision-kicker"><i /> Decision workspace</span>
+            <h2>Find a setup worth taking.</h2>
+            <p>Compare trend, business quality and trade risk across any NSE universe.</p>
+            <div className="scr-capabilities" aria-label="Analysis includes">
+              <span>Entry</span><span>Stop</span><span>Targets</span><span>Risk</span>
+            </div>
+          </div>
           <div className="scr-input-label">
             <span>Symbols or company names</span>
-            <span>{parseTokens(input).length}/500</span>
+            <span>{inputCount}/500</span>
           </div>
           <textarea
             value={input}
@@ -655,17 +729,21 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
             <button
               className="scr-run-btn"
               onClick={handleRun}
-              disabled={busy || parseTokens(input).length < 2}
+              disabled={busy || inputCount < 2}
             >
-              {resolving ? <><Spinner /> Resolving...</>
-                : running ? <><Spinner /> {progress.done}/{progress.total}...</>
-                : 'Run Screen'}
+              {resolving ? <><Spinner color="#fff" /> Matching...</>
+                : running ? <><Spinner color="#fff" /> Analyzing...</>
+                : `Analyze${inputCount >= 2 ? ` ${inputCount} stocks` : ' stocks'}`}
             </button>
             <button className="scr-secondary-btn" onClick={() => fileRef.current?.click()} disabled={busy}>
               Import CSV
             </button>
             <input ref={fileRef} type="file" accept=".txt,.csv" onChange={handleFile} style={{ display: 'none' }} />
-            <button className="scr-link-btn" onClick={() => { setInput(EXAMPLE); setImportNote(''); }} disabled={busy}>
+            <button className="scr-link-btn" onClick={() => {
+              setInput(EXAMPLE);
+              setImportNote('Example universe ready');
+              setError(null);
+            }} disabled={busy}>
               Example
             </button>
           </div>
@@ -673,24 +751,6 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
             Chartink CSV supported - only the Symbol column is imported.
             {importNote && <strong>{importNote}</strong>}
           </div>
-
-          {running && (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{
-                  height: 5, borderRadius: 3, background: 'linear-gradient(90deg, #2f6feb, #a78bfa)',
-                  width: `${progress.total ? progress.done / progress.total * 100 : 0}%`,
-                  transition: 'width 0.3s',
-                }} />
-              </div>
-              <div style={{
-                marginTop: 6, fontSize: 10.5, color: '#64748b', fontFamily: 'var(--font-mono)',
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>
-                {logLines[logLines.length - 1] || 'Starting...'}
-              </div>
-            </div>
-          )}
 
           {error && <div style={{ marginTop: 8, fontSize: 11.5, color: '#ef4444' }}>{error}</div>}
 
@@ -712,6 +772,28 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {busy && (
+        <div className="scr-run-status" role="status" aria-live="polite">
+          <div className="scr-run-status-top">
+            <span className="scr-run-pulse"><i />{stageLabel}</span>
+            <span className="scr-run-time">{(elapsed / 1000).toFixed(1)}s</span>
+          </div>
+          <div className="scr-progress-track" aria-hidden="true">
+            <span style={{
+              width: `${progress.total ? progress.done / progress.total * 100 : resolving ? 8 : 2}%`,
+            }} />
+          </div>
+          <div className="scr-run-meta">
+            <span title={logLines[logLines.length - 1] || stageLabel}>
+              {resolving
+                ? `${inputCount} names queued`
+                : `${progress.done}/${progress.total || inputCount} reviewed${runSymbol ? ` · ${runSymbol}` : ''}`}
+            </span>
+            <button type="button" onClick={handleCancel}>Cancel</button>
+          </div>
         </div>
       )}
 

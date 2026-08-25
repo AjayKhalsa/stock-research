@@ -249,8 +249,8 @@ export default function App() {
       <main className="main-content">
         <div className="top-bar">
           <div className="top-bar-heading">
-            <span>Equity research</span>
-            <strong>{currentSymbol?.symbol || 'Discover'}</strong>
+            <span>Swing decision desk</span>
+            <strong>{currentSymbol?.symbol || 'Analyze any stock'}</strong>
           </div>
           <SearchBar onSelect={loadStock} />
           <div className="data-status" title="Market quotes are delayed">
@@ -269,10 +269,11 @@ export default function App() {
 
           {!currentSymbol && !loading && (
             <div className="empty-state">
-              <div className="empty-icon">🔍</div>
-              <h2>Search or screen any Indian stock</h2>
-              <p>Run a screen in the left panel and click a result, or search directly.
-                 Every stock gets a trade plan, evidence dossier, and reconciled bottom line.</p>
+              <div className="empty-icon">↗</div>
+              <span className="empty-kicker">Your swing-trade workspace</span>
+              <h2>Find a setup worth taking.</h2>
+              <p>Search any NSE or BSE stock for a full decision, or screen a universe to surface
+                 the strongest entry, stop, target and risk profile.</p>
               <div className="popular-stocks">
                 <span className="popular-label">Popular:</span>
                 {['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'SUNPHARMA'].map(s => (
