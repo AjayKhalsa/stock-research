@@ -103,10 +103,12 @@ export default function App() {
   const [planLoading, setPlanLoading] = useState(false);
   const [planHorizon, setPlanHorizon] = useState('swing');
 
-  // Stale-request guard: increments on every new symbol load
-  const alphaSeqRef = useRef(0);
+  // Guards the full three-phase request. A slower response for an older symbol
+  // must never replace the user's latest selection.
+  const loadSeqRef = useRef(0);
 
   const loadStock = useCallback(async (symbol, exchangeOrRow = 'NSE', row = null) => {
+    const seq = ++loadSeqRef.current;
     // Screener passes (symbol, rowObject); search/watchlist pass (symbol, exchange)
     let exchange = 'NSE';
     if (typeof exchangeOrRow === 'string') exchange = exchangeOrRow;
@@ -119,14 +121,18 @@ export default function App() {
     setAlphaData(null);
     setAlphaError(null);
     setPlanData(null);
+    setPlanLoading(false);
+    setAlphaLoading(false);
 
     // ── Phase 1: base endpoint ─────────────────────────────────────────────
     let baseData;
     try {
       baseData = await getStock(symbol, exchange);
+      if (loadSeqRef.current !== seq) return;
       setStockData(baseData);
       setCurrentSymbol({ symbol, exchange });
     } catch (e) {
+      if (loadSeqRef.current !== seq) return;
       setError(e.response?.data?.detail || 'Failed to load stock data. Please try again.');
       setLoading(false);
       return;
@@ -134,30 +140,29 @@ export default function App() {
     setLoading(false);
 
     // ── Phase 1.5 + 2: trade plan and alpha fire concurrently ─────────────
-    const seq = ++alphaSeqRef.current;
     setAlphaLoading(true);
     setPlanLoading(true);
 
     const planPromise = (async () => {
       try {
         const plan = await getPlan(symbol, exchange);
-        if (alphaSeqRef.current === seq) setPlanData(plan);
+        if (loadSeqRef.current === seq) setPlanData(plan);
       } catch (e) {
         console.warn('[plan]', e);
       } finally {
-        if (alphaSeqRef.current === seq) setPlanLoading(false);
+        if (loadSeqRef.current === seq) setPlanLoading(false);
       }
     })();
 
     try {
       const alpha = await getAlpha(symbol, exchange);
-      if (alphaSeqRef.current === seq) setAlphaData(alpha);
+      if (loadSeqRef.current === seq) setAlphaData(alpha);
     } catch (e) {
-      if (alphaSeqRef.current === seq)
+      if (loadSeqRef.current === seq)
         setAlphaError('AI Analysis temporarily unavailable. Please try again in a moment.');
       console.warn('[alpha]', e);
     } finally {
-      if (alphaSeqRef.current === seq) setAlphaLoading(false);
+      if (loadSeqRef.current === seq) setAlphaLoading(false);
     }
     await planPromise;
   }, []);
@@ -180,8 +185,13 @@ export default function App() {
           never collapsible — only its width is user-adjustable. ── */}
       <aside className="sidebar" style={{ '--sidebar-w': `${sidebarWidth}px` }}>
         <div className="sidebar-logo">
-          <span className="logo-icon">📈</span>
-          <span className="logo-text">StockLens</span>
+          <span className="logo-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8M15 7h5v5" /></svg>
+          </span>
+          <span>
+            <span className="logo-text">StockLens</span>
+            <span className="logo-kicker">Research workspace</span>
+          </span>
         </div>
         <Watchlist
           onSelect={loadStock}
@@ -237,8 +247,15 @@ export default function App() {
 
       {/* ── Detail panel ── */}
       <main className="main-content">
-        <div className="top-bar" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="top-bar">
+          <div className="top-bar-heading">
+            <span>Equity research</span>
+            <strong>{currentSymbol?.symbol || 'Discover'}</strong>
+          </div>
           <SearchBar onSelect={loadStock} />
+          <div className="data-status" title="Market quotes are delayed">
+            <span className="status-dot" /> Delayed market data
+          </div>
         </div>
 
         <div className="detail-scroll">

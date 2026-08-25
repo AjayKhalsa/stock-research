@@ -1,6 +1,8 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import toast from 'react-hot-toast';
 import { API_BASE, resolveSymbols, saveScreen } from '../api';
+import { parseScreenInput } from '../screenUtils';
+import './Screener.css';
 
 const STREAM_URL = `${API_BASE}/api/screen-stream`;
 const ROW_HEIGHT = 86;          // fixed height enables list windowing
@@ -218,6 +220,15 @@ function MasterRow({ r, active, onSelect, style }) {
   return (
     <div
       onClick={() => onSelect(r.symbol, r)}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(r.symbol, r);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${r.symbol}, rank ${r.rank ?? 'not available'}, score ${r.score ?? 'not available'}`}
       style={{
         ...style,
         boxSizing: 'border-box', height: ROW_HEIGHT,
@@ -384,6 +395,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   const [filter,     setFilter]     = useState('all');   // all | buy | wait
   const [skipped,    setSkipped]    = useState(0);        // symbols with no usable data
   const [computedAt, setComputedAt] = useState(null);     // epoch seconds of current rows
+  const [importNote, setImportNote] = useState('');
 
   const esRef = useRef(null);
   const fileRef = useRef(null);
@@ -399,25 +411,20 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, ranked]);
 
-  const parseTokens = (text) => {
-    const out = [];
-    for (const seg of text.split(/[,;\n\r\t]+/)) {
-      const s = seg.trim().replace(/\s+/g, ' ');
-      if (!s) continue;
-      if (s.includes(' ') && /^[A-Z0-9.&\- ]+$/.test(s) && !/\b(LTD|LIMITED)\b/.test(s)) {
-        out.push(...s.split(' '));
-      } else {
-        out.push(s);
-      }
-    }
-    return [...new Set(out)];
-  };
+  const parseTokens = (text) => parseScreenInput(text).tokens;
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => setInput(parseTokens(String(reader.result)).join('\n'));
+    reader.onload = () => {
+      const parsed = parseScreenInput(String(reader.result));
+      setInput(parsed.tokens.join('\n'));
+      setImportNote(parsed.tokens.length
+        ? `${parsed.tokens.length} ${parsed.source === 'chartink' ? 'Chartink ' : ''}symbols imported`
+        : 'No valid symbols found in this file');
+      if (!parsed.tokens.length) setError('The file did not contain a Symbol/Ticker column or valid NSE symbols.');
+    };
     reader.readAsText(file);
     e.target.value = '';
   };
@@ -430,21 +437,24 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   // writes the fresh ranked data back to it automatically.
   const streamSymbols = (syms, { isRefresh = false, sourceScreen = null } = {}) => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
-    lastSymsRef.current = syms;
-    onTickersChange?.(syms);   // publish the current universe for Save Screen
+    const cleanSyms = [...new Set(syms.map(s => String(s).trim().toUpperCase()).filter(Boolean))].slice(0, 500);
+    lastSymsRef.current = cleanSyms;
+    onTickersChange?.(cleanSyms);   // publish the current universe for Save Screen
+    setError(null);
     if (!isRefresh) {
       setRows([]);
       setRanked(false);
       setFilter('all');
       setSkipped(0);
     }
-    setProgress({ done: 0, total: syms.length });
+    setProgress({ done: 0, total: cleanSyms.length });
     setRunning(true);
 
-    const es = new EventSource(`${STREAM_URL}?symbols=${encodeURIComponent(syms.join(','))}`);
+    const es = new EventSource(`${STREAM_URL}?symbols=${encodeURIComponent(cleanSyms.join(','))}`);
     esRef.current = es;
 
     es.onmessage = (evt) => {
+      if (esRef.current !== es) return;
       let msg;
       try { msg = JSON.parse(evt.data); } catch { return; }
 
@@ -468,7 +478,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
         setShowInput(false);
         setComputedAt(Date.now() / 1000);
         if (isRefresh && sourceScreen?.name) {
-          saveScreen(sourceScreen.name, syms, msg.data)
+          saveScreen(sourceScreen.name, cleanSyms, msg.data)
             .then(() => toast.success(`"${sourceScreen.name}" updated with fresh data`))
             .catch(() => toast.error(`Could not save refreshed data to "${sourceScreen.name}"`));
         }
@@ -483,7 +493,7 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
     };
 
     es.onerror = () => {
-      if (esRef.current) {
+      if (esRef.current === es) {
         setError('Connection lost - is the backend running?');
         setRunning(false);
         es.close(); esRef.current = null;
@@ -542,9 +552,9 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
 
   useEffect(() => () => { if (esRef.current) esRef.current.close(); }, []);
 
-  // Load workflow: a saved screen selected in the sidebar streams here.
-  // Keep the latest streamSymbols in a ref so the nonce-keyed effect never
-  // fires on a stale closure.
+  // Load workflow: a saved screen selected in the sidebar streams here. Keep
+  // the latest stream function in a ref so the nonce-keyed effect cannot call
+  // a stale closure.
   const streamRef = useRef();
   streamRef.current = streamSymbols;
   useEffect(() => {
@@ -598,16 +608,16 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   }, [rows, filter]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div className="screener-workspace">
 
       {/* panel header */}
-      <div style={{
-        padding: '14px 14px 10px', borderBottom: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-      }}>
-        <span style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>Master Screener</span>
+      <div className="scr-header">
+        <div>
+          <span className="scr-eyebrow">Discover</span>
+          <span className="scr-title">Stock Screener</span>
+        </div>
         {count > 0 && (
-          <span style={{ fontSize: 11, color: '#94a3b8' }}>
+          <span className={`scr-count ${ranked ? 'complete' : ''}`}>
             {count}{ranked ? ' ranked' : ` / ${progress.total}`}
             {skipped > 0 && ` · ${skipped} skipped`}
             {ranked && computedAt && ` · ${running ? 'refreshing…' : formatAge(computedAt)}`}
@@ -617,73 +627,51 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
           <span style={{ fontSize: 10.5, color: '#ef4444' }} title={error}>{error}</span>
         )}
         {rows && lastSymsRef.current.length >= 2 && (
-          <button
+          <button className="scr-icon-btn scr-refresh"
             onClick={handleRefresh}
             disabled={busy}
             title="Re-pull prices and re-rank the current list (top-level metrics only)"
-            style={{
-              marginLeft: 'auto', background: 'none', border: '1px solid var(--border-strong)',
-              borderRadius: 6, fontSize: 11, color: busy ? '#cbd5e1' : '#4f46e5',
-              cursor: busy ? 'not-allowed' : 'pointer', padding: '3px 9px', fontWeight: 600,
-            }}
-          >{running ? 'Refreshing...' : 'Refresh List'}</button>
+          >{running ? 'Refreshing...' : 'Refresh'}</button>
         )}
-        <button
+        <button className="scr-icon-btn"
           onClick={() => setShowInput(s => !s)}
-          style={{
-            marginLeft: (rows && lastSymsRef.current.length >= 2) ? 0 : 'auto',
-            background: 'none', border: '1px solid var(--border-strong)',
-            borderRadius: 6, fontSize: 11, color: '#64748b', cursor: 'pointer', padding: '3px 9px',
-          }}
-        >{showInput ? 'Hide input' : 'New screen'}</button>
+        >{showInput ? 'Hide' : '+ New'}</button>
       </div>
 
       {/* input area (collapsible) */}
       {showInput && (
-        <div style={{ padding: 12, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <div className="scr-input-area">
+          <div className="scr-input-label">
+            <span>Symbols or company names</span>
+            <span>{parseTokens(input).length}/500</span>
+          </div>
           <textarea
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => { setInput(e.target.value); setImportNote(''); }}
             placeholder={`NSE symbols or company names\n(one name per line), e.g.\n${EXAMPLE}`}
             rows={3}
-            style={{
-              width: '100%', boxSizing: 'border-box', resize: 'vertical',
-              background: 'var(--bg-inset)', color: '#0f172a',
-              border: '1px solid var(--border-strong)', borderRadius: 8,
-              padding: '8px 10px', fontSize: 12, fontFamily: 'var(--font-mono)',
-            }}
           />
-          <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="scr-input-actions">
             <button
+              className="scr-run-btn"
               onClick={handleRun}
-              disabled={busy}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
-                cursor: busy ? 'not-allowed' : 'pointer',
-                background: busy ? 'var(--bg-hover)' : 'linear-gradient(135deg, #2f6feb, #5b4ee9)',
-                border: busy ? '1px solid var(--border-strong)' : '1px solid transparent',
-                color: busy ? '#64748b' : '#fff',
-              }}
+              disabled={busy || parseTokens(input).length < 2}
             >
               {resolving ? <><Spinner /> Resolving...</>
                 : running ? <><Spinner /> {progress.done}/{progress.total}...</>
                 : 'Run Screen'}
             </button>
-            <button onClick={() => fileRef.current?.click()} disabled={busy}
-              style={{ padding: '6px 10px', borderRadius: 7, fontSize: 11, cursor: busy ? 'not-allowed' : 'pointer',
-                       background: 'var(--bg-hover)', border: '1px solid var(--border-strong)', color: '#64748b' }}>
-              Upload
+            <button className="scr-secondary-btn" onClick={() => fileRef.current?.click()} disabled={busy}>
+              Import CSV
             </button>
             <input ref={fileRef} type="file" accept=".txt,.csv" onChange={handleFile} style={{ display: 'none' }} />
-            <button onClick={() => setInput(EXAMPLE)} disabled={busy}
-              style={{ padding: '6px 10px', borderRadius: 7, fontSize: 11, cursor: 'pointer',
-                       background: 'none', border: '1px dashed var(--border-strong)', color: '#94a3b8' }}>
+            <button className="scr-link-btn" onClick={() => { setInput(EXAMPLE); setImportNote(''); }} disabled={busy}>
               Example
             </button>
-            <span style={{ fontSize: 10.5, color: '#94a3b8', marginLeft: 'auto' }}>
-              {parseTokens(input).length}/500
-            </span>
+          </div>
+          <div className="scr-import-help">
+            Chartink CSV supported - only the Symbol column is imported.
+            {importNote && <strong>{importNote}</strong>}
           </div>
 
           {running && (
@@ -726,6 +714,8 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
           )}
         </div>
       )}
+
+      {error && !showInput && <div className="scr-inline-error">{error}</div>}
 
       {/* quick view filters + windowed ranked list */}
       {count > 0 ? (

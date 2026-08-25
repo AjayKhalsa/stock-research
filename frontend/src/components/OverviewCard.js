@@ -298,6 +298,7 @@ export default function OverviewCard({ data, planLevels, synthesis, demo = false
     setAdding(true);
     try {
       await addToWatchlist({ symbol: data.symbol, exchange: data.exchange, name: data.company_name });
+      window.dispatchEvent(new CustomEvent('stocklens:watchlist-changed'));
       toast.success(`${data.symbol} added to watchlist`);
     } catch {
       toast.error('Failed to add to watchlist');

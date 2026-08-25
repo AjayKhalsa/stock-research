@@ -26,6 +26,8 @@
   padding: 1px 8px;
   font-weight: 700;
 }
+.wl-header-meta { display: flex; align-items: center; gap: 7px; }
+.wl-sync-error { color: #fca5a5; font-size: 9px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; }
 
 .wl-empty {
   padding: 24px 18px;
@@ -49,6 +51,7 @@
   margin: 3px 0;
 }
 .wl-item:hover { background: var(--bg-hover); }
+.wl-item:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
 .wl-item.active {
   background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.08));
   border-color: rgba(99,102,241,0.3);
@@ -76,6 +79,8 @@
 }
 .wl-item:hover .wl-remove { opacity: 1; }
 .wl-remove:hover { color: var(--accent-red); transform: scale(1.15); }
+.wl-remove:focus-visible { opacity: 1; }
+@media (hover: none) { .wl-remove { opacity: .75; } }
 
 /* ── alerts ─────────────────────────────────────────────────────────────── */
 
