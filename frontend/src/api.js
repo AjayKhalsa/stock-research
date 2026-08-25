@@ -53,7 +53,12 @@ export const setChartinkUrl = (url) => API.post('/api/settings/chartink-url', { 
 export const getChartinkScanClause = () => API.get('/api/settings/chartink-scan-clause').then(r => r.data);
 export const setChartinkScanClause = (scan_clause) => API.post('/api/settings/chartink-scan-clause', { scan_clause }).then(r => r.data);
 export const getAutoScreenStatus = () => API.get('/api/auto-screen/status').then(r => r.data);
-export const fetchChartinkMatches = (url) => API.post('/api/chartink/fetch', { url }).then(r => r.data);
+// A full Chartink universe may contain hundreds of symbols. The backend now
+// computes and caches its price-first ranking before returning, so allow this
+// one deliberate refresh more time than ordinary interactive requests.
+export const fetchChartinkMatches = (url) => API.post(
+  '/api/chartink/fetch', { url }, { timeout: 120000 },
+).then(r => r.data);
 export const getHealth = () => API.get('/api/health').then(r => r.data);
 
 // Paper trading / forward-testing log

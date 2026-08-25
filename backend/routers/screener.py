@@ -34,12 +34,11 @@ BATCH_SIZE = 25
 # Concurrency within a batch. Kept well under the batch size so Screener.in
 # is not hammered on cold runs; cached symbols skip scraping entirely.
 FETCH_CONCURRENCY = 6
-# Lower concurrency for the unattended daily cron run (_fetch_and_rank /
-# /api/auto-screen): nobody is watching it, so trading some speed for a
-# gentler footprint on Screener.in is the right call at 400+-symbol scale —
-# kept as its own constant so tuning one path never silently affects the
-# other.
-AUTO_SCREEN_FETCH_CONCURRENCY = 3
+# Chartink can return hundreds of stocks. The broad universe pass is
+# deliberately price-first: Yahoo history is enough to rank swing setups,
+# while scraping fundamentals for every match quickly trips Screener.in's
+# rate limit. Full fundamentals are still fetched when a user opens a stock.
+AUTO_SCREEN_FETCH_CONCURRENCY = 12
 
 AUTO_SCREEN_STATUS_KEY = "auto_screen_last_run"
 
@@ -255,9 +254,10 @@ async def set_chartink_scan_clause(body: ChartinkScanClauseBody):
 async def fetch_chartink_matches(body: ChartinkFetchBody):
     """Fetch the current NSE matches for a public Chartink screener.
 
-    This is the interactive, ticker-only path: it returns quickly, persists
-    the refreshed universe, and lets the frontend stream/rank those symbols.
-    The slower unattended /api/auto-screen path remains available for cron.
+    The broad-universe pass is calculated in the backend from price history
+    and saved with ranked rows. The frontend can therefore render the result
+    immediately instead of opening a second 400+-stock stream and attempting
+    a fundamentals scrape for every symbol.
     """
     requested = body.url.strip() or db.get_setting("chartink_url", config.DEFAULT_CHARTINK_URL)
     if not requested:
@@ -278,7 +278,15 @@ async def fetch_chartink_matches(body: ChartinkFetchBody):
             detail="Chartink returned no symbols. The screener may have no current matches or may be rate-limited.",
         )
 
-    screen = db.screen_save(AUTO_SCREEN_NAME, tickers[:500])
+    clean_tickers = list(dict.fromkeys(tickers))[:500]
+    ranked = await _fetch_and_rank(clean_tickers, concurrency=AUTO_SCREEN_FETCH_CONCURRENCY)
+    if not ranked:
+        raise HTTPException(
+            status_code=502,
+            detail="Chartink returned symbols, but market history was unavailable for all of them.",
+        )
+    ranked_symbols = [row["symbol"] for row in ranked]
+    screen = db.screen_save(AUTO_SCREEN_NAME, ranked_symbols, ranked_data=ranked)
     return {**screen, "url": url}
 
 
@@ -291,82 +299,47 @@ def _set_auto_screen_status(**fields) -> None:
     db.set_setting(AUTO_SCREEN_STATUS_KEY, current)
 
 
-# Heuristic rate-limit backoff for the unattended cron path. There is no
-# clean "was rate-limited" signal threaded up from screener_scraper.py's
-# fetch_screener_full — doing so would mean changing the return shape of a
-# function shared by every stock-detail endpoint in the app, not just this
-# one nightly job, which is a lot of blast radius for one cron path's
-# politeness. Instead: a batch that mostly comes back with no usable row is
-# a reasonable proxy for scrape friction (rate limiting or similar), and is
-# fully local to this function — no shared code touched. Not a general
-# retry framework; Path A (the interactive /api/screen-stream) never uses
-# this and always runs at full speed, since a human is actively waiting.
-_BAD_BATCH_HIT_RATE = 0.5      # < 50% of a batch producing a row looks like friction
-_BACKOFF_BASE_SECONDS = 5
-_BACKOFF_STEP_SECONDS = 5
-_BACKOFF_MAX_SECONDS = 30
-
-
-async def _fetch_and_rank(syms: list[str], concurrency: int = FETCH_CONCURRENCY) -> list[dict]:
+async def _fetch_and_rank(
+    syms: list[str],
+    concurrency: int = AUTO_SCREEN_FETCH_CONCURRENCY,
+    track_status: bool = False,
+) -> list[dict]:
     """
-    Same fetch-then-rank shape as /api/screen-stream, without the SSE
-    progress events — used for the one-shot cron run. Unlike the interactive
-    stream, this:
-      - saves progress after every batch (db.screen_save is upsert-on-name,
-        so a mid-run crash/restart leaves the saved screen at whatever the
-        last completed batch produced, not empty)
-      - updates the auto_screen_last_run status record after every batch
-      - backs off between batches when a batch looks rate-limited
+    Fast broad-universe pass used by both manual Chartink refresh and cron.
+
+    Only price history is fetched here. Pulling Screener.in fundamentals for
+    400+ symbols caused sustained HTTP 429s and turned a sub-minute market
+    scan into an hour-long degraded run. A stock's full research view still
+    fetches and displays fundamentals on demand.
     """
     sem = asyncio.Semaphore(concurrency)
 
     async def fetch_one(sym: str):
         async with sem:
             try:
-                sdata, _meta = await data_cache.get_fundamentals(sym)
                 hist = await price.get_historical(f"NSE:{sym}", days=450)
-                return sym, sdata, hist, None
+                return sym, hist, None
             except Exception as e:                            # noqa: BLE001
-                return sym, {}, [], str(e)
+                return sym, [], str(e)
 
-    batches = list(_chunks(syms, BATCH_SIZE))
     total = len(syms)
-    rows, done, ranked, consecutive_bad_batches = [], 0, [], 0
-
-    for i, batch in enumerate(batches):
-        results = await asyncio.gather(*(fetch_one(s) for s in batch))
-        batch_hits = 0
-        for sym, sdata, hist, err in results:
+    rows, done = [], 0
+    tasks = [asyncio.create_task(fetch_one(sym)) for sym in syms]
+    try:
+        for completed in asyncio.as_completed(tasks):
+            sym, hist, err = await completed
             done += 1
-            if err:
-                continue
-            row = _build_row(sym, sdata, hist)
+            row = None if err else _build_row(sym, {}, hist)
             if row is not None:
                 rows.append(row)
-                batch_hits += 1
+            if track_status and (done % BATCH_SIZE == 0 or done == total):
+                _set_auto_screen_status(done=done, total=total, count=len(rows))
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
 
-        ranked = swing_engine.cross_sectional_rank(rows) if rows else []
-        ranked_symbols = [r["symbol"] for r in ranked]
-        if ranked_symbols:
-            # Save the full computed rows, not just symbols — this is what
-            # lets loading "Daily Chartink Auto-Run" render instantly instead
-            # of re-running a live fetch every time it's opened.
-            db.screen_save(AUTO_SCREEN_NAME, ranked_symbols, ranked_data=ranked)
-        _set_auto_screen_status(done=done, total=total, count=len(ranked_symbols))
-
-        hit_rate = batch_hits / len(batch) if batch else 1.0
-        if hit_rate < _BAD_BATCH_HIT_RATE:
-            consecutive_bad_batches += 1
-            if i < len(batches) - 1:   # no point backing off after the last batch
-                delay = min(_BACKOFF_MAX_SECONDS, _BACKOFF_BASE_SECONDS
-                            + _BACKOFF_STEP_SECONDS * (consecutive_bad_batches - 1))
-                print(f"[auto-screen] batch {i + 1}/{len(batches)} hit rate "
-                      f"{hit_rate:.0%} — backing off {delay}s before the next batch")
-                await asyncio.sleep(delay)
-        else:
-            consecutive_bad_batches = 0
-
-    return ranked
+    return swing_engine.cross_sectional_rank(rows) if rows else []
 
 
 async def _run_auto_screen(url: str) -> None:
@@ -383,12 +356,18 @@ async def _run_auto_screen(url: str) -> None:
                                      count=0, error="Chartink returned no tickers")
             return
 
-        tickers = tickers[:500]
+        tickers = list(dict.fromkeys(tickers))[:500]
         _set_auto_screen_status(total=len(tickers))
-        await _fetch_and_rank(tickers, concurrency=AUTO_SCREEN_FETCH_CONCURRENCY)
+        ranked = await _fetch_and_rank(
+            tickers,
+            concurrency=AUTO_SCREEN_FETCH_CONCURRENCY,
+            track_status=True,
+        )
+        ranked_symbols = [row["symbol"] for row in ranked]
+        if ranked_symbols:
+            db.screen_save(AUTO_SCREEN_NAME, ranked_symbols, ranked_data=ranked)
 
-        latest = db.get_setting(AUTO_SCREEN_STATUS_KEY, {}) or {}
-        final_count = latest.get("count", 0)
+        final_count = len(ranked_symbols)
         _set_auto_screen_status(
             status="done", finished_at=time.time(), count=final_count,
             error=None if final_count else "No usable data for any matched ticker",
