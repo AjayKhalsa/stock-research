@@ -1,0 +1,24 @@
+name: Daily Chartink refresh
+
+on:
+  schedule:
+    # 18:00 India time, Monday-Friday: after the NSE cash session closes.
+    - cron: '30 12 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake backend and start the cached screen refresh
+        env:
+          CRON_SECRET: ${{ secrets.STOCKLENS_CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          curl --fail-with-body --show-error --silent \
+            --retry 4 --retry-all-errors --retry-delay 15 \
+            --max-time 180 \
+            -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://stock-research-vtmf.onrender.com/api/auto-screen

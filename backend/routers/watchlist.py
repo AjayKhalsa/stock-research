@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from starlette.concurrency import run_in_threadpool
 
 import alert_store
 import db
@@ -14,12 +15,12 @@ router = APIRouter()
 
 
 @router.get("/api/watchlist")
-async def get_watchlist():
+def get_watchlist():
     return db.watchlist_all()
 
 
 @router.post("/api/watchlist")
-async def add_watchlist(item: dict):
+def add_watchlist(item: dict):
     sym = item.get("symbol", "").upper()
     if not sym:
         return db.watchlist_all()
@@ -27,13 +28,13 @@ async def add_watchlist(item: dict):
 
 
 @router.delete("/api/watchlist/{symbol}")
-async def remove_watchlist(symbol: str):
+def remove_watchlist(symbol: str):
     return db.watchlist_remove(symbol)
 
 
 @router.get("/api/watchlist/prices")
 async def watchlist_prices():
-    wl = db.watchlist_all()
+    wl = await run_in_threadpool(db.watchlist_all)
     if not wl:
         return {}
     instruments = [f"{w['exchange']}:{w['symbol']}" for w in wl]
@@ -43,7 +44,7 @@ async def watchlist_prices():
 # ── alerts ────────────────────────────────────────────────────────────────────
 
 @router.get("/api/alerts")
-async def get_alerts(symbol: Optional[str] = None):
+def get_alerts(symbol: Optional[str] = None):
     alerts = alert_store.load_alerts()
     if symbol:
         alerts = [a for a in alerts if a["symbol"] == symbol.upper()]
@@ -51,7 +52,7 @@ async def get_alerts(symbol: Optional[str] = None):
 
 
 @router.post("/api/alerts")
-async def create_alert(item: dict):
+def create_alert(item: dict):
     sym = item.get("symbol", "").upper().strip()
     level = item.get("level")
     direction = item.get("direction")
@@ -64,7 +65,7 @@ async def create_alert(item: dict):
 
 
 @router.post("/api/alerts/from-plan")
-async def create_alerts_from_plan(item: dict):
+def create_alerts_from_plan(item: dict):
     sym = item.get("symbol", "").upper().strip()
     horizon = item.get("horizon")
     plan = item.get("plan")
@@ -75,14 +76,14 @@ async def create_alerts_from_plan(item: dict):
 
 
 @router.delete("/api/alerts/{alert_id}")
-async def remove_alert(alert_id: str):
+def remove_alert(alert_id: str):
     if not alert_store.delete_alert(alert_id):
         raise HTTPException(status_code=404, detail="Alert not found")
     return {"ok": True}
 
 
 @router.post("/api/alerts/{alert_id}/ack")
-async def ack_alert(alert_id: str):
+def ack_alert(alert_id: str):
     if not alert_store.acknowledge(alert_id):
         raise HTTPException(status_code=404, detail="Alert not found")
     return {"ok": True}
@@ -96,15 +97,17 @@ async def watchlist_pulse():
     alert, flips crossed alerts, and returns the newly-triggered ones.
     Alerts run on delayed Yahoo Finance data — advisory only.
     """
-    wl = db.watchlist_all()
+    wl = await run_in_threadpool(db.watchlist_all)
     instruments = {f"{w['exchange']}:{w['symbol']}" for w in wl}
-    instruments |= {f"{exc}:{sym}" for sym, exc in alert_store.symbols_with_active_alerts()}
+    active_alerts = await run_in_threadpool(alert_store.symbols_with_active_alerts)
+    instruments |= {f"{exc}:{sym}" for sym, exc in active_alerts}
 
     prices = await price.get_ltp_multiple(sorted(instruments)) if instruments else {}
-    newly_triggered = alert_store.check_alerts(prices)
+    newly_triggered = await run_in_threadpool(alert_store.check_alerts, prices)
+    alerts_by_symbol = await run_in_threadpool(alert_store.summary_by_symbol)
 
     return {
         "prices": prices,
         "newly_triggered": newly_triggered,
-        "alerts_by_symbol": alert_store.summary_by_symbol(),
+        "alerts_by_symbol": alerts_by_symbol,
     }

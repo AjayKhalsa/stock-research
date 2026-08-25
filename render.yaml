@@ -4,9 +4,8 @@
 # cache) lives wherever DATABASE_URL points db.py: set -> Postgres, unset ->
 # local SQLite. This does NOT provision a database — set DATABASE_URL
 # manually in the Render dashboard (Environment tab) pointing at a real
-# Postgres instance, e.g. a free Neon database (neon.tech): permanently free,
-# unlike Render's own managed Postgres free tier, which expires ~30 days
-# after creation and would silently lose this same data all over again.
+# Postgres instance such as the project's Supabase session pooler. URL-encode
+# reserved characters in the password before putting it in DATABASE_URL.
 #
 # Without DATABASE_URL set, the free web plan's ephemeral disk wipes the
 # local SQLite file on every restart/redeploy — this has already happened
@@ -23,18 +22,27 @@
 
 services:
   - type: web
-    name: stocklens-api
+    name: stock-research
     runtime: python
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
     envVars:
       # Set manually in the Render dashboard -> Environment tab. Point it at
-      # a Postgres connection string (Neon's free tier or similar). Left
-      # unset here on purpose — see the note above.
+      # the Supabase session-pooler connection string. Left unset here on
+      # purpose — secrets must stay in Render, never in this repository.
       - key: DATABASE_URL
         sync: false
+      - key: DB_POOL_SIZE
+        value: 6
+      # Never silently accept writes into ephemeral SQLite when Supabase is
+      # unavailable. Render will restart the service instead.
+      - key: ALLOW_EPHEMERAL_DB_FALLBACK
+        value: false
+      - key: CRON_SECRET_KEY
+        sync: false   # same value as GitHub secret STOCKLENS_CRON_SECRET
       - key: GEMINI_API_KEY
         sync: false   # set the value in the Render dashboard
       - key: PYTHON_VERSION

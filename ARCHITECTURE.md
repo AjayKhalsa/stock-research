@@ -29,7 +29,7 @@ Three independently-deployed tiers, each with exactly one job:
 |---|---|---|
 | **Vercel** | Serves the built React app (static assets on a CDN). No server logic. | No — pure presentation |
 | **Render** | Runs the FastAPI backend (`uvicorn main:app`). All scraping, scoring, and AI calls happen here. | No — compute is stateless/ephemeral by design |
-| **Postgres** (Neon or Render-managed) | Durable store for watchlist, saved screens, alerts, settings, and the fundamentals cache. | Yes — the only tier that must survive restarts |
+| **Postgres** (Supabase) | Durable store for watchlist, saved screens, alerts, settings, paper trades, and caches. A bounded application pool reuses database sessions. | Yes — the only tier that must survive restarts |
 
 **Why the split matters:** Render's free web plan has an *ephemeral* disk that is wiped on every restart/redeploy (and free instances spin down after ~15 min idle). Anything stored only on Render's local disk — including a local SQLite file — is lost on the next restart. Moving durable state into an external Postgres database means the backend can restart freely (free tier, frequent redeploys) without ever losing the watchlist or saved screens. Render's own managed Postgres free tier is *also* time-limited (~30 days), so a permanently-free external provider such as **Neon** (or Supabase) is the recommended `DATABASE_URL` target for a fully-free, fully-durable setup.
 
@@ -278,11 +278,11 @@ All routes are prefixed `/api/`. No auth layer — this is a single-user persona
 |---|---|
 | Frontend build | Vercel, builds from `main`. `REACT_APP_API_URL` set as a Vercel env var (build-time, requires rebuild to change) |
 | Backend | Render (`render.yaml` blueprint), free web plan, `uvicorn main:app` |
-| Database | `DATABASE_URL` env var on Render → external Postgres (Neon recommended for a permanently-free tier; Render's own managed free Postgres expires after ~30 days) |
-| Secrets | `GEMINI_API_KEY` set directly in the Render dashboard (not committed); `.env.example` documents every variable the app reads |
+| Database | `DATABASE_URL` env var on Render → the Supabase session pooler; `DB_POOL_SIZE` defaults to 6 |
+| Secrets | `GEMINI_API_KEY` and `CRON_SECRET_KEY` are set directly in Render; GitHub Actions receives the matching `STOCKLENS_CRON_SECRET` repository secret |
 | CORS | Backend allows any `*.vercel.app` origin plus local dev hosts — no per-deployment CORS config needed |
 
-**To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY` and `DATABASE_URL` set; deploy `frontend/` to Vercel (or any static host) with `REACT_APP_API_URL` pointed at the backend's public URL; point `DATABASE_URL` at any Postgres instance (Neon's free tier works with zero code changes, since `db.py` speaks standard Postgres via `psycopg`).
+**To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY`, `DATABASE_URL`, and `CRON_SECRET_KEY` set; deploy `frontend/` to Vercel with `REACT_APP_API_URL` pointed at the backend. Add a GitHub Actions repository secret named `STOCKLENS_CRON_SECRET` with the same value as Render's `CRON_SECRET_KEY`; the weekday workflow refreshes Chartink at 18:00 IST. `db.py` speaks standard Postgres via `psycopg` and uses a bounded connection pool in production.
 
 ---
 

@@ -5,13 +5,23 @@ import {
   getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
   getScreens, getScreen, saveScreen, deleteScreen,
   getChartinkUrl, setChartinkUrl, getChartinkScanClause, setChartinkScanClause,
-  getPaperTradeStats, getPaperTradesList, getAutoScreenStatus, fetchChartinkMatches,
+  getPaperTradeSnapshot, getAutoScreenStatus, fetchChartinkMatches,
   describeApiError, getHealth,
 } from '../api';
 
 import './Watchlist.css';
 
 const CHARTINK_SCREEN_NAME = 'Daily Chartink Auto-Run';
+const PAPER_TRADE_CACHE_KEY = 'stocklens_paper_trade_snapshot_v1';
+
+function readPaperTradeCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(PAPER_TRADE_CACHE_KEY) || 'null');
+    return cached?.stats && Array.isArray(cached?.trades) ? cached : null;
+  } catch {
+    return null;
+  }
+}
 
 function formatAgeMinutes(mins) {
   if (mins == null) return '';
@@ -336,44 +346,84 @@ function statusTone(status) {
    (never behind the collapsible screener panel) so the system's real,
    running track record is never more than a glance away. */
 function ScorecardWidget() {
-  const [stats, setStats] = useState(null);   // null = not loaded yet
+  const [snapshot, setSnapshot] = useState(readPaperTradeCache);
+  const snapshotRef = useRef(snapshot);
+  const requestRef = useRef(null);
+  const [syncState, setSyncState] = useState(snapshot ? 'cached' : 'loading');
   const [showLog, setShowLog] = useState(false);
-  const [trades, setTrades] = useState([]);
   const [loadingTrades, setLoadingTrades] = useState(false);
+  const stats = snapshot?.stats || null;
+  const trades = snapshot?.trades || [];
 
-  const refreshStats = useCallback(async () => {
-    try { setStats(await getPaperTradeStats()); } catch {}
+  const refreshSnapshot = useCallback(() => {
+    if (requestRef.current) return requestRef.current;
+    setSyncState(snapshotRef.current ? 'refreshing' : 'loading');
+    const request = getPaperTradeSnapshot()
+      .then((next) => {
+        if (!next?.stats || !Array.isArray(next?.trades)) throw new Error('Invalid paper trade snapshot');
+        const cached = { ...next, cached_at: Date.now() };
+        snapshotRef.current = cached;
+        setSnapshot(cached);
+        setSyncState('live');
+        try { localStorage.setItem(PAPER_TRADE_CACHE_KEY, JSON.stringify(cached)); } catch {}
+        return true;
+      })
+      .catch(() => {
+        setSyncState(snapshotRef.current ? 'cached' : 'offline');
+        return false;
+      })
+      .finally(() => { requestRef.current = null; });
+    requestRef.current = request;
+    return request;
   }, []);
 
   useEffect(() => {
-    refreshStats();
-    const interval = setInterval(refreshStats, 15000);
-    return () => clearInterval(interval);
-  }, [refreshStats]);
+    refreshSnapshot();
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'hidden') refreshSnapshot();
+    };
+    const interval = setInterval(refreshWhenVisible, 60000);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    window.addEventListener('stocklens:paper-trade-changed', refreshWhenVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.removeEventListener('stocklens:paper-trade-changed', refreshWhenVisible);
+    };
+  }, [refreshSnapshot]);
 
   const openLog = async () => {
     setShowLog(true);
-    setLoadingTrades(true);
-    try {
-      setTrades(await getPaperTradesList());
-    } catch {
+    setLoadingTrades(!snapshotRef.current);
+    const loaded = await refreshSnapshot();
+    if (!loaded && !snapshotRef.current) {
       toast.error('Could not load the trade log');
-    } finally {
-      setLoadingTrades(false);
     }
+    setLoadingTrades(false);
   };
 
-  if (stats === null) return null;   // avoid flashing an empty state on load
-
-  const expColor = stats.net_pnl_r > 0 ? '#34d399' : stats.net_pnl_r < 0 ? '#f87171' : '#94a3b8';
+  const expColor = (stats?.net_pnl_r || 0) > 0 ? '#34d399'
+    : (stats?.net_pnl_r || 0) < 0 ? '#f87171' : '#94a3b8';
+  const stateLabel = syncState === 'live' ? 'Live'
+    : syncState === 'refreshing' ? 'Updating'
+      : syncState === 'cached' ? 'Cached' : syncState === 'offline' ? 'Offline' : 'Connecting';
 
   return (
     <div className="pt-scorecard">
       <div className="pt-scorecard-header">
         <span className="pt-scorecard-title">🧪 System Scorecard</span>
+        <span className={`pt-sync-state ${syncState}`}>
+          <span className="pt-sync-dot" />{stateLabel}
+        </span>
       </div>
 
-      {stats.total_trades === 0 ? (
+      {!stats ? (
+        <div className="pt-scorecard-loading" aria-label="Loading paper trade scorecard">
+          <span className="pt-loading-line" />
+          <span className="pt-loading-line short" />
+          <small>Restoring your trade log…</small>
+        </div>
+      ) : stats.total_trades === 0 ? (
         <div className="pt-scorecard-empty">
           No paper trades logged yet — use "🧪 Paper Trade This Setup" on any Trade Plan.
         </div>
@@ -399,7 +449,9 @@ function ScorecardWidget() {
         </div>
       )}
 
-      <button className="pt-scorecard-log-btn" onClick={openLog}>View Trade Log</button>
+      <button className="pt-scorecard-log-btn" onClick={openLog}>
+        {syncState === 'loading' ? 'Connecting to Trade Log…' : 'View Trade Log'}
+      </button>
 
       {showLog && createPortal(
         <div className="ss-modal-overlay" onMouseDown={() => setShowLog(false)}>

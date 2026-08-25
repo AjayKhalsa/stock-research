@@ -23,8 +23,10 @@ jest.mock('./api', () => ({
   setChartinkUrl: jest.fn(),
   getChartinkScanClause: jest.fn(() => Promise.resolve({ scan_clause: '' })),
   setChartinkScanClause: jest.fn(),
-  getPaperTradeStats: jest.fn(() => Promise.resolve({ total_trades: 0 })),
-  getPaperTradesList: jest.fn(() => Promise.resolve([])),
+  getPaperTradeSnapshot: jest.fn(() => Promise.resolve({
+    stats: { total_trades: 0, wins: 0, losses: 0, win_rate_pct: 0, net_pnl_r: 0, active_count: 0 },
+    trades: [],
+  })),
   getAutoScreenStatus: jest.fn(() => Promise.resolve({})),
   getHealth: jest.fn(() => Promise.resolve({ ok: true, storage: { backend: 'postgres', durable: true } })),
   fetchChartinkMatches: jest.fn(),
@@ -35,16 +37,40 @@ jest.mock('./api', () => ({
 }));
 
 beforeEach(() => {
+  localStorage.clear();
   api.getMarketRegime.mockResolvedValue({ regime: 'Unknown' });
   api.getWatchlist.mockResolvedValue([]);
   api.getWatchlistPulse.mockResolvedValue({ prices: {}, alerts_by_symbol: {} });
   api.getScreens.mockResolvedValue([]);
   api.getChartinkUrl.mockResolvedValue({ url: '' });
   api.getChartinkScanClause.mockResolvedValue({ scan_clause: '' });
-  api.getPaperTradeStats.mockResolvedValue({ total_trades: 0 });
-  api.getPaperTradesList.mockResolvedValue([]);
+  api.getPaperTradeSnapshot.mockResolvedValue({
+    stats: { total_trades: 0, wins: 0, losses: 0, win_rate_pct: 0, net_pnl_r: 0, active_count: 0 },
+    trades: [],
+  });
   api.getAutoScreenStatus.mockResolvedValue({});
   api.getHealth.mockResolvedValue({ ok: true, storage: { backend: 'postgres', durable: true } });
+});
+
+test('keeps the paper trade scorecard visible while the backend is waking', () => {
+  api.getPaperTradeSnapshot.mockReturnValue(new Promise(() => {}));
+  render(<App />);
+  expect(screen.getByText(/System Scorecard/)).toBeInTheDocument();
+  expect(screen.getByText('Connecting')).toBeInTheDocument();
+  expect(screen.getByText('Restoring your trade log…')).toBeInTheDocument();
+});
+
+test('shows the last paper trade snapshot when a refresh is unavailable', async () => {
+  localStorage.setItem('stocklens_paper_trade_snapshot_v1', JSON.stringify({
+    stats: { total_trades: 3, wins: 1, losses: 1, win_rate_pct: 50, net_pnl_r: 0.5, active_count: 1 },
+    trades: [{ id: 1, symbol: 'TCS', status: 'ACTIVE', pnl_r: 0, entry_price: 100 }],
+  }));
+  api.getPaperTradeSnapshot.mockRejectedValue(new Error('backend sleeping'));
+  render(<App />);
+  expect(screen.getByText(/System Scorecard/)).toBeInTheDocument();
+  expect(screen.getByText((_, element) => element?.classList?.contains('pt-scorecard-value')
+    && element.textContent.startsWith('50%'))).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText('Cached')).toBeInTheDocument());
 });
 
 test('renders the research workspace and primary discovery actions', async () => {
