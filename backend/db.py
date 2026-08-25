@@ -31,7 +31,8 @@ import json
 import os
 import sqlite3
 import time
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 from config import DATA_DIR
 
@@ -55,18 +56,27 @@ def _sql(q: str) -> str:
     return q.replace("?", "%s") if _PG else q
 
 
-def _conn():
+@contextmanager
+def _conn() -> Iterator[Any]:
     """A fresh connection with dict-style row access on both backends.
 
-    Used as `with _conn() as c: ...` — both drivers commit the transaction on a
-    clean exit. psycopg also closes the connection at block end; SQLite
-    connections are short-lived and released by GC.
+    Used as `with _conn() as c: ...`; transactions commit on a clean exit and
+    every connection is explicitly closed on both backends.
     """
     if _PG:
-        return psycopg.connect(_DSN, row_factory=dict_row)
+        with psycopg.connect(_DSN, row_factory=dict_row) as c:
+            yield c
+        return
     c = sqlite3.connect(DB_PATH, timeout=5)
     c.row_factory = sqlite3.Row
-    return c
+    try:
+        yield c
+        c.commit()
+    except Exception:
+        c.rollback()
+        raise
+    finally:
+        c.close()
 
 
 # ── schema ────────────────────────────────────────────────────────────────────

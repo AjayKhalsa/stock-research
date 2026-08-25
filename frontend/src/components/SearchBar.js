@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { searchInstruments } from '../api';
+import { searchInstruments, resolveSymbols } from '../api';
 import './SearchBar.css';
 
 export default function SearchBar({ onSelect }) {
@@ -9,53 +9,90 @@ export default function SearchBar({ onSelect }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const timer = useRef(null);
+  const requestSeq = useRef(0);
 
   useEffect(() => {
     const handleClick = (e) => {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     };
     document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      clearTimeout(timer.current);
+      requestSeq.current += 1;
+    };
   }, []);
 
   const handleChange = (e) => {
     const val = e.target.value;
     setQuery(val);
     clearTimeout(timer.current);
-    if (val.length < 1) { setResults([]); setOpen(false); return; }
+    const seq = ++requestSeq.current;
+    if (val.trim().length < 1) { setResults([]); setOpen(false); setLoading(false); return; }
     timer.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const data = await searchInstruments(val);
+        const data = await searchInstruments(val.trim());
+        if (requestSeq.current !== seq) return;
         setResults(data || []);
         setOpen(true);
       } catch {
+        if (requestSeq.current !== seq) return;
         setResults([]);
       } finally {
-        setLoading(false);
+        if (requestSeq.current === seq) setLoading(false);
       }
     }, 300);
   };
 
   const handleSelect = (item) => {
+    clearTimeout(timer.current);
+    requestSeq.current += 1;
     setQuery('');
     setOpen(false);
     setResults([]);
+    setLoading(false);
     onSelect(item.symbol, item.exchange || 'NSE');
   };
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = async (e) => {
     if (e.key === 'Enter' && query.trim()) {
+      e.preventDefault();
+      if (results.length > 0) {
+        handleSelect(results[0]);
+        return;
+      }
+      clearTimeout(timer.current);
+      const seq = ++requestSeq.current;
+      const raw = query.trim();
       setOpen(false);
-      onSelect(query.trim().toUpperCase(), 'NSE');
-      setQuery('');
+      if (/^[A-Za-z0-9&.-]+$/.test(raw)) {
+        onSelect(raw.toUpperCase(), 'NSE');
+        setQuery('');
+        return;
+      }
+      setLoading(true);
+      try {
+        const [match] = await resolveSymbols([raw]);
+        if (requestSeq.current !== seq) return;
+        if (match?.symbol) handleSelect(match);
+        else setOpen(true);
+      } catch {
+        if (requestSeq.current === seq) setOpen(true);
+      } finally {
+        if (requestSeq.current === seq) setLoading(false);
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
     }
   };
 
   return (
     <div className="search-wrapper" ref={ref}>
       <div className="search-input-wrap">
-        <span className="search-icon">🔍</span>
+        <span className="search-icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
+        </span>
         <input
           className="search-input"
           placeholder="Search stock by name or symbol (e.g. RELIANCE, TCS)..."

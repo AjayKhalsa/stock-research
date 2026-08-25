@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './NewsFeed.css';
 
 function timeAgo(dateStr) {
@@ -104,6 +104,11 @@ export default function NewsFeed({ news, announcements, sentiment }) {
   const hasAnn = announcements && announcements.length > 0;
   const hasNews = news && news.length > 0;
 
+  useEffect(() => {
+    if (!hasNews && hasAnn) setTab('bse');
+    else if (hasNews && !hasAnn) setTab('news');
+  }, [hasNews, hasAnn]);
+
   if (!hasNews && !hasAnn) {
     return (
       <div className="card">
@@ -141,7 +146,7 @@ export default function NewsFeed({ news, announcements, sentiment }) {
         )}
       </div>
 
-      {sentiment && <SentimentBar sentiment={sentiment} />}
+      {sentiment && tab === 'news' && <SentimentBar sentiment={sentiment} />}
 
       <div className="news-list">
         {tab === 'news' && (hasNews

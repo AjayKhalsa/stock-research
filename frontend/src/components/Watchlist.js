@@ -415,6 +415,7 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
   const [alertsBySymbol, setAlertsBySymbol] = useState({});
   const [showAlerts, setShowAlerts] = useState(false);
   const [alerts, setAlerts] = useState([]);
+  const [syncError, setSyncError] = useState(false);
   // Guard against duplicate toasts if a pulse response races the next poll
   const toastedRef = useRef(new Set());
 
@@ -422,18 +423,23 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
     try {
       const wl = await getWatchlist();
       setItems(wl);
-    } catch {}
+    } catch {
+      toast.error('Could not load the watchlist', { id: 'watchlist-load-error' });
+    }
   }, []);
 
   const loadAlertList = useCallback(async () => {
     try {
       setAlerts(await getAlerts());
-    } catch {}
+    } catch {
+      toast.error('Could not load alerts', { id: 'alerts-load-error' });
+    }
   }, []);
 
   const pulse = useCallback(async () => {
     try {
       const p = await getWatchlistPulse();
+      setSyncError(false);
       setPrices(p.prices || {});
       setAlertsBySymbol(p.alerts_by_symbol || {});
       (p.newly_triggered || []).forEach(a => {
@@ -443,11 +449,15 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
         if (a.kind === 'stop') toast.error(msg, { duration: 10000, icon: '🛑' });
         else toast.success(msg, { duration: 10000, icon: '🔔' });
       });
-    } catch {}
+    } catch {
+      setSyncError(true);
+    }
   }, []);
 
   useEffect(() => {
     loadWatchlist();
+    window.addEventListener('stocklens:watchlist-changed', loadWatchlist);
+    return () => window.removeEventListener('stocklens:watchlist-changed', loadWatchlist);
   }, [loadWatchlist]);
 
   useEffect(() => {
@@ -476,7 +486,9 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
       await ackAlert(id);
       loadAlertList();
       pulse();
-    } catch {}
+    } catch {
+      toast.error('Could not acknowledge this alert');
+    }
   };
 
   const handleDeleteAlert = async (id) => {
@@ -484,7 +496,9 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
       await deleteAlert(id);
       loadAlertList();
       pulse();
-    } catch {}
+    } catch {
+      toast.error('Could not delete this alert');
+    }
   };
 
   const getPrice = (item) => {
@@ -506,7 +520,10 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
 
       <div className="wl-header">
         <span className="wl-title">Watchlist</span>
-        <span className="wl-count">{items.length}</span>
+        <span className="wl-header-meta">
+          {syncError && <span className="wl-sync-error" title="Price sync unavailable">offline</span>}
+          <span className="wl-count">{items.length}</span>
+        </span>
       </div>
 
       {items.length === 0 && (
@@ -525,6 +542,14 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
               key={item.symbol}
               className={`wl-item ${isActive ? 'active' : ''}`}
               onClick={() => onSelect(item.symbol, item.exchange)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect(item.symbol, item.exchange);
+                }
+              }}
+              role="button"
+              tabIndex={0}
             >
               <div className="wl-item-left">
                 <span className="wl-symbol">
@@ -550,6 +575,7 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
                   className="wl-remove"
                   onClick={(e) => handleRemove(e, item.symbol)}
                   title="Remove"
+                  aria-label={`Remove ${item.symbol} from watchlist`}
                 >
                   ×
                 </button>
