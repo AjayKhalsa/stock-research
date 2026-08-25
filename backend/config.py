@@ -30,6 +30,10 @@ GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 # Unset by default -> the endpoint refuses every request until an operator
 # configures a real secret (an empty secret must never be "valid").
 CRON_SECRET_KEY: str = os.environ.get("CRON_SECRET_KEY", "")
+DEFAULT_CHARTINK_URL: str = os.environ.get(
+    "CHARTINK_SCREENER_URL",
+    "https://chartink.com/screener/copy-general-scanner-simply-above-mas-3",
+)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 # Where durable state lives (SQLite DB: watchlist, saved screens, alerts,

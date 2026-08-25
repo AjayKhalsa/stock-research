@@ -1,8 +1,20 @@
 import axios from 'axios';
 
-export const API_BASE = (process.env.REACT_APP_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+const DEFAULT_API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://stocklens-api.onrender.com'
+  : 'http://localhost:8000';
 
-const API = axios.create({ baseURL: API_BASE });
+export const API_BASE = (process.env.REACT_APP_API_URL || DEFAULT_API_BASE).replace(/\/+$/, '');
+
+const API = axios.create({ baseURL: API_BASE, timeout: 45000 });
+
+export function describeApiError(error, fallback = 'Request failed') {
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (error?.code === 'ECONNABORTED') return 'The backend took too long to respond. Please retry in a moment.';
+  if (!error?.response) return `Backend unavailable at ${API_BASE}`;
+  return `${fallback} (HTTP ${error.response.status})`;
+}
 
 export const searchInstruments = (q) => API.get('/api/search', { params: { q } }).then(r => r.data);
 const pathSymbol = (symbol) => encodeURIComponent(String(symbol || '').trim().toUpperCase());
@@ -40,6 +52,8 @@ export const setChartinkUrl = (url) => API.post('/api/settings/chartink-url', { 
 export const getChartinkScanClause = () => API.get('/api/settings/chartink-scan-clause').then(r => r.data);
 export const setChartinkScanClause = (scan_clause) => API.post('/api/settings/chartink-scan-clause', { scan_clause }).then(r => r.data);
 export const getAutoScreenStatus = () => API.get('/api/auto-screen/status').then(r => r.data);
+export const fetchChartinkMatches = (url) => API.post('/api/chartink/fetch', { url }).then(r => r.data);
+export const getHealth = () => API.get('/api/health').then(r => r.data);
 
 // Paper trading / forward-testing log
 export const createPaperTrade = (trade) => API.post('/api/paper-trades', trade).then(r => r.data);

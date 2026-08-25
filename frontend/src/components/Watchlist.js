@@ -5,7 +5,8 @@ import {
   getWatchlist, removeFromWatchlist, getWatchlistPulse, getAlerts, ackAlert, deleteAlert,
   getScreens, getScreen, saveScreen, deleteScreen,
   getChartinkUrl, setChartinkUrl, getChartinkScanClause, setChartinkScanClause,
-  getPaperTradeStats, getPaperTradesList, getAutoScreenStatus,
+  getPaperTradeStats, getPaperTradesList, getAutoScreenStatus, fetchChartinkMatches,
+  describeApiError, getHealth,
 } from '../api';
 
 import './Watchlist.css';
@@ -38,10 +39,12 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
   const [linkDraft, setLinkDraft] = useState('');
   const [scanClauseDraft, setScanClauseDraft] = useState('');
   const [savingLink, setSavingLink] = useState(false);
+  const [refreshingMatches, setRefreshingMatches] = useState(false);
   const linkInputRef = useRef(null);
   // Last (or in-progress) cron run outcome — so a failed/stalled auto-fetch
   // is visible here instead of only in Render's logs.
   const [runStatus, setRunStatus] = useState(null);
+  const [storageWarning, setStorageWarning] = useState('');
 
   const refresh = useCallback(async () => {
     try { setScreens(await getScreens()); } catch {}
@@ -53,6 +56,13 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
   useEffect(() => {
     getChartinkUrl().then(r => setChartinkUrlState(r.url || '')).catch(() => {});
     getChartinkScanClause().then(r => setChartinkScanClauseState(r.scan_clause || '')).catch(() => {});
+    getHealth().then(r => {
+      if (r?.storage && !r.storage.durable) {
+        setStorageWarning(r.storage.fallback_reason
+          ? 'Database unavailable — saves are using temporary storage'
+          : 'Using local storage — configure DATABASE_URL for durable saves');
+      }
+    }).catch(() => {});
   }, []);
   useEffect(() => { if (editingLink) setTimeout(() => linkInputRef.current?.focus(), 30); }, [editingLink]);
 
@@ -84,10 +94,26 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
       setChartinkScanClauseState(clauseRec.scan_clause || '');
       setEditingLink(false);
       toast.success(trimmedUrl ? 'Chartink settings saved' : 'Chartink link cleared');
-    } catch {
-      toast.error('Could not save the Chartink settings');
+    } catch (err) {
+      toast.error(describeApiError(err, 'Could not save the Chartink settings'));
     } finally {
       setSavingLink(false);
+    }
+  };
+
+  const handleRefreshMatches = async () => {
+    if (!chartinkUrl || refreshingMatches) return;
+    setRefreshingMatches(true);
+    try {
+      const rec = await fetchChartinkMatches(chartinkUrl);
+      await refresh();
+      setSelected(String(rec.id));
+      onLoadScreen(rec);
+      toast.success(`Fetched ${rec.count} current Chartink matches`);
+    } catch (err) {
+      toast.error(describeApiError(err, 'Could not refresh the Chartink list'));
+    } finally {
+      setRefreshingMatches(false);
     }
   };
 
@@ -185,9 +211,17 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
           {hasAutoRunScreen ? 'Chartink Auto-Fetch' : 'Chartink Auto-Fetch (not yet run)'}
         </span>
         {!editingLink && (
-          <button className="ce-edit-btn" onClick={handleEditLink} title="Edit the Chartink screener URL">
-            ⚙️ Edit Link
-          </button>
+          <span className="ce-actions">
+            {chartinkUrl && (
+              <button className="ce-refresh-btn" onClick={handleRefreshMatches}
+                disabled={refreshingMatches} title="Fetch the latest matching stocks from Chartink">
+                {refreshingMatches ? 'Fetching…' : 'Refresh list'}
+              </button>
+            )}
+            <button className="ce-edit-btn" onClick={handleEditLink} title="Edit the Chartink screener URL">
+              Edit link
+            </button>
+          </span>
         )}
       </div>
       {!editingLink && (
@@ -198,14 +232,17 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
       {!editingLink && chartinkUrl && (
         <div className="ce-clause-note" title={chartinkScanClause || undefined}>
           {chartinkScanClause
-            ? 'Scan clause: configured (skips auto-detect)'
-            : 'Scan clause: not set — relying on auto-detect, which fails for most screens'}
+            ? 'Manual scan clause available as fallback'
+            : 'Live Chartink query will be detected automatically'}
         </div>
       )}
       {!editingLink && runStatus?.status === 'running' && (
         <div className="ce-status ce-status-running">
           Running… {runStatus.done ?? 0}/{runStatus.total ?? '?'} fetched
         </div>
+      )}
+      {!editingLink && storageWarning && (
+        <div className="ce-status ce-status-error" title={storageWarning}>{storageWarning}</div>
       )}
       {!editingLink && runStatus?.status === 'error' && (
         <div className="ce-status ce-status-error" title={runStatus.error || ''}>
@@ -239,10 +276,9 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
             rows={3}
           />
           <div className="ce-clause-help">
-            Chartink builds this with page JavaScript, so it's rarely visible in the raw
-            HTML — copy it from your browser's DevTools (Network tab → the "process" request
-            when you click Run Scan → its form payload) and paste it here once. Leave blank
-            to fall back to best-effort auto-detection.
+            Optional fallback only. Leave this blank for public Chartink screeners; the app
+            reads their current query automatically. If a private/legacy screen cannot be
+            detected, paste the process request's scan_clause here.
           </div>
           <div className="ce-edit-actions">
             <button className="ce-save-btn" onClick={handleSaveLink} disabled={savingLink}>
@@ -423,8 +459,8 @@ export default function Watchlist({ onSelect, currentSymbol, screenTickers, scre
     try {
       const wl = await getWatchlist();
       setItems(wl);
-    } catch {
-      toast.error('Could not load the watchlist', { id: 'watchlist-load-error' });
+    } catch (err) {
+      toast.error(describeApiError(err, 'Could not load the watchlist'), { id: 'watchlist-load-error' });
     }
   }, []);
 

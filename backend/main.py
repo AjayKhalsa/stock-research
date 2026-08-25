@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import paper_trades, screener, screens, stocks, watchlist
+import db
 
 app = FastAPI(title="Stock Research API", version="2.0.0")
 
@@ -27,6 +28,11 @@ app.include_router(watchlist.router)
 app.include_router(screener.router)
 app.include_router(screens.router)
 app.include_router(paper_trades.router)
+
+
+@app.get("/api/health")
+async def health():
+    return {"ok": True, "storage": db.storage_status()}
 
 
 if __name__ == "__main__":

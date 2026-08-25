@@ -26,6 +26,9 @@ jest.mock('./api', () => ({
   getPaperTradeStats: jest.fn(() => Promise.resolve({ total_trades: 0 })),
   getPaperTradesList: jest.fn(() => Promise.resolve([])),
   getAutoScreenStatus: jest.fn(() => Promise.resolve({})),
+  getHealth: jest.fn(() => Promise.resolve({ ok: true, storage: { backend: 'postgres', durable: true } })),
+  fetchChartinkMatches: jest.fn(),
+  describeApiError: jest.fn((error, fallback) => fallback),
   getMarketRegime: jest.fn(() => Promise.resolve({ regime: 'Unknown' })),
   addToWatchlist: jest.fn(),
   createAlertsFromPlan: jest.fn(),
@@ -41,6 +44,7 @@ beforeEach(() => {
   api.getPaperTradeStats.mockResolvedValue({ total_trades: 0 });
   api.getPaperTradesList.mockResolvedValue([]);
   api.getAutoScreenStatus.mockResolvedValue({});
+  api.getHealth.mockResolvedValue({ ok: true, storage: { backend: 'postgres', durable: true } });
 });
 
 test('renders the research workspace and primary discovery actions', async () => {

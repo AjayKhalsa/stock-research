@@ -1,9 +1,13 @@
+import html
+import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+
+from bs4 import BeautifulSoup
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -13,7 +17,9 @@ _temp_data = tempfile.TemporaryDirectory()
 os.environ["STOCKLENS_DATA_DIR"] = _temp_data.name
 
 from fastapi.testclient import TestClient  # noqa: E402
+from chartink_scraper import _extract_scan_clause  # noqa: E402
 from main import app  # noqa: E402
+import db  # noqa: E402
 
 
 class SavedScreensApiTests(unittest.TestCase):
@@ -67,6 +73,48 @@ class SavedScreensApiTests(unittest.TestCase):
             response = self.client.get("/api/search", params={"q": "tata"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["symbol"] for item in response.json()], ["TCS", "TATAMOTORS"])
+
+    def test_fetch_chartink_matches_persists_refreshed_universe(self):
+        url = "https://chartink.com/screener/copy-general-scanner-simply-above-mas-3"
+        with patch(
+            "routers.screener.chartink_scraper.fetch_screener_tickers",
+            new=AsyncMock(return_value=["TCS", "INFY", "TCS"]),
+        ):
+            response = self.client.post("/api/chartink/fetch", json={"url": url})
+
+        self.assertEqual(response.status_code, 200)
+        record = response.json()
+        self.assertEqual(record["name"], "Daily Chartink Auto-Run")
+        self.assertEqual(record["tickers"], ["TCS", "INFY"])
+        self.assertEqual(record["count"], 2)
+
+        invalid = self.client.post(
+            "/api/chartink/fetch",
+            json={"url": "https://chartink.com.example.com/screener/not-chartink"},
+        )
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_extracts_atlas_query_from_public_chartink_markup(self):
+        clause = "( {cash} ( latest close > latest sma( latest close , 20 ) ) )"
+        payload = html.escape(json.dumps({"atlas_query": clause}), quote=True)
+        markup = f'<html><scanner :scan-json="{payload}"></scanner></html>'
+        soup = BeautifulSoup(markup, "lxml")
+
+        self.assertEqual(_extract_scan_clause(markup, soup), clause)
+
+    def test_unavailable_postgres_falls_back_without_hanging_api_startup(self):
+        original_pg = db._PG
+        original_reason = db._PG_FALLBACK_REASON
+        try:
+            db._PG = True
+            db._PG_FALLBACK_REASON = None
+            with patch.object(db, "init", side_effect=[RuntimeError("database unavailable"), None]):
+                db._initialize_with_fallback()
+            self.assertFalse(db._PG)
+            self.assertIn("database unavailable", db._PG_FALLBACK_REASON)
+        finally:
+            db._PG = original_pg
+            db._PG_FALLBACK_REASON = original_reason
 
 
 if __name__ == "__main__":

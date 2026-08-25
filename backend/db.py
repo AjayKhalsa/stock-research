@@ -40,6 +40,7 @@ from config import DATA_DIR
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 _PG = _DATABASE_URL.startswith(("postgres://", "postgresql://"))
+_PG_FALLBACK_REASON: str | None = None
 
 DB_PATH = os.path.join(DATA_DIR, "stocklens.db")   # SQLite fallback path
 
@@ -64,7 +65,10 @@ def _conn() -> Iterator[Any]:
     every connection is explicitly closed on both backends.
     """
     if _PG:
-        with psycopg.connect(_DSN, row_factory=dict_row) as c:
+        # A stale hosted DATABASE_URL must not hang the entire API startup.
+        # Render/Neon connection failures now surface quickly, after which
+        # initialization can fall back to local SQLite for availability.
+        with psycopg.connect(_DSN, row_factory=dict_row, connect_timeout=8) as c:
             yield c
         return
     c = sqlite3.connect(DB_PATH, timeout=5)
@@ -256,6 +260,28 @@ def init() -> None:
         c.executescript(_SCHEMA_SQLITE)
     _migrate_saved_screens_columns()
     _migrate_legacy_json()
+
+
+def storage_status() -> dict:
+    return {
+        "backend": "postgres" if _PG else "sqlite",
+        "durable": bool(_PG),
+        "fallback_reason": _PG_FALLBACK_REASON,
+    }
+
+
+def _initialize_with_fallback() -> None:
+    global _PG, _PG_FALLBACK_REASON
+    try:
+        init()
+    except Exception as exc:
+        if not _PG:
+            raise
+        _PG_FALLBACK_REASON = f"{type(exc).__name__}: {exc}"
+        print("[db] Postgres initialization failed; falling back to local SQLite "
+              f"so the API remains available. Reason: {_PG_FALLBACK_REASON}")
+        _PG = False
+        init()
 
 
 # ── one-time migration from the old JSON files (SQLite path only) ─────────────
@@ -624,4 +650,4 @@ def paper_trades_stats() -> dict:
 
 
 # Schema is created on import so any entry point gets a working DB.
-init()
+_initialize_with_fallback()
