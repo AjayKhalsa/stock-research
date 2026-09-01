@@ -22,10 +22,11 @@ cd frontend
 npm start
 ```
 
-The included GitHub workflow uses a short-lived signed OIDC job token to call
-the protected `POST /api/jobs/daily/run` at 07:00 IST on weekdays, so no shared
-scheduler secret is required. `CRON_SECRET_KEY` remains available as an
-optional fallback when using another scheduler.
+The included GitHub workflow uses its short-lived job installation token to
+call the protected `POST /api/jobs/daily/run` at 07:00 IST on weekdays. The
+backend verifies both repository access and the live workflow run, so no shared
+scheduler secret is required. `CRON_SECRET_KEY` remains available as an optional
+fallback when using another scheduler.
 The feature flag `CFO_WORKSPACE_V1=true` enables the new shell; set the frontend
 build flag `REACT_APP_CFO_WORKSPACE_V1=false` to open the legacy workspace
 directly.

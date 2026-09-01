@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -130,19 +130,32 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["id"], "job-1")
 
-    def test_github_oidc_is_restricted_to_repo_main_and_scheduler_events(self):
-        key = type("SigningKey", (), {"key": "public-key"})()
-        valid_claims = {
-            "repository": "AjayKhalsa/stock-research",
-            "ref": "refs/heads/main",
-            "event_name": "workflow_dispatch",
+    def test_github_job_token_is_restricted_to_repo_main_and_live_run(self):
+        installation = MagicMock()
+        installation.json.return_value = {
+            "repositories": [{"full_name": "AjayKhalsa/stock-research"}],
         }
-        with patch.object(cfo_router._github_jwk_client, "get_signing_key_from_jwt",
-                          return_value=key), \
-             patch("routers.cfo_workspace.jwt.decode", return_value=valid_claims):
-            self.assertTrue(cfo_router._verify_github_oidc("signed"))
-            valid_claims["ref"] = "refs/heads/untrusted"
-            self.assertFalse(cfo_router._verify_github_oidc("signed"))
+        run = MagicMock()
+        run.json.return_value = {
+            "repository": {"full_name": "AjayKhalsa/stock-research"},
+            "head_branch": "main", "event": "workflow_dispatch",
+            "status": "in_progress",
+        }
+        client = AsyncMock()
+        client.get.side_effect = [installation, run]
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=client)
+        context.__aexit__ = AsyncMock(return_value=False)
+        with patch("routers.cfo_workspace.httpx.AsyncClient", return_value=context):
+            self.assertTrue(asyncio.run(
+                cfo_router._verify_github_job_token("github-job-token", "123")
+            ))
+
+            run.json.return_value["status"] = "completed"
+            client.get.side_effect = [installation, run]
+            self.assertFalse(asyncio.run(
+                cfo_router._verify_github_job_token("github-job-token", "123")
+            ))
 
     def test_snapshot_publish_is_readable_through_new_apis(self):
         candidate = {"symbol": "TCS", "company": "Tata Consultancy Services", "sector": "IT",

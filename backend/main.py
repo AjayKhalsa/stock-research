@@ -72,7 +72,7 @@ def health():
     return {"ok": db.ping(), "storage": db.storage_status(), "version": app.version,
             "features": {
                 "cfo_workspace_v1": config.CFO_WORKSPACE_V1,
-                "daily_job_auth": ["github_oidc", "shared_secret"],
+                "daily_job_auth": ["github_job_token", "shared_secret"],
             }}
 
 if __name__ == "__main__":

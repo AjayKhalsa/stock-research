@@ -30,9 +30,8 @@ GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 # Unset by default -> the endpoint refuses every request until an operator
 # configures a real secret (an empty secret must never be "valid").
 CRON_SECRET_KEY: str = os.environ.get("CRON_SECRET_KEY", "")
-GITHUB_OIDC_AUDIENCE: str = os.environ.get("GITHUB_OIDC_AUDIENCE", "stocklens-daily")
-GITHUB_OIDC_REPOSITORY: str = os.environ.get(
-    "GITHUB_OIDC_REPOSITORY", "AjayKhalsa/stock-research"
+GITHUB_ACTIONS_REPOSITORY: str = os.environ.get(
+    "GITHUB_ACTIONS_REPOSITORY", "AjayKhalsa/stock-research"
 )
 CFO_WORKSPACE_V1: bool = os.environ.get("CFO_WORKSPACE_V1", "true").strip().lower() in {
     "1", "true", "yes", "on",

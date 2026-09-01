@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import hmac
-import asyncio
 from typing import Optional
 
-import jwt
+import httpx
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
@@ -16,10 +15,6 @@ import market_pipeline
 import price_service
 
 router = APIRouter()
-
-_GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
-_GITHUB_OIDC_JWKS = f"{_GITHUB_OIDC_ISSUER}/.well-known/jwks"
-_github_jwk_client = jwt.PyJWKClient(_GITHUB_OIDC_JWKS, cache_keys=True)
 
 
 class PortfolioSettingsUpdate(BaseModel):
@@ -39,34 +34,52 @@ def _feature_enabled() -> None:
         raise HTTPException(status_code=404, detail="CFO workspace is disabled")
 
 
-def _verify_github_oidc(token: str) -> bool:
-    """Accept only GitHub-signed jobs from this repository's main branch."""
+async def _verify_github_job_token(token: str, run_id: str) -> bool:
+    """Accept a live GitHub installation token for an approved main run.
+
+    The run must still be queued/in progress, which prevents replay after the
+    workflow-scoped token has completed its only intended job.
+    """
+    if not token or not run_id.isdigit():
+        return False
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "StockLens-Daily-Runner",
+    }
     try:
-        signing_key = _github_jwk_client.get_signing_key_from_jwt(token)
-        claims = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience=config.GITHUB_OIDC_AUDIENCE,
-            issuer=_GITHUB_OIDC_ISSUER,
-            options={"require": ["exp", "iat", "iss", "aud", "repository", "ref"]},
-        )
-    except jwt.PyJWTError:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            installation_response = await client.get(
+                "https://api.github.com/installation/repositories?per_page=100",
+                headers=headers,
+            )
+            installation_response.raise_for_status()
+            repositories = installation_response.json().get("repositories") or []
+            if not any(repo.get("full_name") == config.GITHUB_ACTIONS_REPOSITORY
+                       for repo in repositories):
+                return False
+            run_response = await client.get(
+                f"https://api.github.com/repos/{config.GITHUB_ACTIONS_REPOSITORY}/actions/runs/{run_id}",
+                headers=headers,
+            )
+            run_response.raise_for_status()
+            run = run_response.json()
+    except (httpx.HTTPError, ValueError, TypeError):
         return False
     return (
-        claims.get("repository") == config.GITHUB_OIDC_REPOSITORY
-        and claims.get("ref") == "refs/heads/main"
-        and claims.get("event_name") in {"schedule", "workflow_dispatch"}
+        (run.get("repository") or {}).get("full_name") == config.GITHUB_ACTIONS_REPOSITORY
+        and run.get("head_branch") == "main"
+        and run.get("event") in {"schedule", "workflow_dispatch"}
+        and run.get("status") in {"queued", "in_progress"}
     )
 
 
-async def _daily_job_authorized(token: str) -> bool:
+async def _daily_job_authorized(token: str, run_id: str) -> bool:
     expected = config.CRON_SECRET_KEY.strip()
     if expected and hmac.compare_digest(token, expected):
         return True
-    if not token:
-        return False
-    return await asyncio.to_thread(_verify_github_oidc, token)
+    return await _verify_github_job_token(token, run_id)
 
 
 @router.get("/api/morning-brief")
@@ -133,10 +146,13 @@ def daily_status():
 
 
 @router.post("/api/jobs/daily/run", status_code=202)
-async def run_daily_job(authorization: Optional[str] = Header(default=None)):
+async def run_daily_job(
+    authorization: Optional[str] = Header(default=None),
+    x_github_run_id: Optional[str] = Header(default=None),
+):
     _feature_enabled()
     supplied = (authorization or "").removeprefix("Bearer ").strip()
-    if not await _daily_job_authorized(supplied):
+    if not await _daily_job_authorized(supplied, (x_github_run_id or "").strip()):
         raise HTTPException(status_code=401, detail="Valid daily-job bearer token required")
     return market_pipeline.start_daily_pipeline()
 
