@@ -16,6 +16,7 @@ import cfo_engine  # noqa: E402
 import ai_committee  # noqa: E402
 import db  # noqa: E402
 import price_service  # noqa: E402
+import market_pipeline  # noqa: E402
 from routers import cfo_workspace as cfo_router  # noqa: E402
 from main import app  # noqa: E402
 
@@ -88,6 +89,10 @@ class CfoEngineTests(unittest.TestCase):
             "setup", "relative_strength", "trend_volume", "cfo_health",
             "sector_regime", "liquidity", "valuation",
         })
+
+    def test_daily_pipeline_requires_majority_price_history_coverage(self):
+        self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_RATIO, 0.50)
+        self.assertEqual(market_pipeline.PUBLISHED_CANDIDATES, 100)
 
     def test_ai_committee_cannot_upgrade_and_can_downgrade(self):
         candidate = {"symbol": "TCS", "action": "WATCH", "price": 100,

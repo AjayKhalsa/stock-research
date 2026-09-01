@@ -23,6 +23,7 @@ HISTORY_BATCH = 75
 DEEP_CANDIDATES = 150
 PUBLISHED_CANDIDATES = 100
 FUNDAMENTAL_CONCURRENCY = 4
+MINIMUM_USABLE_HISTORY_RATIO = 0.50
 
 _RUN_LOCK = asyncio.Lock()
 _ACTIVE_TASK: asyncio.Task | None = None
@@ -148,18 +149,34 @@ async def run_daily_pipeline(job_id: str) -> None:
                               payload={"universe": len(universe), "bhavcopy_as_of": bhavcopy.get("as_of")})
 
             preliminary: list[dict] = []
+            usable_histories = 0
             names = {row["symbol"]: row.get("name") or row["symbol"] for row in universe}
             done = 0
             for batch in _chunks([row["symbol"] for row in universe], HISTORY_BATCH):
                 histories = await price.get_historical_multiple([f"NSE:{s}" for s in batch], days=520)
                 for symbol in batch:
                     candles = histories.get(f"NSE:{symbol}") or []
+                    if len(candles) >= 252:
+                        usable_histories += 1
                     row = cfo_engine.preliminary_analysis(symbol, names[symbol], candles, nifty)
                     if row.get("eligible"):
                         preliminary.append(row)
                 done += len(batch)
                 db.update_job_run(job_id, stage="technical_scan", progress=done, total=len(universe),
-                                  payload={"eligible": len(preliminary), "universe": len(universe)})
+                                  payload={"eligible": len(preliminary), "universe": len(universe),
+                                           "usable_histories": usable_histories})
+
+            minimum_usable = max(PUBLISHED_CANDIDATES, int(len(universe) * MINIMUM_USABLE_HISTORY_RATIO))
+            if usable_histories < minimum_usable:
+                raise RuntimeError(
+                    f"Price-history coverage too low: {usable_histories}/{len(universe)} "
+                    f"usable (minimum {minimum_usable})"
+                )
+            if len(preliminary) < PUBLISHED_CANDIDATES:
+                raise RuntimeError(
+                    f"Eligible universe too small: {len(preliminary)} "
+                    f"(minimum {PUBLISHED_CANDIDATES})"
+                )
 
             preliminary.sort(key=lambda item: item.get("preliminary_score", 0), reverse=True)
             priority_symbols = {w["symbol"] for w in db.watchlist_all()}
