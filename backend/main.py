@@ -13,7 +13,7 @@ import config  # noqa: F401  — loads .env before anything reads the environmen
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import paper_trades, screener, screens, stocks, watchlist
+from routers import cfo_workspace, paper_trades, screener, screens, stocks, watchlist
 import db
 
 
@@ -42,6 +42,7 @@ app.include_router(watchlist.router)
 app.include_router(screener.router)
 app.include_router(screens.router)
 app.include_router(paper_trades.router)
+app.include_router(cfo_workspace.router)
 
 
 @app.middleware("http")
@@ -68,7 +69,8 @@ async def request_observability(request: Request, call_next):
 
 @app.get("/api/health")
 def health():
-    return {"ok": db.ping(), "storage": db.storage_status(), "version": app.version}
+    return {"ok": db.ping(), "storage": db.storage_status(), "version": app.version,
+            "features": {"cfo_workspace_v1": config.CFO_WORKSPACE_V1}}
 
 if __name__ == "__main__":
     import uvicorn

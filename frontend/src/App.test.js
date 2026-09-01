@@ -28,6 +28,8 @@ jest.mock('./api', () => ({
     trades: [],
   })),
   getAutoScreenStatus: jest.fn(() => Promise.resolve({})),
+  getNseUniverse: jest.fn(() => Promise.resolve({ count: 2387, source: 'NSE EQUITY_L' })),
+  startNseMarketScan: jest.fn(() => Promise.resolve({ status: 'started' })),
   getHealth: jest.fn(() => Promise.resolve({ ok: true, storage: { backend: 'postgres', durable: true } })),
   fetchChartinkMatches: jest.fn(),
   describeApiError: jest.fn((error, fallback) => fallback),
@@ -49,6 +51,7 @@ beforeEach(() => {
     trades: [],
   });
   api.getAutoScreenStatus.mockResolvedValue({});
+  api.getNseUniverse.mockResolvedValue({ count: 2387, source: 'NSE EQUITY_L' });
   api.getHealth.mockResolvedValue({ ok: true, storage: { backend: 'postgres', durable: true } });
 });
 
@@ -79,6 +82,8 @@ test('renders the research workspace and primary discovery actions', async () =>
   expect(screen.getByText('Stock Screener')).toBeInTheDocument();
   expect(screen.getByPlaceholderText(/Search stock by name or symbol/i)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Analyze stocks/i })).toBeDisabled();
+  expect(screen.getByText('NSE Market Scan')).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText('2387 stocks')).toBeInTheDocument());
   await waitFor(() => {
     expect(api.getMarketRegime).toHaveBeenCalled();
     expect(api.getWatchlist).toHaveBeenCalled();

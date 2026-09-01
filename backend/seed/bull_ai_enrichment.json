@@ -1,0 +1,211 @@
+[
+  {
+    "symbol": "STOVEKRAFT",
+    "provider": "Bull AI",
+    "version": "bull-pilot-2026-09-01",
+    "as_of": "2026-09-01",
+    "payload": {
+      "coverage": "deep",
+      "scope": "Bounded company-document evidence for the current top-ranked pilot. It does not change the deterministic score or bypass any gate.",
+      "score_effect": "none",
+      "classification": {
+        "sectors": ["Consumer Goods"],
+        "industries": ["Kitchen & Home Appliances"]
+      },
+      "peers": [
+        {"symbol": "TTKPRESTIG", "name": "TTK Prestige Ltd."},
+        {"symbol": "BUTTERFLY", "name": "Butterfly Gandhimathi Appliances Ltd."},
+        {"symbol": "HINDWAREAP", "name": "Hindware Home Innovation Ltd."},
+        {"symbol": "CELLO", "name": "Cello World Ltd."}
+      ],
+      "cards": [
+        {
+          "kind": "guidance",
+          "status": "reported met",
+          "title": "FY26 gross-margin target",
+          "summary": "Management targeted gross margin above 38.5%; the later FY26 presentation reported 38.7%. This is a comparison of company-reported evidence, not independent verification.",
+          "sources": [
+            {"label": "Investor Presentation · FY2026 Q3 · page 6", "url": "https://docs.bull-ai.in/d/mFhteB#page=6"},
+            {"label": "Investor Presentation · FY2026 · page 25", "url": "https://docs.bull-ai.in/d/6MKKXH#page=25"}
+          ]
+        },
+        {
+          "kind": "revenue",
+          "status": "reported",
+          "title": "FY26 operating profile",
+          "summary": "Reported revenue was ₹1,607 crore, gross margin 38.7%, EBITDA margin 10.3% and PAT margin 2.6%. Product-level mix was not used because the retrieved brand table did not preserve every row label clearly.",
+          "sources": [
+            {"label": "Investor Presentation · FY2026 · page 25", "url": "https://docs.bull-ai.in/d/6MKKXH#page=25"}
+          ]
+        },
+        {
+          "kind": "moat",
+          "status": "management claim",
+          "title": "Brand and manufacturing claims",
+          "summary": "Management describes Pigeon as a 20+ year brand and a market leader in selected cookware categories, supported by a multi-brand product range. This is not treated as a verified durable moat.",
+          "sources": [
+            {"label": "Investor Presentation · FY2026 · page 20", "url": "https://docs.bull-ai.in/d/6MKKXH#page=20"}
+          ]
+        },
+        {
+          "kind": "transactions",
+          "status": "neutral",
+          "title": "Bounded transaction check",
+          "summary": "The latest returned records were predominantly matched same-day bulk buys and sells. They are not interpreted as promoter conviction or a bullish/bearish signal.",
+          "sources": [{"label": "NSE bulk deals · observed through 19 Mar 2026"}]
+        }
+      ],
+      "counterparties": [
+        {"name": "IKEA", "relation": "customer", "detail": "Cookware products", "source": {"label": "Company document · page 12", "url": "https://docs.bull-ai.in/d/uRUKky#page=12"}},
+        {"name": "Inflame Appliances Ltd.", "relation": "supplier", "detail": "Chimneys", "source": {"label": "Company document · page 27", "url": "https://docs.bull-ai.in/d/lJeCwr#page=27"}},
+        {"name": "Stanley Black & Decker Inc.", "relation": "brand licence", "detail": "BLACK+DECKER licensing relationship", "source": {"label": "Investor Presentation · page 17", "url": "https://docs.bull-ai.in/d/sphYhn#page=17"}},
+        {"name": "Metsmith", "relation": "acquired business", "detail": "Modular-kitchen segment", "source": {"label": "Company document · page 4", "url": "https://docs.bull-ai.in/d/uzCjXI#page=4"}}
+      ],
+      "limitations": [
+        "The counterparty list is disclosed and bounded, not a complete commercial network.",
+        "Management-reported outcomes are not audit conclusions.",
+        "Absent Bull AI evidence is never counted positively."
+      ]
+    }
+  },
+  {
+    "symbol": "IPCALAB",
+    "provider": "Bull AI",
+    "version": "bull-pilot-2026-09-01",
+    "as_of": "2026-09-01",
+    "payload": {
+      "coverage": "deep",
+      "scope": "Bounded company-document evidence for the current top-ranked pilot. It does not change the deterministic score or bypass any gate.",
+      "score_effect": "none",
+      "classification": {
+        "sectors": ["Healthcare", "Pharmaceuticals"],
+        "industries": ["Formulations", "APIs"]
+      },
+      "peers": [
+        {"symbol": "ZYDUSLIFE", "name": "Zydus Lifesciences Ltd."},
+        {"symbol": "GLENMARK", "name": "Glenmark Pharmaceuticals Ltd."},
+        {"symbol": "EMCURE", "name": "Emcure Pharmaceuticals Ltd."},
+        {"symbol": "AJANTPHARM", "name": "Ajanta Pharma Ltd."},
+        {"symbol": "GRANULES", "name": "Granules India Ltd."},
+        {"symbol": "AUROPHARMA", "name": "Aurobindo Pharma Ltd."}
+      ],
+      "cards": [
+        {
+          "kind": "guidance",
+          "status": "revised upward",
+          "title": "FY27 growth and margin guidance",
+          "summary": "The initial FY27 outlook of roughly 12–13% consolidated growth and 22–22.3% EBITDA margin was later raised to about 14–16% growth and 23% EBITDA margin. FY27 is still in progress, so delivery is not due.",
+          "sources": [
+            {"label": "Earnings Call Transcript · FY2026 Q4 · page 5", "url": "https://docs.bull-ai.in/d/gzhBuV#page=5"},
+            {"label": "Earnings Call Transcript · FY2027 Q1 · page 6", "url": "https://docs.bull-ai.in/d/kJ9CIv#page=6"},
+            {"label": "Earnings Call Transcript · FY2027 Q1 · page 9", "url": "https://docs.bull-ai.in/d/kJ9CIv#page=9"}
+          ]
+        },
+        {
+          "kind": "revenue",
+          "status": "reported",
+          "title": "FY26 business mix signals",
+          "summary": "Management reported consolidated revenue of ₹9,646 crore (+8%), non-tender generic revenue of ₹1,149 crore (+17%), API growth of 10% and combined US revenue of ₹1,567 crore (+14%).",
+          "sources": [
+            {"label": "Earnings Call Transcript · FY2026 Q4 · pages 3–5", "url": "https://docs.bull-ai.in/d/gzhBuV#page=3"}
+          ]
+        },
+        {
+          "kind": "moat",
+          "status": "management claim",
+          "title": "API integration and supply continuity",
+          "summary": "Company documents cite a new ₹182 crore API/intermediates facility and describe fermentation-API integration as a way to secure supplies. These are strategic claims, not proof of superior returns.",
+          "sources": [
+            {"label": "Exchange filing · FY2026 · page 1", "url": "https://docs.bull-ai.in/d/RGv8LO#page=1"},
+            {"label": "Scheme document · FY2026 · page 3", "url": "https://docs.bull-ai.in/d/v0MWLg#page=3"}
+          ]
+        },
+        {
+          "kind": "transactions",
+          "status": "caution",
+          "title": "Recent insider record",
+          "summary": "A returned NSE/BSE record shows Manish Kumar Jain sold 3,000 shares on 18 Feb 2026 at an average near ₹1,482. The party role and motive are not inferred.",
+          "sources": [{"label": "NSE/BSE insider transactions · event date 18 Feb 2026"}]
+        }
+      ],
+      "counterparties": [
+        {"name": "Akums Drugs & Pharmaceuticals Ltd.", "relation": "supplier", "detail": "CDMO and formulation manufacturing", "source": {"label": "Annual report evidence · page 118", "url": "https://docs.bull-ai.in/d/Jmtjcd#page=118"}},
+        {"name": "Aether Industries Ltd.", "relation": "supplier", "detail": "Specialty chemicals and pharmaceutical intermediates", "source": {"label": "Company document · page 20", "url": "https://docs.bull-ai.in/d/rUV5G9#page=20"}},
+        {"name": "Balaji Amines Ltd.", "relation": "supplier", "detail": "Amine derivatives", "source": {"label": "Company document · page 24", "url": "https://docs.bull-ai.in/d/5jMRgY#page=24"}},
+        {"name": "DMCC Speciality Chemicals Ltd.", "relation": "supplier", "detail": "Specialty chemicals and intermediates", "source": {"label": "Company document · page 15", "url": "https://docs.bull-ai.in/d/106405#page=15"}}
+      ],
+      "limitations": [
+        "FY27 guidance is outstanding and cannot be scored as delivered.",
+        "Counterparty disclosure does not establish concentration, contract value or current activity.",
+        "Transaction proximity is not evidence of motive or causation."
+      ]
+    }
+  },
+  {
+    "symbol": "KRBL",
+    "provider": "Bull AI",
+    "version": "bull-pilot-2026-09-01",
+    "as_of": "2026-09-01",
+    "payload": {
+      "coverage": "deep",
+      "scope": "Bounded company-document evidence for the current top-ranked pilot. It does not change the deterministic score or bypass any gate.",
+      "score_effect": "none",
+      "classification": {
+        "sectors": ["Agriculture & Food Processing", "Energy"],
+        "industries": ["Basmati Rice Processing & Export"]
+      },
+      "peers": [
+        {"symbol": "LTFOODS", "name": "LT Foods Ltd."},
+        {"symbol": "GRMOVER", "name": "GRM Overseas Ltd."},
+        {"symbol": "AEROPLANE", "name": "Amir Chand Jagdish Kumar (Exports) Ltd."}
+      ],
+      "cards": [
+        {
+          "kind": "guidance",
+          "status": "outstanding",
+          "title": "FY27 operating targets",
+          "summary": "Management targets approximately 10% domestic volume growth, progressive export recovery, at least 95% fill rates within 72 hours, and 17–18% EBITDA margin. These targets are not yet due.",
+          "sources": [
+            {"label": "Earnings Call Transcript · FY2027 Q1 · pages 7–15", "url": "https://docs.bull-ai.in/d/muqftB#page=7"}
+          ]
+        },
+        {
+          "kind": "revenue",
+          "status": "reported",
+          "title": "FY26 revenue segmentation",
+          "summary": "Reported FY26 revenue was ₹6,098 crore: domestic ₹4,444 crore, exports ₹1,555 crore and power ₹99 crore. Domestic revenue grew 10% and exports grew 6% year over year.",
+          "sources": [
+            {"label": "Investor Presentation · FY2026 · page 8", "url": "https://docs.bull-ai.in/d/cUjHlR#page=8"}
+          ]
+        },
+        {
+          "kind": "moat",
+          "status": "management claim",
+          "title": "Brand, distribution and processing claims",
+          "summary": "Management cites the largest rice milling plant in Punjab, 850+ distributors, a large contact-farming network and premium realization. These claims provide context but are not treated as a verified moat ranking.",
+          "sources": [
+            {"label": "Investor Presentation · FY2026 · page 4", "url": "https://docs.bull-ai.in/d/cUjHlR#page=4"}
+          ]
+        },
+        {
+          "kind": "transactions",
+          "status": "historical",
+          "title": "Insider coverage is stale",
+          "summary": "The bounded insider records returned were primarily from September 2023 or earlier. They are shown as historical context and are not used in the current swing score.",
+          "sources": [{"label": "BSE/NSE insider transactions · bounded history"}]
+        }
+      ],
+      "counterparties": [
+        {"name": "Balsharaf Group", "relation": "customer", "detail": "Disclosed customer", "source": {"label": "Company document · page 8", "url": "https://docs.bull-ai.in/d/mHYoeo#page=8"}},
+        {"name": "Swiggy Ltd.", "relation": "customer", "detail": "India Gate rice products", "source": {"label": "Investor Presentation · page 28", "url": "https://docs.bull-ai.in/d/9Xb3G7#page=28"}},
+        {"name": "Prakash Pipes Ltd.", "relation": "supplier", "detail": "Flexible packaging materials", "source": {"label": "Company document · page 14", "url": "https://docs.bull-ai.in/d/tW0BVH#page=14"}},
+        {"name": "Shree Vasu Logistics Ltd.", "relation": "supplier", "detail": "Logistics and warehousing services", "source": {"label": "Company document · page 55", "url": "https://docs.bull-ai.in/d/0T1J51#page=55"}}
+      ],
+      "limitations": [
+        "Guidance is outstanding; no delivery score is assigned.",
+        "Management claims are separated from verified financial facts.",
+        "The disclosed counterparty network is bounded and non-exhaustive."
+      ]
+    }
+  }
+]

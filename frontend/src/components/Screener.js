@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import toast from 'react-hot-toast';
-import { API_BASE, resolveSymbols, saveScreen } from '../api';
+import { API_BASE, resolveSymbols, saveScreen, startNseMarketScan } from '../api';
 import { isTickerOnlyInput, parseScreenInput } from '../screenUtils';
 import './Screener.css';
 
@@ -595,6 +595,12 @@ export default function Screener({ onSelectStock, activeSymbol, onTickersChange,
   const handleRefresh = () => {
     if (running || resolving || lastSymsRef.current.length < 2) return;
     setError(null);
+    if (lastSymsRef.current.length > 500) {
+      startNseMarketScan()
+        .then(() => toast.success('Full NSE refresh started in the background'))
+        .catch(() => toast.error('Could not start the full NSE refresh'));
+      return;
+    }
     streamSymbols(lastSymsRef.current, { isRefresh: true, sourceScreen: loadedScreenRef.current });
   };
 

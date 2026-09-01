@@ -32,6 +32,7 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
@@ -174,6 +175,91 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
+
+-- Immutable, versioned outputs of the CFO morning pipeline.  Payloads remain
+-- JSON so the analytical model can evolve without destructive migrations;
+-- the indexed columns are the stable fields used for fast navigation.
+CREATE TABLE IF NOT EXISTS analysis_snapshots (
+    id            TEXT PRIMARY KEY,
+    trading_date  TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    payload       TEXT NOT NULL,
+    created_at    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_snapshots_latest
+    ON analysis_snapshots(status, created_at);
+
+CREATE TABLE IF NOT EXISTS candidate_analyses (
+    snapshot_id TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    sector      TEXT NOT NULL,
+    global_rank INTEGER,
+    sector_rank INTEGER,
+    action      TEXT NOT NULL,
+    score       REAL,
+    confidence  REAL,
+    payload     TEXT NOT NULL,
+    created_at  REAL NOT NULL,
+    PRIMARY KEY(snapshot_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_snapshot_rank
+    ON candidate_analyses(snapshot_id, global_rank);
+
+CREATE TABLE IF NOT EXISTS sector_snapshots (
+    snapshot_id TEXT NOT NULL,
+    sector      TEXT NOT NULL,
+    sector_rank INTEGER,
+    payload     TEXT NOT NULL,
+    PRIMARY KEY(snapshot_id, sector)
+);
+
+CREATE TABLE IF NOT EXISTS job_runs (
+    id          TEXT PRIMARY KEY,
+    job_type    TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    stage       TEXT,
+    progress    INTEGER NOT NULL DEFAULT 0,
+    total       INTEGER NOT NULL DEFAULT 0,
+    error       TEXT,
+    payload     TEXT,
+    started_at  REAL NOT NULL,
+    finished_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_job_runs_latest ON job_runs(job_type, started_at);
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id            TEXT PRIMARY KEY,
+    model_version TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    payload       TEXT NOT NULL,
+    created_at    REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id   TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    entry_price   REAL,
+    stop_price    REAL,
+    outcome       TEXT,
+    pnl_r         REAL,
+    opened_at     REAL NOT NULL,
+    closed_at     REAL
+);
+
+CREATE TABLE IF NOT EXISTS candidate_enrichments (
+    symbol       TEXT NOT NULL,
+    provider     TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    as_of        TEXT,
+    payload      TEXT NOT NULL,
+    refreshed_at REAL NOT NULL,
+    PRIMARY KEY(symbol, provider)
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_enrichments_provider
+    ON candidate_enrichments(provider, refreshed_at);
 """
 
 # Postgres variant: BIGSERIAL for autoincrement, DOUBLE PRECISION for the epoch
@@ -241,6 +327,88 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
+
+CREATE TABLE IF NOT EXISTS analysis_snapshots (
+    id            TEXT PRIMARY KEY,
+    trading_date  TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    payload       TEXT NOT NULL,
+    created_at    DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_snapshots_latest
+    ON analysis_snapshots(status, created_at);
+
+CREATE TABLE IF NOT EXISTS candidate_analyses (
+    snapshot_id TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    sector      TEXT NOT NULL,
+    global_rank INTEGER,
+    sector_rank INTEGER,
+    action      TEXT NOT NULL,
+    score       DOUBLE PRECISION,
+    confidence  DOUBLE PRECISION,
+    payload     TEXT NOT NULL,
+    created_at  DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY(snapshot_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_snapshot_rank
+    ON candidate_analyses(snapshot_id, global_rank);
+
+CREATE TABLE IF NOT EXISTS sector_snapshots (
+    snapshot_id TEXT NOT NULL,
+    sector      TEXT NOT NULL,
+    sector_rank INTEGER,
+    payload     TEXT NOT NULL,
+    PRIMARY KEY(snapshot_id, sector)
+);
+
+CREATE TABLE IF NOT EXISTS job_runs (
+    id          TEXT PRIMARY KEY,
+    job_type    TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    stage       TEXT,
+    progress    INTEGER NOT NULL DEFAULT 0,
+    total       INTEGER NOT NULL DEFAULT 0,
+    error       TEXT,
+    payload     TEXT,
+    started_at  DOUBLE PRECISION NOT NULL,
+    finished_at DOUBLE PRECISION
+);
+CREATE INDEX IF NOT EXISTS idx_job_runs_latest ON job_runs(job_type, started_at);
+
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id            TEXT PRIMARY KEY,
+    model_version TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    payload       TEXT NOT NULL,
+    created_at    DOUBLE PRECISION NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+    id            BIGSERIAL PRIMARY KEY,
+    snapshot_id   TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    entry_price   DOUBLE PRECISION,
+    stop_price    DOUBLE PRECISION,
+    outcome       TEXT,
+    pnl_r         DOUBLE PRECISION,
+    opened_at     DOUBLE PRECISION NOT NULL,
+    closed_at     DOUBLE PRECISION
+);
+
+CREATE TABLE IF NOT EXISTS candidate_enrichments (
+    symbol       TEXT NOT NULL,
+    provider     TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    as_of        TEXT,
+    payload      TEXT NOT NULL,
+    refreshed_at DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY(symbol, provider)
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_enrichments_provider
+    ON candidate_enrichments(provider, refreshed_at);
 """
 
 
@@ -275,6 +443,7 @@ def init() -> None:
                     if stmt.strip():
                         cur.execute(stmt)
         _migrate_saved_screens_columns()
+        _seed_candidate_enrichments()
         return
     print(f"[db] Using local SQLite at {DB_PATH} — EPHEMERAL on most hosts "
           f"(e.g. Render's free plan wipes this on every restart/redeploy). "
@@ -285,6 +454,7 @@ def init() -> None:
         c.executescript(_SCHEMA_SQLITE)
     _migrate_saved_screens_columns()
     _migrate_legacy_json()
+    _seed_candidate_enrichments()
 
 
 def storage_status() -> dict:
@@ -482,6 +652,257 @@ def set_setting(key: str, value: Any) -> None:
                  "ON CONFLICT(key) DO UPDATE SET value = excluded.value"),
             (key, json.dumps(value)),
         )
+
+
+# ── CFO workspace snapshots and daily jobs ───────────────────────────────────
+
+def _loads_payload(raw: Any, default: Any) -> Any:
+    try:
+        return json.loads(raw) if raw else default
+    except (TypeError, ValueError):
+        return default
+
+
+def create_job_run(job_type: str = "daily_cfo") -> dict:
+    job_id = uuid.uuid4().hex
+    started = time.time()
+    with _conn() as c:
+        c.execute(
+            _sql("INSERT INTO job_runs(id, job_type, status, stage, progress, total, "
+                 "started_at) VALUES (?,?,?,?,?,?,?)"),
+            (job_id, job_type, "running", "queued", 0, 0, started),
+        )
+    return get_job_run(job_id) or {"id": job_id, "status": "running"}
+
+
+def update_job_run(job_id: str, *, status: Optional[str] = None,
+                   stage: Optional[str] = None, progress: Optional[int] = None,
+                   total: Optional[int] = None, error: Optional[str] = None,
+                   payload: Optional[dict] = None) -> None:
+    fields, values = [], []
+    for column, value in (("status", status), ("stage", stage),
+                          ("progress", progress), ("total", total),
+                          ("error", error)):
+        if value is not None:
+            fields.append(f"{column} = ?")
+            values.append(value)
+    if payload is not None:
+        fields.append("payload = ?")
+        values.append(json.dumps(_json_nan_safe(payload)))
+    if status in {"completed", "failed"}:
+        fields.append("finished_at = ?")
+        values.append(time.time())
+    if not fields:
+        return
+    values.append(job_id)
+    with _conn() as c:
+        c.execute(_sql(f"UPDATE job_runs SET {', '.join(fields)} WHERE id = ?"), tuple(values))
+
+
+def _row_to_job(row) -> Optional[dict]:
+    if not row:
+        return None
+    out = dict(row)
+    out["payload"] = _loads_payload(out.get("payload"), {})
+    return out
+
+
+def get_job_run(job_id: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(_sql("SELECT * FROM job_runs WHERE id = ?"), (job_id,)).fetchone()
+    return _row_to_job(row)
+
+
+def latest_job_run(job_type: str = "daily_cfo") -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(
+            _sql("SELECT * FROM job_runs WHERE job_type = ? ORDER BY started_at DESC LIMIT 1"),
+            (job_type,),
+        ).fetchone()
+    return _row_to_job(row)
+
+
+def publish_analysis_snapshot(summary: dict, candidates: list[dict],
+                              sectors: list[dict], *, model_version: str,
+                              trading_date: str) -> str:
+    """Atomically publish one immutable snapshot and all of its children."""
+    snapshot_id = uuid.uuid4().hex
+    now = time.time()
+    safe_summary = dict(summary)
+    safe_summary["snapshot_id"] = snapshot_id
+    safe_summary["model_version"] = model_version
+    safe_summary["trading_date"] = trading_date
+    with _conn() as c:
+        c.execute(
+            _sql("INSERT INTO analysis_snapshots(id, trading_date, model_version, status, "
+                 "payload, created_at) VALUES (?,?,?,?,?,?)"),
+            (snapshot_id, trading_date, model_version, "valid",
+             json.dumps(_json_nan_safe(safe_summary)), now),
+        )
+        for item in candidates:
+            c.execute(
+                _sql("INSERT INTO candidate_analyses(snapshot_id, symbol, sector, "
+                     "global_rank, sector_rank, action, score, confidence, payload, created_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?)"),
+                (snapshot_id, item.get("symbol"), item.get("sector") or "Unclassified",
+                 item.get("global_rank"), item.get("sector_rank"), item.get("action") or "WATCH",
+                 item.get("score"), item.get("confidence"),
+                 json.dumps(_json_nan_safe(item)), now),
+            )
+        for item in sectors:
+            c.execute(
+                _sql("INSERT INTO sector_snapshots(snapshot_id, sector, sector_rank, payload) "
+                     "VALUES (?,?,?,?)"),
+                (snapshot_id, item.get("sector") or "Unclassified", item.get("rank"),
+                 json.dumps(_json_nan_safe(item))),
+            )
+    return snapshot_id
+
+
+def latest_analysis_snapshot() -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(_sql(
+            "SELECT * FROM analysis_snapshots WHERE status = 'valid' "
+            "ORDER BY created_at DESC LIMIT 1"
+        )).fetchone()
+    if not row:
+        return None
+    out = _loads_payload(row["payload"], {})
+    out.update({"snapshot_id": row["id"], "trading_date": row["trading_date"],
+                "model_version": row["model_version"], "created_at": row["created_at"]})
+    return out
+
+
+def snapshot_candidates(snapshot_id: Optional[str] = None, limit: int = 100) -> list:
+    if not snapshot_id:
+        latest = latest_analysis_snapshot()
+        snapshot_id = latest.get("snapshot_id") if latest else None
+    if not snapshot_id:
+        return []
+    with _conn() as c:
+        rows = c.execute(
+            _sql("SELECT payload FROM candidate_analyses WHERE snapshot_id = ? "
+                 "ORDER BY global_rank LIMIT ?"),
+            (snapshot_id, max(1, min(int(limit), 500))),
+        ).fetchall()
+    return [_loads_payload(r["payload"], {}) for r in rows]
+
+
+def candidate_analysis(symbol: str, snapshot_id: Optional[str] = None) -> Optional[dict]:
+    if not snapshot_id:
+        latest = latest_analysis_snapshot()
+        snapshot_id = latest.get("snapshot_id") if latest else None
+    if not snapshot_id:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            _sql("SELECT payload FROM candidate_analyses WHERE snapshot_id = ? AND symbol = ?"),
+            (snapshot_id, symbol.upper()),
+        ).fetchone()
+    return _loads_payload(row["payload"], {}) if row else None
+
+
+_ENRICHMENT_SEED_PATH = os.path.join(os.path.dirname(__file__), "seed", "bull_ai_enrichment.json")
+
+
+def upsert_candidate_enrichment(symbol: str, provider: str, payload: dict, *,
+                                version: str = "1", as_of: Optional[str] = None) -> None:
+    """Store source-labelled external research without changing model scores."""
+    now = time.time()
+    with _conn() as c:
+        c.execute(_sql(
+            "INSERT INTO candidate_enrichments(symbol, provider, version, as_of, payload, refreshed_at) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(symbol, provider) DO UPDATE SET "
+            "version=excluded.version, as_of=excluded.as_of, payload=excluded.payload, "
+            "refreshed_at=excluded.refreshed_at"
+        ), (symbol.upper(), provider, version, as_of,
+            json.dumps(_json_nan_safe(payload)), now))
+
+
+def candidate_enrichments(symbol: str) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT provider, version, as_of, payload, refreshed_at "
+            "FROM candidate_enrichments WHERE symbol = ? ORDER BY provider"
+        ), (symbol.upper(),)).fetchall()
+    output = []
+    for row in rows:
+        payload = _loads_payload(row["payload"], {})
+        payload.update({"provider": row["provider"], "version": row["version"],
+                        "as_of": row["as_of"], "refreshed_at": row["refreshed_at"]})
+        output.append(payload)
+    return output
+
+
+def enrichment_coverage(provider: str = "Bull AI") -> dict:
+    with _conn() as c:
+        row = c.execute(_sql(
+            "SELECT COUNT(*) AS total, MAX(refreshed_at) AS latest "
+            "FROM candidate_enrichments WHERE provider = ?"
+        ), (provider,)).fetchone()
+    return {"provider": provider, "covered": int(row["total"] or 0),
+            "latest_refresh": row["latest"]}
+
+
+def _seed_candidate_enrichments() -> None:
+    """Install the bounded, source-backed pilot evidence once per database."""
+    if not os.path.exists(_ENRICHMENT_SEED_PATH):
+        return
+    try:
+        with open(_ENRICHMENT_SEED_PATH, encoding="utf-8") as handle:
+            items = json.load(handle)
+        with _conn() as c:
+            for item in items:
+                c.execute(_sql(
+                    "INSERT INTO candidate_enrichments(symbol, provider, version, as_of, payload, refreshed_at) "
+                    "VALUES (?,?,?,?,?,?) ON CONFLICT(symbol, provider) DO NOTHING"
+                ), (item["symbol"].upper(), item.get("provider", "Bull AI"),
+                    item.get("version", "1"), item.get("as_of"),
+                    json.dumps(_json_nan_safe(item["payload"])), time.time()))
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"[db] Bull AI enrichment seed skipped: {exc}")
+
+
+def sector_snapshot(sector: str, snapshot_id: Optional[str] = None) -> Optional[dict]:
+    if not snapshot_id:
+        latest = latest_analysis_snapshot()
+        snapshot_id = latest.get("snapshot_id") if latest else None
+    if not snapshot_id:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            _sql("SELECT payload FROM sector_snapshots WHERE snapshot_id = ? "
+                 "AND lower(sector) = lower(?)"),
+            (snapshot_id, sector),
+        ).fetchone()
+    return _loads_payload(row["payload"], {}) if row else None
+
+
+DEFAULT_PORTFOLIO_SETTINGS = {
+    "risk_per_trade_pct": 0.75,
+    "max_portfolio_heat_pct": 6.0,
+    "max_open_positions": 8,
+    "max_positions_per_sector": 2,
+    "max_sector_exposure_pct": 25.0,
+    "minimum_reward_risk": 1.5,
+    "t1_r": 1.5,
+    "t2_r": 2.5,
+    "time_stop_sessions": 40,
+}
+
+
+def portfolio_settings() -> dict:
+    value = get_setting("portfolio_settings_v1", {})
+    stored = value if isinstance(value, dict) else {}
+    # Return only active policy fields; legacy account-value sizing settings
+    # are intentionally ignored after position sizing was removed.
+    return {key: stored.get(key, default) for key, default in DEFAULT_PORTFOLIO_SETTINGS.items()}
+
+
+def set_portfolio_settings(value: dict) -> dict:
+    merged = {**portfolio_settings(), **value}
+    set_setting("portfolio_settings_v1", merged)
+    return merged
 
 
 # ── fundamentals TTL cache ────────────────────────────────────────────────────

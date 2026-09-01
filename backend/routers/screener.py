@@ -22,12 +22,15 @@ import swing_engine
 import decision_engine
 import price_service as price
 import data_cache
+import symbol_resolver
 from stock_service import _plan_summary, _screen_row
 
 router = APIRouter()
 SYMBOL_RE = re.compile(r"^[A-Z0-9&.-]{1,30}$")
 
-AUTO_SCREEN_NAME = "Daily Chartink Auto-Run"
+AUTO_SCREEN_NAME = "All NSE Daily Scan"
+CHARTINK_SCREEN_NAME = "Daily Chartink Auto-Run"
+MAX_NSE_SYMBOLS = 3000
 
 # Stocks per streamed batch. Each batch is fetched concurrently (bounded by
 # the semaphore below) and its rows are pushed to the client as soon as the
@@ -41,9 +44,11 @@ FETCH_CONCURRENCY = 6
 # while scraping fundamentals for every match quickly trips Screener.in's
 # rate limit. Full fundamentals are still fetched when a user opens a stock.
 AUTO_SCREEN_FETCH_CONCURRENCY = 12
+HISTORY_BATCH_SIZE = 75
 
 AUTO_SCREEN_STATUS_KEY = "auto_screen_last_run"
 AUTO_SCREEN_LOCK = asyncio.Lock()
+AUTO_SCREEN_PENDING = False
 
 
 def _json_clean(obj):
@@ -292,7 +297,7 @@ async def fetch_chartink_matches(body: ChartinkFetchBody):
         )
     ranked_symbols = [row["symbol"] for row in ranked]
     screen = await run_in_threadpool(
-        db.screen_save, AUTO_SCREEN_NAME, ranked_symbols, ranked
+        db.screen_save, CHARTINK_SCREEN_NAME, ranked_symbols, ranked
     )
     return {**screen, "url": url}
 
@@ -312,60 +317,72 @@ async def _fetch_and_rank(
     track_status: bool = False,
 ) -> list[dict]:
     """
-    Fast broad-universe pass used by both manual Chartink refresh and cron.
+    Fast broad-universe pass used by Chartink subsets and the all-NSE job.
 
     Only price history is fetched here. Pulling Screener.in fundamentals for
     400+ symbols caused sustained HTTP 429s and turned a sub-minute market
     scan into an hour-long degraded run. A stock's full research view still
     fetches and displays fundamentals on demand.
     """
-    sem = asyncio.Semaphore(concurrency)
-
-    async def fetch_one(sym: str):
-        async with sem:
-            try:
-                hist = await price.get_historical(f"NSE:{sym}", days=450)
-                return sym, hist, None
-            except Exception as e:                            # noqa: BLE001
-                return sym, [], str(e)
-
     total = len(syms)
     rows, done = [], 0
-    tasks = [asyncio.create_task(fetch_one(sym)) for sym in syms]
-    try:
-        for completed in asyncio.as_completed(tasks):
-            sym, hist, err = await completed
-            done += 1
-            row = None if err else _build_row(sym, {}, hist)
+    for batch in _chunks(syms, HISTORY_BATCH_SIZE):
+        instruments = [f"NSE:{sym}" for sym in batch]
+        histories = await price.get_historical_multiple(instruments, days=450)
+
+        # Yahoo occasionally omits a delisted/recently-listed ticker from a
+        # multi-symbol response. Retry only those gaps with the older,
+        # battle-tested single-ticker path under a strict concurrency bound.
+        missing = [sym for sym in batch if not histories.get(f"NSE:{sym}")]
+        if missing:
+            sem = asyncio.Semaphore(concurrency)
+
+            async def fetch_missing(sym: str):
+                async with sem:
+                    try:
+                        return sym, await price.get_historical(f"NSE:{sym}", days=450)
+                    except Exception:                         # noqa: BLE001
+                        return sym, []
+
+            retries = await asyncio.gather(*(fetch_missing(sym) for sym in missing))
+            for sym, candles in retries:
+                if candles:
+                    histories[f"NSE:{sym}"] = candles
+
+        for sym in batch:
+            hist = histories.get(f"NSE:{sym}", [])
+            row = _build_row(sym, {}, hist) if hist else None
             if row is not None:
                 rows.append(row)
-            if track_status and (done % BATCH_SIZE == 0 or done == total):
-                await _set_auto_screen_status(done=done, total=total, count=len(rows))
-    finally:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
+            done += 1
+
+        if track_status:
+            await _set_auto_screen_status(done=done, total=total, count=len(rows))
 
     return swing_engine.cross_sectional_rank(rows) if rows else []
 
 
-async def _run_auto_screen(url: str) -> None:
-    """The actual scrape -> fetch/rank -> save sequence, run in the
-    background (see auto_screen() below) so the HTTP request that triggers
-    it returns immediately regardless of how long this takes."""
+async def _run_auto_screen() -> None:
+    """Fetch the official NSE universe, rank it, and cache the daily screen."""
     async with AUTO_SCREEN_LOCK:
         await _set_auto_screen_status(status="running", started_at=time.time(), finished_at=None,
-                                      done=0, total=0, count=0, error=None)
+                                      done=0, total=0, count=0, error=None,
+                                      source="NSE EQUITY_L", screen_name=AUTO_SCREEN_NAME)
         try:
-            scan_clause = await run_in_threadpool(db.get_setting, "chartink_scan_clause", "") or None
-            tickers = await chartink_scraper.fetch_screener_tickers(url, scan_clause)
+            universe = await symbol_resolver.get_nse_equity_universe()
+            tickers = [
+                row["symbol"] for row in universe
+                if SYMBOL_RE.fullmatch(str(row.get("symbol", "")).upper())
+            ]
+            tickers = list(dict.fromkeys(tickers))[:MAX_NSE_SYMBOLS]
             if not tickers:
-                await _set_auto_screen_status(status="done", finished_at=time.time(),
-                                               count=0, error="Chartink returned no tickers")
+                await _set_auto_screen_status(
+                    status="error", finished_at=time.time(), count=0,
+                    error="The official NSE equity directory was unavailable",
+                )
                 return
 
-            tickers = list(dict.fromkeys(tickers))[:500]
-            await _set_auto_screen_status(total=len(tickers))
+            await _set_auto_screen_status(total=len(tickers), universe_count=len(tickers))
             ranked = await _fetch_and_rank(
                 tickers,
                 concurrency=AUTO_SCREEN_FETCH_CONCURRENCY,
@@ -380,10 +397,48 @@ async def _run_auto_screen(url: str) -> None:
             final_count = len(ranked_symbols)
             await _set_auto_screen_status(
                 status="done", finished_at=time.time(), count=final_count,
-                error=None if final_count else "No usable data for any matched ticker",
+                error=None if final_count else "No usable market history for the NSE universe",
             )
         except Exception as e:                                    # noqa: BLE001
             await _set_auto_screen_status(status="error", finished_at=time.time(), error=str(e))
+
+
+async def _run_scheduled_auto_screen() -> None:
+    """Clear the pre-start guard even if the background job fails early."""
+    global AUTO_SCREEN_PENDING
+    try:
+        await _run_auto_screen()
+    finally:
+        AUTO_SCREEN_PENDING = False
+
+
+def _schedule_auto_screen(background_tasks: BackgroundTasks) -> bool:
+    """Atomically reserve the single in-process full-market job slot."""
+    global AUTO_SCREEN_PENDING
+    if AUTO_SCREEN_PENDING or AUTO_SCREEN_LOCK.locked():
+        return False
+    AUTO_SCREEN_PENDING = True
+    background_tasks.add_task(_run_scheduled_auto_screen)
+    return True
+
+
+@router.get("/api/nse/universe")
+async def nse_universe():
+    """Metadata for the official NSE equity master used by the daily scan."""
+    rows = await symbol_resolver.get_nse_equity_universe()
+    return {
+        "source": "NSE EQUITY_L",
+        "count": len(rows),
+        "screen_name": AUTO_SCREEN_NAME,
+    }
+
+
+@router.post("/api/nse/fetch", status_code=202)
+async def fetch_nse_market(background_tasks: BackgroundTasks):
+    """Start a user-requested all-NSE refresh and return immediately."""
+    if not _schedule_auto_screen(background_tasks):
+        return {"status": "already_running", "screen_name": AUTO_SCREEN_NAME}
+    return {"status": "started", "screen_name": AUTO_SCREEN_NAME}
 
 
 @router.post("/api/auto-screen")
@@ -392,8 +447,8 @@ async def auto_screen(
     authorization: str | None = Header(default=None),
 ):
     """
-    Daily cron target: scrape the saved Chartink screener URL, cross-sectionally
-    rank the matches, and upsert them as the "Daily Chartink Auto-Run" saved
+    Daily cron target: load the official NSE equity master, cross-sectionally
+    rank the market, and upsert it as the "All NSE Daily Scan" saved
     screen. Gated by a Bearer token matching CRON_SECRET_KEY — an unset key
     disables the endpoint entirely. Keeping the secret in a header prevents
     it from leaking through URL and proxy logs.
@@ -401,7 +456,7 @@ async def auto_screen(
     Runs in the background: a cold run over hundreds of symbols can take
     minutes, well past what Render's proxy, Cloudflare's edge, or a cron
     pinger's own timeout will tolerate on a held-open request. This endpoint
-    validates the secret and the configured URL, schedules the real work,
+    validates the secret, schedules the real work,
     and returns immediately. Progress/outcome: GET /api/auto-screen/status.
     """
     supplied = authorization.removeprefix("Bearer ").strip() if authorization else ""
@@ -409,18 +464,9 @@ async def auto_screen(
             or not hmac.compare_digest(supplied, config.CRON_SECRET_KEY)):
         raise HTTPException(status_code=403, detail="Invalid or missing secret")
 
-    if AUTO_SCREEN_LOCK.locked():
+    if not _schedule_auto_screen(background_tasks):
         return {"status": "already_running"}
-
-    url = await run_in_threadpool(db.get_setting, "chartink_url", "")
-    if not url:
-        raise HTTPException(
-            status_code=400,
-            detail="No Chartink URL configured — set one via POST /api/settings/chartink-url",
-        )
-
-    background_tasks.add_task(_run_auto_screen, url)
-    return {"status": "started"}
+    return {"status": "started", "screen_name": AUTO_SCREEN_NAME}
 
 
 @router.get("/api/auto-screen/status")

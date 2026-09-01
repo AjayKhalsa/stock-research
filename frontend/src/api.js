@@ -61,12 +61,14 @@ export const saveScreen = (name, tickers, rankedData) => API.post('/api/screens'
 }).then(r => r.data);
 export const deleteScreen = (id) => API.delete(`/api/screens/${id}`).then(r => r.data);
 
-// Chartink daily auto-fetcher — saved screener URL
+// Optional Chartink custom-subset source
 export const getChartinkUrl = () => API.get('/api/settings/chartink-url').then(r => r.data);
 export const setChartinkUrl = (url) => API.post('/api/settings/chartink-url', { url }).then(r => r.data);
 export const getChartinkScanClause = () => API.get('/api/settings/chartink-scan-clause').then(r => r.data);
 export const setChartinkScanClause = (scan_clause) => API.post('/api/settings/chartink-scan-clause', { scan_clause }).then(r => r.data);
 export const getAutoScreenStatus = () => API.get('/api/auto-screen/status').then(r => r.data);
+export const getNseUniverse = () => API.get('/api/nse/universe').then(r => r.data);
+export const startNseMarketScan = () => API.post('/api/nse/fetch').then(r => r.data);
 // A full Chartink universe may contain hundreds of symbols. The backend now
 // computes and caches its price-first ranking before returning, so allow this
 // one deliberate refresh more time than ordinary interactive requests.
@@ -81,3 +83,11 @@ export const getPaperTradeStats = () => API.get('/api/paper-trades/stats').then(
 export const getPaperTradesList = () => API.get('/api/paper-trades/list').then(r => r.data);
 export const getPaperTradeSnapshot = () => API.get('/api/paper-trades/snapshot').then(r => r.data);
 export const evaluatePaperTrades = () => API.post('/api/paper-trades/evaluate').then(r => r.data);
+
+// CFO workspace — one precomputed morning snapshot, then drill-down reads.
+export const getMorningBrief = () => API.get('/api/morning-brief').then(r => r.data);
+export const getSectorSnapshot = (sector) => API.get(`/api/sectors/${encodeURIComponent(sector)}`).then(r => r.data);
+export const getCandidateAnalysis = (symbol) => API.get(`/api/candidates/${pathSymbol(symbol)}`).then(r => r.data);
+export const getDailyJobStatus = () => API.get('/api/jobs/daily/status').then(r => r.data);
+export const getPortfolioSettings = () => API.get('/api/portfolio/settings').then(r => r.data);
+export const updatePortfolioSettings = (settings) => API.put('/api/portfolio/settings', settings).then(r => r.data);

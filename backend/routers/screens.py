@@ -17,12 +17,13 @@ import db
 
 router = APIRouter()
 SYMBOL_RE = re.compile(r"^[A-Z0-9&.-]{1,30}$")
+MAX_SCREEN_SYMBOLS = 3000
 
 
 class ScreenCreate(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    tickers: list[str] = Field(min_length=2, max_length=500)
-    ranked_data: list[dict] | None = Field(default=None, max_length=500)
+    tickers: list[str] = Field(min_length=2, max_length=MAX_SCREEN_SYMBOLS)
+    ranked_data: list[dict] | None = Field(default=None, max_length=MAX_SCREEN_SYMBOLS)
 
     @field_validator("name")
     @classmethod

@@ -6,12 +6,12 @@ import {
   getScreens, getScreen, saveScreen, deleteScreen,
   getChartinkUrl, setChartinkUrl, getChartinkScanClause, setChartinkScanClause,
   getPaperTradeSnapshot, getAutoScreenStatus, fetchChartinkMatches,
-  describeApiError, getHealth,
+  getNseUniverse, startNseMarketScan, describeApiError, getHealth,
 } from '../api';
 
 import './Watchlist.css';
 
-const CHARTINK_SCREEN_NAME = 'Daily Chartink Auto-Run';
+const NSE_SCREEN_NAME = 'All NSE Daily Scan';
 const PAPER_TRADE_CACHE_KEY = 'stocklens_paper_trade_snapshot_v1';
 
 function readPaperTradeCache() {
@@ -37,9 +37,10 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const inputRef = useRef(null);
+  const autoLoadedNseRef = useRef(false);
 
-  // Chartink daily auto-fetcher — the URL a server-side cron scrapes each
-  // day into the "Daily Chartink Auto-Run" saved screen above.
+  // Optional Chartink subset. The primary scheduled universe is the official
+  // NSE equity master and does not depend on this URL.
   const [chartinkUrl, setChartinkUrlState] = useState('');
   // Optional scan_clause override — most screener pages build this with
   // client-side JS, so it's invisible to the plain-HTML scraper; storing the
@@ -51,9 +52,12 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
   const [savingLink, setSavingLink] = useState(false);
   const [refreshingMatches, setRefreshingMatches] = useState(false);
   const linkInputRef = useRef(null);
-  // Last (or in-progress) cron run outcome — so a failed/stalled auto-fetch
+  // Last (or in-progress) all-NSE job — so a failed/stalled refresh
   // is visible here instead of only in Render's logs.
   const [runStatus, setRunStatus] = useState(null);
+  const [universeInfo, setUniverseInfo] = useState(null);
+  const [startingNse, setStartingNse] = useState(false);
+  const lastFinishedRef = useRef(null);
   const [storageWarning, setStorageWarning] = useState('');
 
   const refresh = useCallback(async () => {
@@ -61,11 +65,22 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    if (autoLoadedNseRef.current || screenTickers?.length) return;
+    const daily = screens.find(screen => screen.name === NSE_SCREEN_NAME);
+    if (!daily) return;
+    autoLoadedNseRef.current = true;
+    getScreen(daily.id).then((record) => {
+      setSelected(String(record.id));
+      onLoadScreen(record);
+    }).catch(() => { autoLoadedNseRef.current = false; });
+  }, [screens, screenTickers, onLoadScreen]);
   useEffect(() => { if (modalOpen) setTimeout(() => inputRef.current?.focus(), 30); }, [modalOpen]);
 
   useEffect(() => {
     getChartinkUrl().then(r => setChartinkUrlState(r.url || '')).catch(() => {});
     getChartinkScanClause().then(r => setChartinkScanClauseState(r.scan_clause || '')).catch(() => {});
+    getNseUniverse().then(setUniverseInfo).catch(() => {});
     getHealth().then(r => {
       if (r?.storage && !r.storage.durable) {
         setStorageWarning(r.storage.fallback_reason
@@ -77,13 +92,19 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
   useEffect(() => { if (editingLink) setTimeout(() => linkInputRef.current?.focus(), 30); }, [editingLink]);
 
   useEffect(() => {
-    const poll = () => getAutoScreenStatus().then(setRunStatus).catch(() => {});
+    const poll = () => getAutoScreenStatus().then((status) => {
+      setRunStatus(status);
+      if (status?.finished_at && status.finished_at !== lastFinishedRef.current) {
+        lastFinishedRef.current = status.finished_at;
+        refresh();
+      }
+    }).catch(() => {});
     poll();
     const interval = setInterval(poll, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [refresh]);
 
-  const hasAutoRunScreen = screens.some(s => s.name === CHARTINK_SCREEN_NAME);
+  const hasNseScreen = screens.some(s => s.name === NSE_SCREEN_NAME);
 
   const handleEditLink = () => {
     setLinkDraft(chartinkUrl);
@@ -124,6 +145,23 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
       toast.error(describeApiError(err, 'Could not refresh the Chartink list'));
     } finally {
       setRefreshingMatches(false);
+    }
+  };
+
+  const handleNseScan = async () => {
+    if (startingNse || runStatus?.status === 'running') return;
+    setStartingNse(true);
+    try {
+      const result = await startNseMarketScan();
+      setRunStatus(prev => ({ ...(prev || {}), status: 'running', done: 0,
+        total: universeInfo?.count || 0, source: 'NSE EQUITY_L' }));
+      toast.success(result.status === 'already_running'
+        ? 'The NSE market scan is already running'
+        : 'All-NSE scan started in the background');
+    } catch (err) {
+      toast.error(describeApiError(err, 'Could not start the NSE market scan'));
+    } finally {
+      setStartingNse(false);
     }
   };
 
@@ -216,9 +254,56 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
         )}
       </div>
 
+      <div className="nse-scan-card">
+        <div className="nse-scan-head">
+          <div>
+            <div className="nse-scan-title">
+              NSE Market Scan
+              <span className="nse-scan-badge">{universeInfo?.count || 'All'} stocks</span>
+            </div>
+            <div className="nse-scan-sub">Official NSE universe · cached for instant morning review</div>
+          </div>
+          <button className="nse-scan-btn" onClick={handleNseScan}
+            disabled={startingNse || runStatus?.status === 'running'}>
+            {runStatus?.status === 'running' ? 'Scanning…' : hasNseScreen ? 'Refresh' : 'Run scan'}
+          </button>
+        </div>
+        {runStatus?.status === 'running' && (
+          <div className="nse-progress-wrap">
+            <div className="nse-progress-track">
+              <span style={{ width: `${runStatus.total ? Math.min(100, (runStatus.done || 0) / runStatus.total * 100) : 2}%` }} />
+            </div>
+            <div className="nse-progress-copy">
+              {runStatus.done || 0} / {runStatus.total || universeInfo?.count || '…'} analyzed
+            </div>
+          </div>
+        )}
+        {runStatus?.status === 'done' && (
+          <div className={`nse-scan-result ${runStatus.count ? '' : 'error'}`}>
+            {runStatus.count
+              ? `${runStatus.count} stocks ready · updated ${formatAgeMinutes(runStatus.age_minutes)}`
+              : runStatus.error || 'No stocks were available'}
+          </div>
+        )}
+        {runStatus?.status === 'error' && (
+          <div className="nse-scan-result error" title={runStatus.error || ''}>
+            {runStatus.error || 'Last NSE scan failed'}
+          </div>
+        )}
+      </div>
+
+      {storageWarning && (
+        <div className="ce-status ce-status-error" title={storageWarning}>{storageWarning}</div>
+      )}
+
+      <details className="ce-optional-panel">
+        <summary>
+          <span>Chartink filter <span className="ce-optional-label">Optional</span></span>
+          <span className="ce-chevron">⌄</span>
+        </summary>
       <div className="ce-row">
-        <span className="ce-label" title="A server-side cron scrapes this Chartink screener daily into the &quot;Daily Chartink Auto-Run&quot; saved screen above.">
-          {hasAutoRunScreen ? 'Chartink Auto-Fetch' : 'Chartink Auto-Fetch (not yet run)'}
+        <span className="ce-label" title="Chartink creates a custom subset; it does not define the main NSE universe.">
+          Custom subset
         </span>
         {!editingLink && (
           <span className="ce-actions">
@@ -244,28 +329,6 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
           {chartinkScanClause
             ? 'Manual scan clause available as fallback'
             : 'Live Chartink query will be detected automatically'}
-        </div>
-      )}
-      {!editingLink && runStatus?.status === 'running' && (
-        <div className="ce-status ce-status-running">
-          Running… {runStatus.done ?? 0}/{runStatus.total ?? '?'} fetched
-        </div>
-      )}
-      {!editingLink && storageWarning && (
-        <div className="ce-status ce-status-error" title={storageWarning}>{storageWarning}</div>
-      )}
-      {!editingLink && runStatus?.status === 'error' && (
-        <div className="ce-status ce-status-error" title={runStatus.error || ''}>
-          Last run FAILED {formatAgeMinutes(runStatus.age_minutes)}
-          {runStatus.error ? ` — ${runStatus.error}` : ''}
-        </div>
-      )}
-      {!editingLink && runStatus?.status === 'done' && (
-        <div className={`ce-status ${runStatus.count ? 'ce-status-ok' : 'ce-status-error'}`}
-             title={runStatus.error || ''}>
-          {runStatus.count
-            ? `Last run: ${formatAgeMinutes(runStatus.age_minutes)} · ${runStatus.count} matched`
-            : `Last run: ${formatAgeMinutes(runStatus.age_minutes)} · ${runStatus.error || 'no matches'}`}
         </div>
       )}
       {editingLink && (
@@ -300,6 +363,7 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
           </div>
         </div>
       )}
+      </details>
 
       {modalOpen && createPortal(
         // Portalled to <body>: the sidebar's backdrop-filter (frosted glass)

@@ -26,10 +26,13 @@ load_dotenv(os.path.join(BACKEND_DIR, ".env"))
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
-# Shared secret gating POST /api/auto-screen (the Chartink daily auto-fetcher).
+# Shared secret gating POST /api/auto-screen (the all-NSE daily market scan).
 # Unset by default -> the endpoint refuses every request until an operator
 # configures a real secret (an empty secret must never be "valid").
 CRON_SECRET_KEY: str = os.environ.get("CRON_SECRET_KEY", "")
+CFO_WORKSPACE_V1: bool = os.environ.get("CFO_WORKSPACE_V1", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 DEFAULT_CHARTINK_URL: str = os.environ.get(
     "CHARTINK_SCREENER_URL",
     "https://chartink.com/screener/copy-general-scanner-simply-above-mas-3",

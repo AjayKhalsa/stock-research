@@ -109,16 +109,19 @@ class SavedScreensApiTests(unittest.TestCase):
         self.assertEqual(invalid.status_code, 400)
 
     def test_chartink_ranker_is_price_first_and_skips_bulk_fundamentals(self):
-        async def history(instrument, days=450):
-            symbol = instrument.split(":", 1)[-1]
-            return [{"close": 100.0, "symbol": symbol}] * 30
+        async def histories(instruments, days=450):
+            return {
+                instrument: [{"close": 100.0, "symbol": instrument.split(":", 1)[-1]}] * 30
+                for instrument in instruments
+            }
 
         def row(symbol, fundamentals, candles):
             self.assertEqual(fundamentals, {})
             return {"symbol": symbol, "score": 50, "candles": len(candles)}
 
         fundamentals = AsyncMock()
-        with patch("routers.screener.price.get_historical", side_effect=history), \
+        with patch("routers.screener.price.get_historical_multiple", side_effect=histories), \
+                patch("routers.screener.price.get_historical", new=AsyncMock()) as single_history, \
                 patch("routers.screener.data_cache.get_fundamentals", fundamentals), \
                 patch("routers.screener._build_row", side_effect=row), \
                 patch(
@@ -129,6 +132,48 @@ class SavedScreensApiTests(unittest.TestCase):
 
         self.assertEqual([item["symbol"] for item in ranked], ["INFY", "TCS"])
         fundamentals.assert_not_called()
+        single_history.assert_not_called()
+
+    def test_all_nse_job_uses_official_universe_and_persists_ranked_screen(self):
+        universe = [
+            {"symbol": "TCS", "name": "Tata Consultancy Services"},
+            {"symbol": "INFY", "name": "Infosys"},
+            {"symbol": "TCS", "name": "Duplicate"},
+        ]
+        ranked = [
+            {"symbol": "INFY", "rank": 1},
+            {"symbol": "TCS", "rank": 2},
+        ]
+        with patch(
+            "routers.screener.symbol_resolver.get_nse_equity_universe",
+            new=AsyncMock(return_value=universe),
+        ), patch(
+            "routers.screener._fetch_and_rank",
+            new=AsyncMock(return_value=ranked),
+        ) as rank_mock:
+            asyncio.run(screener_router._run_auto_screen())
+
+        rank_mock.assert_awaited_once_with(
+            ["TCS", "INFY"],
+            concurrency=screener_router.AUTO_SCREEN_FETCH_CONCURRENCY,
+            track_status=True,
+        )
+        saved = next(
+            item for item in db.screens_all()
+            if item["name"] == screener_router.AUTO_SCREEN_NAME
+        )
+        record = db.screen_get(saved["id"])
+        self.assertEqual(record["tickers"], ["INFY", "TCS"])
+        self.assertEqual(record["ranked_data"], ranked)
+
+    def test_manual_nse_scan_starts_in_background(self):
+        with patch.object(
+            screener_router, "_run_auto_screen", new=AsyncMock()
+        ) as run_mock:
+            response = self.client.post("/api/nse/fetch")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["screen_name"], "All NSE Daily Scan")
+        run_mock.assert_awaited_once_with()
 
     def test_extracts_atlas_query_from_public_chartink_markup(self):
         clause = "( {cash} ( latest close > latest sma( latest close , 20 ) ) )"
@@ -239,7 +284,6 @@ class SavedScreensApiTests(unittest.TestCase):
 
     def test_auto_screen_requires_bearer_secret_and_starts_once(self):
         with patch.object(screener_router.config, "CRON_SECRET_KEY", "test-secret"), \
-                patch.object(db, "get_setting", return_value="https://chartink.com/screener/test"), \
                 patch.object(screener_router, "_run_auto_screen", new=AsyncMock()) as run_mock:
             denied = self.client.post("/api/auto-screen")
             self.assertEqual(denied.status_code, 403)
@@ -250,7 +294,8 @@ class SavedScreensApiTests(unittest.TestCase):
             )
             self.assertEqual(started.status_code, 200)
             self.assertEqual(started.json()["status"], "started")
-            run_mock.assert_awaited_once_with("https://chartink.com/screener/test")
+            self.assertEqual(started.json()["screen_name"], "All NSE Daily Scan")
+            run_mock.assert_awaited_once_with()
 
 
 if __name__ == "__main__":

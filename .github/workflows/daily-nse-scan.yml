@@ -1,9 +1,10 @@
-name: Daily Chartink refresh
+name: Daily StockLens CFO snapshot
 
 on:
   schedule:
-    # 18:00 India time, Monday-Friday: after the NSE cash session closes.
-    - cron: '30 12 * * 1-5'
+    # 07:00 IST, Monday-Friday. The job uses the latest completed NSE session;
+    # provider failures retain the last valid immutable snapshot.
+    - cron: '30 1 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -11,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Wake backend and start the cached screen refresh
+      - name: Wake backend and start the CFO snapshot pipeline
         env:
           CRON_SECRET: ${{ secrets.STOCKLENS_CRON_SECRET }}
         run: |
@@ -21,4 +22,4 @@ jobs:
             --max-time 180 \
             -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
-            https://stock-research-vtmf.onrender.com/api/auto-screen
+            https://stock-research-vtmf.onrender.com/api/jobs/daily/run

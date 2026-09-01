@@ -1,6 +1,6 @@
 # StockLens — Architecture & Feature Reference
 
-StockLens is an institutional-style research terminal for Indian equities (NSE/BSE). It combines quantitative factor scoring, a structure-aware trade-decision engine, price-action/volume forensics, and an AI "devil's advocate" analyst into a single research and screening workspace — plus a persistent watchlist, alerting, and a batch screener that ranks hundreds of stocks cross-sectionally.
+StockLens is a personal, institutional-style decision-support system for long-only NSE cash-equity swings. Its default CFO workspace is built from an immutable daily snapshot and combines sector leadership, deterministic ranking, sector-aware financial controls, portfolio risk, price-action/volume forensics, and a downgrade-only AI committee. The original detailed research terminal, watchlist, alerts, saved screens and Chartink tools remain available under Research/System.
 
 This document describes the system as it exists today: the deployed architecture, every backend engine and API endpoint, the full frontend feature set, the data model, and how it evolved.
 
@@ -22,7 +22,8 @@ Three independently-deployed tiers, each with exactly one job:
                                                         also calls out to:
                                                         Screener.in, Yahoo Finance,
                                                         BSE India, Google News RSS,
-                                                        Gemini API, NSE archives
+                                                        Gemini API, NSE archives,
+                                                        Bull AI evidence
 ```
 
 | Tier | Role | Holds state? |
@@ -55,7 +56,7 @@ Running a screen follows the same shape but additionally fans out to Screener.in
 
 ## 2. Tech Stack
 
-**Backend** — Python, FastAPI, uvicorn. No ORM (raw SQL via `sqlite3`/`psycopg`). No task queue — all work happens inline within request/stream handlers, concurrency via `asyncio.gather` and bounded semaphores.
+**Backend** — Python, FastAPI, uvicorn. No ORM (raw SQL via `sqlite3`/`psycopg`). Interactive work remains request-based; the all-NSE morning analysis is a protected in-process background job launched by the weekday scheduler, with staged progress, bounded concurrency and failure-safe publishing.
 
 ```
 fastapi, uvicorn[standard], httpx, beautifulsoup4, lxml, feedparser,
@@ -70,16 +71,51 @@ psycopg[binary]
 |---|---|---|
 | Yahoo Finance (`yfinance`) | Price history, LTP, intraday candles, fundamentals fallback | None (no key) |
 | Screener.in (scraped) | Primary fundamentals source (ratios, quarterly results, shareholding, financial statements) | None (scraped HTML) |
-| NSE archives | Official equity symbol/name master list (weekly refresh) | None |
+| NSE archives | Official equity master and cash-market bhavcopy closes (daily refresh, stale fallback) | None |
 | BSE India API | Corporate announcements/filings | None |
 | Google News RSS | Headline news per stock | None |
 | Google Gemini API | AI "Devil's Advocate" thesis generation | `GEMINI_API_KEY` |
+| Bull AI | Source-labelled guidance, revenue segmentation, peers, disclosed counterparties, management claims and transaction/corporate-action context for selected candidates | User-authorized plugin access during enrichment |
 
 No paid data vendor is used anywhere — this is deliberately a zero-cost data stack, which is also why prices are **delayed** (~15 min, Yahoo Finance) rather than live-tick.
 
 ---
 
 ## 3. Feature Tour (user-facing)
+
+### 3.0 CFO Morning Workspace
+
+The `cfo_workspace_v1` shell replaces the permanent three-column landing page
+with a compact rail: **Morning, Sectors, Candidates, Portfolio, Research,
+System**. Mobile uses Morning/Sectors/Watchlist/Search/More bottom navigation.
+
+The 07:00 IST pipeline loads NSE's official master, removes other series/ETF
+instruments, downloads adjusted history in bulk, applies the 252-session,
+₹20, and ₹5-crore traded-value gates, reconciles Yahoo with NSE bhavcopy, and
+deep-enriches the strongest 150 plus the watchlist/paper portfolio. It stores a
+versioned Top-100 snapshot; a failed run never replaces the last valid one.
+
+Candidate scores use the fixed weighting: setup 25%, relative strength 20%,
+trend/volume 15%, CFO health 15%, sector regime 10%, liquidity 10%, valuation
+5%. Banks/NBFCs/insurers use a financial-sector model and never receive
+industrial Altman/debt-equity rules. Hard blocks, missing evidence, a price
+conflict above 1%, and results within two sessions are deterministic. AI may
+explain or downgrade only. Historical-validation status is a server-side gate,
+so pre-validation outputs remain WATCH rather than actionable calls.
+Position sizing is deliberately absent: candidate dossiers show trade
+structure and risk-to-stop, while Portfolio manages exposure limits only. Each
+dossier includes an explicit trust-control panel and an on-demand adjusted
+daily price/volume chart. The detailed Research terminal renders inside the CFO
+shell rather than replacing the application's navigation.
+
+Bull AI enrichment appears only in the Evidence tab and in snapshot coverage
+metadata. It is a bounded, supplementary research layer: records retain source
+labels and limitations, management statements remain claims rather than facts,
+transaction records are not interpreted as trading signals, and the enrichment
+has no direct effect on the deterministic score. Missing coverage cannot improve
+a recommendation. The initial production seed covers the leading pilot set;
+the daily free-data pipeline and snapshot publication do not depend on plugin
+availability.
 
 ### 3.1 Search
 Type-ahead search (`SearchBar.js`) merging the local NSE directory (instant, full company names) with a live Yahoo Finance search for anything not in the local list. 300ms debounce, Enter-to-search fallback for symbols not found by name.
@@ -89,6 +125,8 @@ Persistent list of tracked symbols (`Watchlist.js`). Shows live LTP (polled ever
 
 ### 3.3 Saved Screens
 A named, re-loadable snapshot of a screener universe — e.g. save "Pharma Watch" as a specific list of 12 tickers, reload it any time without retyping. Backed by the `saved_screens` table (upsert-on-name, deduped, order-preserved). Sits above the Watchlist in the sidebar; the Save button is disabled until a screen has actually run.
+
+The primary discovery screen is **All NSE Daily Scan**. A backend job loads NSE's official `EQUITY_L.csv` master (daily cached with stale-cache fallback), downloads 450 trading days in bounded Yahoo Finance batches, retries only missing symbols individually, cross-sectionally ranks every usable stock, and persists the finished rows. The app therefore opens directly onto cached analysis instead of asking the user to wait for a market-wide scan. Chartink remains an optional custom-subset source and is not the universe boundary.
 
 ### 3.4 Price Alerts
 Per-stock price-level alerts (`alert_store.py`), either custom (user-picked level/direction) or **auto-armed from a trade plan** — one click on "🔔 Monitor this plan" creates an entry, stop, and one alert per target level in a single call. Checked every 30s against delayed Yahoo Finance prices while the app is open (explicitly *not* a broker GTT substitute — the UI says so). Triggered alerts surface as toast notifications and in a collapsible Alerts panel; can be acknowledged or deleted.
@@ -185,13 +223,13 @@ Institutional-footprint detectors, described in-code as "the present-day confirm
 - **Prices**: exclusively **Yahoo Finance** via `yfinance` (no API key, no paid vendor) — explicitly delayed (~15 min) and documented as unsuitable for execution timing. `auto_adjust=True` is used deliberately so dividends/splits don't create false gaps in MAs/RSI/ATR or falsely trigger backtested stops.
 - **Fundamentals**: **Screener.in is primary** (scraped via `httpx` + BeautifulSoup, with a resolve-canonical-slug retry cascade for renamed/mismatched tickers), with **Yahoo Finance's reported financial statements overlaid** on specific fields Screener approximates less reliably (e.g., current assets/liabilities, which Screener's consolidated view doesn't break out directly).
 - **Caching**: per-symbol fundamentals cache in the database, 4-hour TTL (tunable via a `settings` key), single-flight de-duplication (concurrent requests for the same cold symbol share one fetch), and **stale-on-error** fallback — if a live fetch fails, the last good copy is served and explicitly flagged stale rather than the page breaking.
-- **Symbol resolution**: a 4-stage cascade (exact match against the official NSE directory → fuzzy token-overlap name match → Screener.in's own search API for anything not yet in the directory → symbol-shaped passthrough), backed by a weekly-refreshed cache of NSE's official equity list (~2,400 symbols).
+- **Symbol resolution**: a 4-stage cascade (exact match against the official NSE directory → fuzzy token-overlap name match → Screener.in's own search API for anything not yet in the directory → symbol-shaped passthrough), backed by a daily-refreshed cache of NSE's official equity list (~2,400 symbols) with stale fallback.
 - **News & filings**: Google News RSS per stock, plus BSE India's corporate-announcements API (scrip code resolved via BSE's own autocomplete). Both feed a hand-rolled finance-domain sentiment lexicon (not a general NLP library) that weights phrases like "record profit" or "SEBI notice" and hard-flags red-flag terms (fraud, CBI probe, promoter pledge, going-concern) regardless of surrounding positive language.
 - **Legacy/unused**: `kite_bridge.py` is a standalone, unmounted FastAPI app wrapping the real Zerodha Kite Connect API — the original price-data path before the migration to Yahoo Finance. `kite_mcp_bridge.py` is a non-functional stub. Neither is imported by `main.py`; both are retained for reference only.
 
 ### 4.8 Persistence — `db.py`
 
-Dual-backend by design (see §1): **Postgres when `DATABASE_URL` is set, SQLite otherwise** (local dev default, zero config). Every public function has an identical signature on both backends, so no caller code differs by environment. Five tables: `watchlist`, `alerts`, `settings` (JSON-encoded key/value), `fundamentals_cache`, `saved_screens`. The SQLite path also auto-migrates any legacy `watchlist.json`/`alerts.json` files on first run.
+Dual-backend by design (see §1): **Postgres when `DATABASE_URL` is set, SQLite otherwise** (local dev default, zero config). Every public function has an identical signature on both backends. Alongside watchlist/alerts/settings/cache/screens/paper trades, the CFO workspace stores `analysis_snapshots`, `candidate_analyses`, `sector_snapshots`, `job_runs`, `backtest_runs`, `recommendation_outcomes`, and versioned `candidate_enrichments`. Snapshot publication and its child records commit atomically. The SQLite path also auto-migrates legacy JSON data. A concise source-backed Bull AI seed is idempotently loaded on startup; large raw connector responses are not persisted.
 
 ### 4.9 Alerts — `alert_store.py`
 
@@ -201,7 +239,17 @@ An alert is `{symbol, exchange, kind, level, direction, status, ...}`; `directio
 
 ## 5. API Reference
 
-All routes are prefixed `/api/`. No auth layer — this is a single-user personal tool. 22 endpoints across 4 routers.
+All routes are prefixed `/api/`. The personal research reads remain open; daily-job mutation requires a bearer token.
+
+**`routers/cfo_workspace.py`** — precomputed workspace and controls
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/morning-brief` | Latest valid immutable morning snapshot |
+| GET | `/api/sectors/{sector}` | Sector evidence and ranked constituents |
+| GET | `/api/candidates/{symbol}` | Saved decision dossier, trust controls and external evidence |
+| GET | `/api/jobs/daily/status` | Staged daily-job progress/error |
+| POST | `/api/jobs/daily/run` | Protected all-NSE snapshot launch |
+| GET/PUT | `/api/portfolio/settings` | Versioned portfolio risk policy |
 
 **`routers/stocks.py`** — search, single-stock research, plans, AI
 | Method | Path | Purpose |
@@ -232,6 +280,11 @@ All routes are prefixed `/api/`. No auth layer — this is a single-user persona
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/screen-stream` | SSE stream: up to 500 symbols, batched (25/batch, concurrency 6), progressive `batch` events then a final cross-sectionally-ranked `result` |
+| GET | `/api/nse/universe` | Official NSE equity-master metadata and current symbol count |
+| POST | `/api/nse/fetch` | Start a user-requested all-NSE background scan; returns immediately |
+| POST | `/api/auto-screen` | Secret-protected weekday cron target for the same all-NSE background scan |
+| GET | `/api/auto-screen/status` | Persisted progress/outcome for the current or last all-NSE job |
+| POST | `/api/chartink/fetch` | Optional: refresh and cache one Chartink-defined subset |
 
 **`routers/screens.py`** — saved screens
 | Method | Path | Purpose |
@@ -282,7 +335,7 @@ All routes are prefixed `/api/`. No auth layer — this is a single-user persona
 | Secrets | `GEMINI_API_KEY` and `CRON_SECRET_KEY` are set directly in Render; GitHub Actions receives the matching `STOCKLENS_CRON_SECRET` repository secret |
 | CORS | Backend allows any `*.vercel.app` origin plus local dev hosts — no per-deployment CORS config needed |
 
-**To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY`, `DATABASE_URL`, and `CRON_SECRET_KEY` set; deploy `frontend/` to Vercel with `REACT_APP_API_URL` pointed at the backend. Add a GitHub Actions repository secret named `STOCKLENS_CRON_SECRET` with the same value as Render's `CRON_SECRET_KEY`; the weekday workflow refreshes Chartink at 18:00 IST. `db.py` speaks standard Postgres via `psycopg` and uses a bounded connection pool in production.
+**To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY`, `DATABASE_URL`, and `CRON_SECRET_KEY` set; deploy `frontend/` to Vercel with `REACT_APP_API_URL` pointed at the backend. Add a GitHub Actions repository secret named `STOCKLENS_CRON_SECRET` with the same value as Render's `CRON_SECRET_KEY`; the weekday workflow starts the all-NSE scan at 07:00 IST. `db.py` speaks standard Postgres via `psycopg` and uses a bounded connection pool in production. Bull AI is not a required backend secret or runtime dependency: approved evidence is normalized into the enrichment store before publication.
 
 ---
 

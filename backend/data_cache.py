@@ -87,7 +87,7 @@ def enrich_with_yf_fundamentals(screener_data: dict, yf_funds: dict) -> dict:
         screener_data = {}
 
     # Sector/industry classification rides along with the statements
-    for k in ("sector", "industry"):
+    for k in ("sector", "industry", "earnings_date"):
         if yf_funds.get(k):
             screener_data[k] = yf_funds[k]
 

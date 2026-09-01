@@ -50,7 +50,7 @@ const ChartTooltip = ({ active, payload }) => {
 
 const VOL_TAG_COLORS = { HVE: '#312e81', HVY: '#4338ca', HVQ: '#6366f1' };
 
-function PriceChart({ history, levels, volumeTags }) {
+export function PriceChart({ history, levels, volumeTags }) {
   const [range, setRange] = useState('6M');
 
   const { slice, up, changePct, hasVolume, visibleTags } = useMemo(() => {

@@ -11,11 +11,26 @@ or latency-sensitive intraday trading).
 from __future__ import annotations
 
 import asyncio
+import json
 import math
+import os
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
 import yfinance as yf
+
+import config
+
+# yfinance otherwise writes cookie/timezone SQLite files under a user profile
+# path that may be read-only on local runners and hosted workers. Keep provider
+# cache state beside the rest of StockLens' writable data instead.
+_YF_CACHE_DIR = os.path.join(config.DATA_DIR, "yfinance")
+os.makedirs(_YF_CACHE_DIR, exist_ok=True)
+try:
+    yf.cache.set_cache_location(_YF_CACHE_DIR)
+except Exception as exc:
+    print(f"[price_service] yfinance cache setup warning: {exc}")
 
 _SUFFIX = {"NSE": ".NS", "BSE": ".BO"}
 _REVERSE_SUFFIX = {".NS": "NSE", ".BO": "BSE"}
@@ -225,6 +240,43 @@ _HIST_TTL = 1800          # 30 min - short enough to stay swing-relevant, long
                            # saved screen minutes later skips the network
                            # entirely instead of re-pulling 450 days per stock.
 
+_HISTORY_DIR = os.path.join(config.DATA_DIR, "price_history")
+os.makedirs(_HISTORY_DIR, exist_ok=True)
+
+
+def _history_path(symbol: str, days: int) -> str:
+    safe = re.sub(r"[^A-Z0-9_.-]", "_", symbol.upper())
+    return os.path.join(_HISTORY_DIR, f"{safe}-{int(days)}.json")
+
+
+def _read_persisted_history(symbol: str, days: int) -> tuple[list, float]:
+    try:
+        with open(_history_path(symbol, days), "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload.get("data") or [], float(payload.get("saved_at") or 0)
+    except (OSError, TypeError, ValueError):
+        return [], 0
+
+
+def persist_history(instrument: str, days: int, data: list) -> None:
+    """Atomically retain EOD history for offline dossiers/provider outages."""
+    if not data:
+        return
+    import time as _time
+    symbol = _yf_symbol(instrument)
+    path = _history_path(symbol, days)
+    temporary = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump({"saved_at": _time.time(), "data": data}, handle, separators=(",", ":"))
+        os.replace(temporary, path)
+    except OSError as exc:
+        print(f"[price_service] history cache write error {symbol}: {exc}")
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
+
 
 async def get_historical(instrument: str, days: int = 300) -> list:
     sym = _yf_symbol(instrument)
@@ -233,6 +285,10 @@ async def get_historical(instrument: str, days: int = 300) -> list:
     cached = _HIST_CACHE.get(key)
     if cached and _time.time() - cached["at"] < _HIST_TTL and len(cached["data"]) > 0:
         return cached["data"]
+    persisted, persisted_at = _read_persisted_history(sym, days)
+    if persisted and _time.time() - persisted_at < _HIST_TTL:
+        _HIST_CACHE[key] = {"at": persisted_at, "data": persisted}
+        return persisted
 
     def _fetch():
         try:
@@ -252,9 +308,94 @@ async def get_historical(instrument: str, days: int = 300) -> list:
     data = await asyncio.to_thread(_fetch)
     if data:
         _HIST_CACHE[key] = {"at": _time.time(), "data": data}
+        persist_history(instrument, days, data)
     elif cached:
         return cached["data"]   # stale beats nothing (e.g. rate-limited)
+    elif persisted:
+        return persisted         # durable stale cache beats provider failure
     return data
+
+
+async def get_historical_multiple(instruments: list[str], days: int = 300) -> dict[str, list]:
+    """Fetch daily candles for many symbols in one Yahoo request.
+
+    Full-NSE screening is otherwise thousands of serial HTTP conversations.
+    Cached symbols are skipped, Yahoo's multi-ticker endpoint fills the rest,
+    and callers can retry only the few symbols absent from the bulk response.
+    """
+    import time as _time
+
+    unique: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for instrument in instruments:
+        raw = str(instrument).strip()
+        if not raw:
+            continue
+        yf_symbol = _yf_symbol(raw)
+        if yf_symbol not in seen:
+            seen.add(yf_symbol)
+            unique.append((raw, yf_symbol))
+
+    now = _time.time()
+    out: dict[str, list] = {}
+    missing: list[tuple[str, str]] = []
+    for raw, yf_symbol in unique:
+        cached = _HIST_CACHE.get((yf_symbol, days))
+        if cached and now - cached["at"] < _HIST_TTL and cached["data"]:
+            out[raw] = cached["data"]
+        else:
+            missing.append((raw, yf_symbol))
+
+    if not missing:
+        return out
+
+    def _fetch_bulk() -> dict[str, list]:
+        fetched: dict[str, list] = {}
+        symbols = [yf_symbol for _, yf_symbol in missing]
+        try:
+            end = datetime.now()
+            start = end - timedelta(days=days + 15)
+            frame = yf.download(
+                tickers=" ".join(symbols),
+                start=start,
+                end=end,
+                interval="1d",
+                auto_adjust=True,
+                group_by="ticker",
+                threads=True,
+                progress=False,
+            )
+            if frame is None or frame.empty:
+                return fetched
+
+            for raw, yf_symbol in missing:
+                try:
+                    if len(symbols) == 1:
+                        symbol_frame = frame
+                    elif (getattr(frame.columns, "nlevels", 1) > 1
+                          and yf_symbol in frame.columns.get_level_values(0)):
+                        symbol_frame = frame[yf_symbol]
+                    elif (getattr(frame.columns, "nlevels", 1) > 1
+                          and yf_symbol in frame.columns.get_level_values(1)):
+                        symbol_frame = frame.xs(yf_symbol, axis=1, level=1)
+                    else:
+                        continue
+                    candles = _df_to_candles(symbol_frame)
+                    if candles:
+                        fetched[raw] = candles
+                except Exception:
+                    continue
+        except Exception as exc:
+            print(f"[price_service] bulk historical error ({len(symbols)} symbols): {exc}")
+        return fetched
+
+    fresh = await asyncio.to_thread(_fetch_bulk)
+    out.update(fresh)
+    cached_at = _time.time()
+    yf_by_raw = dict(missing)
+    for raw, candles in fresh.items():
+        _HIST_CACHE[(yf_by_raw[raw], days)] = {"at": cached_at, "data": candles}
+    return out
 
 
 # ── fundamentals (reported financial statements) ──────────────────────────────
@@ -363,11 +504,14 @@ async def get_fundamentals(instrument: str) -> dict:
             pl_scale = set(_PL_LABELS) - {"eps"}             # everything except EPS
             cf_scale = set(_CF_LABELS)                       # all cash flows → crore
             # Sector/industry classification (cached with the 4h fundamentals TTL)
-            sector = industry = None
+            sector = industry = earnings_date = None
             try:
                 info = t.get_info()
                 sector = info.get("sector")
                 industry = info.get("industry")
+                earnings_ts = info.get("earningsTimestampStart") or info.get("earningsTimestamp")
+                if earnings_ts:
+                    earnings_date = datetime.fromtimestamp(float(earnings_ts)).date().isoformat()
             except Exception:
                 pass
             return {
@@ -376,6 +520,7 @@ async def get_fundamentals(instrument: str) -> dict:
                 "cf_by_year": _extract_by_year(cf,  _CF_LABELS, cf_scale),
                 "sector": sector,
                 "industry": industry,
+                "earnings_date": earnings_date,
                 "source": "yfinance",
             }
         except Exception as e:

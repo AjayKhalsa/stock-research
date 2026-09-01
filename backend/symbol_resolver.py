@@ -3,7 +3,7 @@ symbol_resolver.py
 Resolve free-text company names ("Aegis Logistics Ltd") to NSE symbols.
 
 Primary source: NSE's official equity master list (EQUITY_L.csv, ~2400 rows),
-cached locally in data/nse_equity.json and refreshed weekly. Name matching is
+cached locally in data/nse_equity.json and refreshed daily. Name matching is
 token-based (suffixes like Ltd/Limited stripped, "&" == "and"), so pasted
 names from brokers/news resolve without exact spelling.
 
@@ -22,11 +22,12 @@ import time
 from typing import Optional
 
 import httpx
+import config
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = config.DATA_DIR
 os.makedirs(DATA_DIR, exist_ok=True)
 CACHE_FILE = os.path.join(DATA_DIR, "nse_equity.json")
-CACHE_MAX_AGE = 7 * 24 * 3600   # refresh weekly
+CACHE_MAX_AGE = 24 * 3600   # refresh daily; stale cache remains the fallback
 
 NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 SCREENER_SEARCH_URL = "https://www.screener.in/api/company/search/"
@@ -49,6 +50,21 @@ def _normalize_tokens(name: str) -> set:
     return {t for t in s.split() if t and t not in _DROP_TOKENS}
 
 
+def _write_cache(rows: list) -> None:
+    """Atomically replace the NSE cache so an interrupted write cannot corrupt it."""
+    temp_file = f"{CACHE_FILE}.{os.getpid()}.tmp"
+    try:
+        with open(temp_file, "w", encoding="utf-8") as handle:
+            json.dump({"fetched_at": time.time(), "rows": rows}, handle)
+        os.replace(temp_file, CACHE_FILE)
+    finally:
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except OSError:
+                pass
+
+
 # ── NSE directory cache ───────────────────────────────────────────────────────
 
 async def _download_nse_list() -> list:
@@ -61,7 +77,13 @@ async def _download_nse_list() -> list:
         sym = (row.get("SYMBOL") or "").strip()
         name = (row.get("NAME OF COMPANY") or "").strip()
         if sym and name:
-            rows.append({"symbol": sym, "name": name})
+            rows.append({
+                "symbol": sym,
+                "name": name,
+                "series": (row.get(" SERIES") or row.get("SERIES") or row.get("SERIES OF SECURITY") or "EQ").strip().upper(),
+                "listing_date": (row.get(" DATE OF LISTING") or row.get("DATE OF LISTING") or "").strip(),
+                "isin": (row.get(" ISIN NUMBER") or row.get("ISIN NUMBER") or "").strip(),
+            })
     return rows
 
 
@@ -83,8 +105,7 @@ async def _load_directory() -> list:
     if rows is None:
         try:
             rows = await _download_nse_list()
-            json.dump({"fetched_at": time.time(), "rows": rows},
-                      open(CACHE_FILE, "w", encoding="utf-8"))
+            _write_cache(rows)
         except Exception as e:
             print(f"[resolver] NSE list download failed: {e}")
             # Fall back to a stale cache rather than nothing
@@ -146,6 +167,39 @@ async def _screener_fallback(query: str) -> Optional[dict]:
 
 
 # ── public API ────────────────────────────────────────────────────────────────
+
+async def get_nse_equity_universe(refresh: bool = False) -> list[dict]:
+    """Return the canonical NSE equity universe from NSE's EQUITY_L master.
+
+    The on-disk copy is refreshed daily and a stale copy is used if NSE is
+    temporarily unavailable. Match-only token sets are deliberately omitted
+    from the public result so callers receive a small, JSON-safe payload.
+    """
+    global _directory
+    if refresh:
+        _directory = None
+        try:
+            rows = await _download_nse_list()
+            _write_cache(rows)
+            _directory = [
+                {**row, "tokens": _normalize_tokens(row["name"])} for row in rows
+            ]
+        except Exception:
+            # _load_directory handles stale-cache fallback consistently.
+            _directory = None
+
+    directory = await _load_directory()
+    seen: set[str] = set()
+    universe: list[dict] = []
+    for row in directory:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        universe.append({"symbol": symbol, "name": row.get("name") or symbol,
+                         "series": row.get("series") or "EQ",
+                         "listing_date": row.get("listing_date"), "isin": row.get("isin")})
+    return universe
 
 def _looks_like_symbol(q: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9.&-]{1,20}", q.strip()))

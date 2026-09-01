@@ -27,7 +27,7 @@ const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 250;
 const SIDEBAR_STORAGE_KEY = 'stocklens_sidebar_width';
 
-export default function App() {
+export default function App({ initialSymbol = null, embedded = false }) {
   const [currentSymbol, setCurrentSymbol] = useState(null);
 
   // Resizable sidebar width (drag handle below), persisted to localStorage.
@@ -167,6 +167,10 @@ export default function App() {
     await planPromise;
   }, []);
 
+  useEffect(() => {
+    if (initialSymbol) loadStock(initialSymbol, 'NSE');
+  }, [initialSymbol, loadStock]);
+
   // ── Gatekeeper: structural override on broken setups ─────────────────────
   const swing = planData?.swing;
   const ma200 = planData?.key_levels?.ma200;
@@ -176,14 +180,14 @@ export default function App() {
   );
 
   return (
-    <div className="app-layout">
+    <div className={`app-layout ${embedded ? 'embedded-research' : ''}`}>
       <Toaster position="top-right" toastOptions={{
         style: { background: '#ffffff', color: '#0f172a', border: '1px solid rgba(15,23,42,0.1)', borderRadius: 12, boxShadow: '0 8px 24px rgba(16,24,40,0.12)' }
       }} />
 
       {/* ── Far-left rail: brand + watchlist/alerts hub. Always visible,
           never collapsible — only its width is user-adjustable. ── */}
-      <aside className="sidebar" style={{ '--sidebar-w': `${sidebarWidth}px` }}>
+      {!embedded && <aside className="sidebar" style={{ '--sidebar-w': `${sidebarWidth}px` }}>
         <div className="sidebar-logo">
           <span className="logo-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M4 17l5-5 4 3 7-8M15 7h5v5" /></svg>
@@ -210,19 +214,19 @@ export default function App() {
             });
           }}
         />
-      </aside>
+      </aside>}
 
-      <div
+      {!embedded && <div
         className={`sidebar-resize-handle ${resizingSidebar ? 'dragging' : ''}`}
         onPointerDown={handleSidebarResizeStart}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize sidebar"
         title="Drag to resize the sidebar"
-      />
+      />}
 
       {/* ── Master screener panel (collapsible) ── */}
-      <div className={`master-panel ${isMasterOpen ? 'open' : 'closed'}`}>
+      {!embedded && <div className={`master-panel ${isMasterOpen ? 'open' : 'closed'}`}>
         <div className="master-panel-inner">
           <Screener
             onSelectStock={loadStock}
@@ -232,10 +236,10 @@ export default function App() {
             loadRequest={loadScreenReq}
           />
         </div>
-      </div>
+      </div>}
 
       {/* ── Divider with toggle chevron ── */}
-      <div className="master-divider">
+      {!embedded && <div className="master-divider">
         <button
           className="master-toggle"
           onClick={() => setIsMasterOpen(o => !o)}
@@ -243,7 +247,7 @@ export default function App() {
         >
           {isMasterOpen ? '◀' : '▶'}
         </button>
-      </div>
+      </div>}
 
       {/* ── Detail panel ── */}
       <main className="main-content">
@@ -350,13 +354,13 @@ export default function App() {
       </main>
 
       {/* ── floating guide button ── */}
-      <button
+      {!embedded && <button
         className={`guide-fab ${showGuide ? 'active' : ''}`}
         onClick={() => setShowGuide(g => !g)}
         title={showGuide ? 'Exit the guide' : 'How StockLens works — guided walkthrough with a demo stock'}
       >
         {showGuide ? '✕' : '❓'}
-      </button>
+      </button>}
     </div>
   );
 }
