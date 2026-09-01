@@ -35,12 +35,19 @@ class CfoEngineTests(unittest.TestCase):
         fallback = candles(3)
         with patch.object(price_service, "_read_persisted_history",
                           return_value=(fallback, 1)), \
-             patch.object(price_service.asyncio, "to_thread",
-                          new=AsyncMock(side_effect=TimeoutError)):
+             patch.object(price_service, "_fetch_bulk_isolated", return_value={}):
             result = asyncio.run(price_service.get_historical_multiple(
                 ["NSE:TIMEOUTTEST"], days=520,
             ))
         self.assertEqual(result["NSE:TIMEOUTTEST"], fallback)
+
+    def test_isolated_bulk_worker_timeout_returns_without_data(self):
+        with patch("price_service.subprocess.run",
+                   side_effect=price_service.subprocess.TimeoutExpired("worker", 75)):
+            result = price_service._fetch_bulk_isolated(
+                [("NSE:TIMEOUTTEST2", "TIMEOUTTEST2.NS")], 520,
+            )
+        self.assertEqual(result, {})
 
     def test_eligibility_enforces_history_price_and_traded_value(self):
         accepted = cfo_engine.eligibility(candles())

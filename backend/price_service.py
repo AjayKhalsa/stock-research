@@ -15,6 +15,9 @@ import json
 import math
 import os
 import re
+import subprocess
+import sys
+import tempfile
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -35,6 +38,49 @@ except Exception as exc:
 _SUFFIX = {"NSE": ".NS", "BSE": ".BO"}
 _REVERSE_SUFFIX = {".NS": "NSE", ".BO": "BSE"}
 BULK_HISTORY_TIMEOUT_SECONDS = 75
+
+
+def _fetch_bulk_isolated(missing: list[tuple[str, str]], days: int) -> dict[str, list]:
+    """Run yfinance bulk download in a process that can be killed on timeout."""
+    input_fd, input_path = tempfile.mkstemp(prefix="stocklens_bulk_", suffix=".json",
+                                            dir=config.DATA_DIR)
+    output_fd, output_path = tempfile.mkstemp(prefix="stocklens_bulk_result_", suffix=".json",
+                                              dir=config.DATA_DIR)
+    os.close(input_fd)
+    os.close(output_fd)
+    try:
+        with open(input_path, "w", encoding="utf-8") as handle:
+            json.dump({"missing": missing, "days": days}, handle)
+        worker = os.path.join(config.BACKEND_DIR, "bulk_history_worker.py")
+        completed = subprocess.run(
+            [sys.executable, worker, input_path, output_path],
+            timeout=BULK_HISTORY_TIMEOUT_SECONDS,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or "").strip().splitlines()
+            print(f"[price_service] isolated bulk fetch failed ({len(missing)} symbols): "
+                  f"{detail[-1] if detail else 'worker exit ' + str(completed.returncode)}")
+            return {}
+        with open(output_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else {}
+    except subprocess.TimeoutExpired:
+        print(f"[price_service] isolated bulk timeout ({len(missing)} symbols); "
+              "worker terminated, continuing with cached coverage")
+        return {}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        print(f"[price_service] isolated bulk error ({len(missing)} symbols): {exc}")
+        return {}
+    finally:
+        for path in (input_path, output_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 def _yf_symbol(instrument: str) -> str:
@@ -354,56 +400,7 @@ async def get_historical_multiple(instruments: list[str], days: int = 300) -> di
     if not missing:
         return out
 
-    def _fetch_bulk() -> dict[str, list]:
-        fetched: dict[str, list] = {}
-        symbols = [yf_symbol for _, yf_symbol in missing]
-        try:
-            end = datetime.now()
-            start = end - timedelta(days=days + 15)
-            frame = yf.download(
-                tickers=" ".join(symbols),
-                start=start,
-                end=end,
-                interval="1d",
-                auto_adjust=True,
-                group_by="ticker",
-                threads=8,
-                progress=False,
-                timeout=15,
-            )
-            if frame is None or frame.empty:
-                return fetched
-
-            for raw, yf_symbol in missing:
-                try:
-                    if len(symbols) == 1:
-                        symbol_frame = frame
-                    elif (getattr(frame.columns, "nlevels", 1) > 1
-                          and yf_symbol in frame.columns.get_level_values(0)):
-                        symbol_frame = frame[yf_symbol]
-                    elif (getattr(frame.columns, "nlevels", 1) > 1
-                          and yf_symbol in frame.columns.get_level_values(1)):
-                        symbol_frame = frame.xs(yf_symbol, axis=1, level=1)
-                    else:
-                        continue
-                    candles = _df_to_candles(symbol_frame)
-                    if candles:
-                        fetched[raw] = candles
-                except Exception:
-                    continue
-        except Exception as exc:
-            print(f"[price_service] bulk historical error ({len(symbols)} symbols): {exc}")
-        return fetched
-
-    try:
-        fresh = await asyncio.wait_for(
-            asyncio.to_thread(_fetch_bulk),
-            timeout=BULK_HISTORY_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        print(f"[price_service] bulk historical timeout ({len(missing)} symbols); "
-              "continuing with cached coverage")
-        fresh = {}
+    fresh = await asyncio.to_thread(_fetch_bulk_isolated, missing, days)
     out.update(fresh)
     for raw, candles in stale_fallback.items():
         out.setdefault(raw, candles)
