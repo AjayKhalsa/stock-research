@@ -332,10 +332,10 @@ All routes are prefixed `/api/`. The personal research reads remain open; daily-
 | Frontend build | Vercel, builds from `main`. `REACT_APP_API_URL` set as a Vercel env var (build-time, requires rebuild to change) |
 | Backend | Render (`render.yaml` blueprint), free web plan, `uvicorn main:app` |
 | Database | `DATABASE_URL` env var on Render → the Supabase session pooler; `DB_POOL_SIZE` defaults to 6 |
-| Secrets | `GEMINI_API_KEY` and `CRON_SECRET_KEY` are set directly in Render; GitHub Actions receives the matching `STOCKLENS_CRON_SECRET` repository secret |
+| Secrets | `GEMINI_API_KEY` is set directly in Render. GitHub Actions uses a short-lived OIDC token restricted to this repository and `main`; `CRON_SECRET_KEY` remains an optional fallback for another scheduler. |
 | CORS | Backend allows any `*.vercel.app` origin plus local dev hosts — no per-deployment CORS config needed |
 
-**To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY`, `DATABASE_URL`, and `CRON_SECRET_KEY` set; deploy `frontend/` to Vercel with `REACT_APP_API_URL` pointed at the backend. Add a GitHub Actions repository secret named `STOCKLENS_CRON_SECRET` with the same value as Render's `CRON_SECRET_KEY`; the weekday workflow starts the all-NSE scan at 07:00 IST. `db.py` speaks standard Postgres via `psycopg` and uses a bounded connection pool in production. Bull AI is not a required backend secret or runtime dependency: approved evidence is normalized into the enrichment store before publication.
+**To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY` and `DATABASE_URL`; deploy `frontend/` to Vercel with `REACT_APP_API_URL` pointed at the backend. The weekday workflow requests a short-lived `stocklens-daily` OIDC token from GitHub and starts the all-NSE scan at 07:00 IST; the backend verifies the token issuer, audience, repository, event and `main` ref. Set `CRON_SECRET_KEY` only if an additional non-GitHub scheduler needs access. `db.py` speaks standard Postgres via `psycopg` and uses a bounded connection pool in production. Bull AI is not a required backend secret or runtime dependency: approved evidence is normalized into the enrichment store before publication.
 
 ---
 

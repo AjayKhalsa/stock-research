@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hmac
+import asyncio
 from typing import Optional
 
+import jwt
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
@@ -14,6 +16,10 @@ import market_pipeline
 import price_service
 
 router = APIRouter()
+
+_GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+_GITHUB_OIDC_JWKS = f"{_GITHUB_OIDC_ISSUER}/.well-known/jwks"
+_github_jwk_client = jwt.PyJWKClient(_GITHUB_OIDC_JWKS, cache_keys=True)
 
 
 class PortfolioSettingsUpdate(BaseModel):
@@ -31,6 +37,36 @@ class PortfolioSettingsUpdate(BaseModel):
 def _feature_enabled() -> None:
     if not config.CFO_WORKSPACE_V1:
         raise HTTPException(status_code=404, detail="CFO workspace is disabled")
+
+
+def _verify_github_oidc(token: str) -> bool:
+    """Accept only GitHub-signed jobs from this repository's main branch."""
+    try:
+        signing_key = _github_jwk_client.get_signing_key_from_jwt(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=config.GITHUB_OIDC_AUDIENCE,
+            issuer=_GITHUB_OIDC_ISSUER,
+            options={"require": ["exp", "iat", "iss", "aud", "repository", "ref"]},
+        )
+    except jwt.PyJWTError:
+        return False
+    return (
+        claims.get("repository") == config.GITHUB_OIDC_REPOSITORY
+        and claims.get("ref") == "refs/heads/main"
+        and claims.get("event_name") in {"schedule", "workflow_dispatch"}
+    )
+
+
+async def _daily_job_authorized(token: str) -> bool:
+    expected = config.CRON_SECRET_KEY.strip()
+    if expected and hmac.compare_digest(token, expected):
+        return True
+    if not token:
+        return False
+    return await asyncio.to_thread(_verify_github_oidc, token)
 
 
 @router.get("/api/morning-brief")
@@ -99,9 +135,8 @@ def daily_status():
 @router.post("/api/jobs/daily/run", status_code=202)
 async def run_daily_job(authorization: Optional[str] = Header(default=None)):
     _feature_enabled()
-    expected = config.CRON_SECRET_KEY.strip()
     supplied = (authorization or "").removeprefix("Bearer ").strip()
-    if not expected or not hmac.compare_digest(supplied, expected):
+    if not await _daily_job_authorized(supplied):
         raise HTTPException(status_code=401, detail="Valid daily-job bearer token required")
     return market_pipeline.start_daily_pipeline()
 

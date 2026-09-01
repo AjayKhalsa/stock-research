@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import cfo_engine  # noqa: E402
 import ai_committee  # noqa: E402
 import db  # noqa: E402
+from routers import cfo_workspace as cfo_router  # noqa: E402
 from main import app  # noqa: E402
 
 
@@ -116,6 +117,32 @@ class CfoWorkspaceApiTests(unittest.TestCase):
     def test_daily_job_is_protected(self):
         response = self.client.post("/api/jobs/daily/run")
         self.assertEqual(response.status_code, 401)
+
+    def test_daily_job_accepts_verified_github_oidc(self):
+        with patch("routers.cfo_workspace._daily_job_authorized",
+                   new=AsyncMock(return_value=True)), \
+             patch("routers.cfo_workspace.market_pipeline.start_daily_pipeline",
+                   return_value={"status": "queued", "id": "job-1"}):
+            response = self.client.post(
+                "/api/jobs/daily/run",
+                headers={"Authorization": "Bearer signed-github-token"},
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["id"], "job-1")
+
+    def test_github_oidc_is_restricted_to_repo_main_and_scheduler_events(self):
+        key = type("SigningKey", (), {"key": "public-key"})()
+        valid_claims = {
+            "repository": "AjayKhalsa/stock-research",
+            "ref": "refs/heads/main",
+            "event_name": "workflow_dispatch",
+        }
+        with patch.object(cfo_router._github_jwk_client, "get_signing_key_from_jwt",
+                          return_value=key), \
+             patch("routers.cfo_workspace.jwt.decode", return_value=valid_claims):
+            self.assertTrue(cfo_router._verify_github_oidc("signed"))
+            valid_claims["ref"] = "refs/heads/untrusted"
+            self.assertFalse(cfo_router._verify_github_oidc("signed"))
 
     def test_snapshot_publish_is_readable_through_new_apis(self):
         candidate = {"symbol": "TCS", "company": "Tata Consultancy Services", "sector": "IT",

@@ -41,8 +41,10 @@ services:
       # unavailable. Render will restart the service instead.
       - key: ALLOW_EPHEMERAL_DB_FALLBACK
         value: false
+      # Optional fallback for a non-GitHub scheduler. The included workflow
+      # authenticates with a short-lived GitHub OIDC token instead.
       - key: CRON_SECRET_KEY
-        sync: false   # same value as GitHub secret STOCKLENS_CRON_SECRET
+        sync: false
       - key: GEMINI_API_KEY
         sync: false   # set the value in the Render dashboard
       - key: PYTHON_VERSION

@@ -11,3 +11,4 @@ pandas>=2.2.0
 yfinance>=0.2.40
 vaderSentiment>=3.3.2
 psycopg[binary,pool]>=3.1.0   # Postgres backend + bounded connection pool
+PyJWT[crypto]>=2.9.0          # Verify short-lived GitHub Actions OIDC job tokens

@@ -7,19 +7,25 @@ on:
     - cron: '30 1 * * 1-5'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Wake backend and start the CFO snapshot pipeline
-        env:
-          CRON_SECRET: ${{ secrets.STOCKLENS_CRON_SECRET }}
         run: |
-          test -n "$CRON_SECRET"
+          OIDC_RESPONSE=$(curl --fail-with-body --show-error --silent \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=stocklens-daily")
+          OIDC_TOKEN=$(printf '%s' "$OIDC_RESPONSE" | python -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+          test -n "$OIDC_TOKEN"
           curl --fail-with-body --show-error --silent \
             --retry 4 --retry-all-errors --retry-delay 15 \
             --max-time 180 \
             -X POST \
-            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
             https://stock-research-vtmf.onrender.com/api/jobs/daily/run
