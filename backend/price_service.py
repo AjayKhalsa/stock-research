@@ -34,6 +34,7 @@ except Exception as exc:
 
 _SUFFIX = {"NSE": ".NS", "BSE": ".BO"}
 _REVERSE_SUFFIX = {".NS": "NSE", ".BO": "BSE"}
+BULK_HISTORY_TIMEOUT_SECONDS = 75
 
 
 def _yf_symbol(instrument: str) -> str:
@@ -338,6 +339,7 @@ async def get_historical_multiple(instruments: list[str], days: int = 300) -> di
 
     now = _time.time()
     out: dict[str, list] = {}
+    stale_fallback: dict[str, list] = {}
     missing: list[tuple[str, str]] = []
     for raw, yf_symbol in unique:
         cached = _HIST_CACHE.get((yf_symbol, days))
@@ -345,6 +347,9 @@ async def get_historical_multiple(instruments: list[str], days: int = 300) -> di
             out[raw] = cached["data"]
         else:
             missing.append((raw, yf_symbol))
+            persisted, _persisted_at = _read_persisted_history(yf_symbol, days)
+            if persisted:
+                stale_fallback[raw] = persisted
 
     if not missing:
         return out
@@ -362,8 +367,9 @@ async def get_historical_multiple(instruments: list[str], days: int = 300) -> di
                 interval="1d",
                 auto_adjust=True,
                 group_by="ticker",
-                threads=True,
+                threads=8,
                 progress=False,
+                timeout=15,
             )
             if frame is None or frame.empty:
                 return fetched
@@ -389,8 +395,18 @@ async def get_historical_multiple(instruments: list[str], days: int = 300) -> di
             print(f"[price_service] bulk historical error ({len(symbols)} symbols): {exc}")
         return fetched
 
-    fresh = await asyncio.to_thread(_fetch_bulk)
+    try:
+        fresh = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_bulk),
+            timeout=BULK_HISTORY_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        print(f"[price_service] bulk historical timeout ({len(missing)} symbols); "
+              "continuing with cached coverage")
+        fresh = {}
     out.update(fresh)
+    for raw, candles in stale_fallback.items():
+        out.setdefault(raw, candles)
     cached_at = _time.time()
     yf_by_raw = dict(missing)
     for raw, candles in fresh.items():

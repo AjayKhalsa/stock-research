@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import cfo_engine  # noqa: E402
 import ai_committee  # noqa: E402
 import db  # noqa: E402
+import price_service  # noqa: E402
 from routers import cfo_workspace as cfo_router  # noqa: E402
 from main import app  # noqa: E402
 
@@ -29,6 +30,17 @@ def candles(count=300, close=100.0, volume=1_000_000):
 
 
 class CfoEngineTests(unittest.TestCase):
+    def test_bulk_history_timeout_falls_back_to_persisted_candles(self):
+        fallback = candles(3)
+        with patch.object(price_service, "_read_persisted_history",
+                          return_value=(fallback, 1)), \
+             patch.object(price_service.asyncio, "to_thread",
+                          new=AsyncMock(side_effect=TimeoutError)):
+            result = asyncio.run(price_service.get_historical_multiple(
+                ["NSE:TIMEOUTTEST"], days=520,
+            ))
+        self.assertEqual(result["NSE:TIMEOUTTEST"], fallback)
+
     def test_eligibility_enforces_history_price_and_traded_value(self):
         accepted = cfo_engine.eligibility(candles())
         self.assertTrue(accepted["eligible"])
