@@ -70,7 +70,10 @@ async def request_observability(request: Request, call_next):
 @app.get("/api/health")
 def health():
     return {"ok": db.ping(), "storage": db.storage_status(), "version": app.version,
-            "features": {"cfo_workspace_v1": config.CFO_WORKSPACE_V1}}
+            "features": {
+                "cfo_workspace_v1": config.CFO_WORKSPACE_V1,
+                "daily_job_auth": ["github_oidc", "shared_secret"],
+            }}
 
 if __name__ == "__main__":
     import uvicorn
