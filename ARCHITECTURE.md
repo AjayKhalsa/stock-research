@@ -116,6 +116,9 @@ success probability.
 Breakout, pullback and trend-continuation quality are evaluated independently.
 Each engine saves its criterion scores and weights in the candidate snapshot;
 the selected engine must still have a real trigger from `decision_engine.py`.
+Candidate dossiers classify known event proximity separately from unknown
+coverage and provide a browser-local position-size calculator. No account value
+is inferred or persisted and the calculator cannot place orders.
 Position sizing is deliberately absent: candidate dossiers show trade
 structure and risk-to-stop, while Portfolio manages exposure limits only. Each
 dossier includes an explicit trust-control panel and an on-demand adjusted

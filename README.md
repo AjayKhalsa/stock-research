@@ -59,7 +59,7 @@ full candles are retained only for the top-150/owned/watched bench. A snapshot
 is held back unless at least half the official universe has 252-session history
 and at least 100 stocks pass the price/liquidity gates.
 
-Swing model `swing-v1.4.0` separates business quality from quarterly earnings
+Swing model `swing-v1.5.0` separates business quality from quarterly earnings
 momentum, labels margin expansion/contraction, measures overhead supply, clear
 air, tradeability and move potential, and derives targets from chart structure
 before calculating reward/risk. Data completeness is shown separately for
@@ -71,3 +71,7 @@ contraction, market breadth and risk-on/risk-off context feed the same auditable
 snapshot. Severe risk-off conditions fail closed for new long entries.
 Breakout, pullback and trend-continuation setups have independent, visible
 scorecards; a strong developing score cannot manufacture a missing trigger.
+Known earnings and corporate events receive an explicit low/medium/high risk
+state while missing calendar coverage remains unverified. The dossier includes
+an optional position-size calculator driven only by the user's portfolio value,
+risk limit, and the model's structural entry/stop.

@@ -208,6 +208,21 @@ class CfoEngineTests(unittest.TestCase):
         self.assertEqual(result["overall"], 100)
         self.assertIn("not win probability", result["meaning"])
 
+    def test_event_risk_distinguishes_unknown_upcoming_and_blocked(self):
+        unknown = cfo_engine.assess_event_risk({}, "2026-09-01")
+        self.assertEqual(unknown["level"], "unknown")
+        self.assertEqual(unknown["coverage"], "unverified")
+        imminent = cfo_engine.assess_event_risk(
+            {"earnings_date": "2026-09-03"}, "2026-09-01",
+        )
+        self.assertEqual(imminent["level"], "high")
+        self.assertTrue(imminent["entry_blocked"])
+        later = cfo_engine.assess_event_risk(
+            {"earnings_date": "2026-09-25"}, "2026-09-01",
+        )
+        self.assertEqual(later["level"], "low")
+        self.assertFalse(later["entry_blocked"])
+
     def test_ready_and_near_entry_states_are_not_hidden_by_early_validation(self):
         swing = {"entry": {"low": 98, "high": 102}, "risk_reward": 1.5,
                  "verdict": "Wait"}

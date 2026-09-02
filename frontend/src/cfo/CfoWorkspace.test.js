@@ -100,6 +100,16 @@ test('reaches a candidate dossier within two interactions', async () => {
   expect(screen.getByRole('button', { name: 'Evidence' })).toBeInTheDocument();
 });
 
+test('calculates position size only after the user supplies portfolio value', async () => {
+  render(<CfoWorkspace />);
+  await screen.findByText(/What looks interesting today/i);
+  fireEvent.click(screen.getByText('Tata Consultancy').closest('button'));
+  await screen.findByText(/Position size from your maximum loss/i);
+  expect(screen.getByText(/enter your portfolio value/i)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText(/Portfolio value/i), { target: { value: '1000000' } });
+  expect(screen.getByText('50', { selector: 'strong' })).toBeInTheDocument();
+});
+
 test('shows a daily chart section without leaving the dossier', async () => {
   render(<CfoWorkspace />);
   await screen.findByText(/What looks interesting today/i);

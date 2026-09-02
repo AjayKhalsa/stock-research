@@ -9,6 +9,7 @@ result later; it never edits these calculations or bypasses a gate.
 from __future__ import annotations
 
 import math
+from datetime import date, datetime, timedelta
 from statistics import median
 from typing import Any, Optional
 
@@ -18,7 +19,7 @@ import quant_engine
 import swing_engine
 import swing_features
 
-MODEL_VERSION = "swing-v1.4.0"
+MODEL_VERSION = "swing-v1.5.0"
 MIN_SESSIONS = 252
 MIN_PRICE = 20.0
 MIN_MEDIAN_TRADED_VALUE = 5_00_00_000.0  # ₹5 crore
@@ -426,6 +427,46 @@ def assess_data_confidence(candles: list[dict], fundamentals: dict,
     }
 
 
+def _sessions_until(raw_date: Any, as_of: Any) -> Optional[int]:
+    try:
+        event = date.fromisoformat(str(raw_date)[:10])
+        cursor = date.fromisoformat(str(as_of)[:10])
+    except (TypeError, ValueError):
+        return None
+    if event < cursor:
+        return None
+    sessions = 0
+    while cursor < event:
+        cursor += timedelta(days=1)
+        if cursor.weekday() < 5:
+            sessions += 1
+    return sessions
+
+
+def assess_event_risk(fundamentals: dict, as_of: Any) -> dict:
+    """Classify only known dated events; unknown coverage stays unknown."""
+    events = []
+    if fundamentals.get("earnings_date"):
+        events.append({"event_type": "earnings", "event_date": fundamentals["earnings_date"],
+                       "severity": "high", "source": "reported earnings calendar"})
+    events.extend(fundamentals.get("company_events") or [])
+    upcoming = []
+    for event in events:
+        sessions = _sessions_until(event.get("event_date") or event.get("date"), as_of)
+        if sessions is not None:
+            upcoming.append({**event, "sessions_away": sessions})
+    upcoming.sort(key=lambda item: item["sessions_away"])
+    if not upcoming:
+        return {"level": "unknown", "coverage": "unverified", "next_event": None,
+                "events": [], "entry_blocked": False}
+    next_event = upcoming[0]
+    critical = str(next_event.get("severity", "")).lower() in {"critical", "severe"}
+    sessions = next_event["sessions_away"]
+    level = "high" if critical or sessions <= 5 else "medium" if sessions <= 15 else "low"
+    return {"level": level, "coverage": "verified", "next_event": next_event,
+            "events": upcoming[:10], "entry_blocked": critical or sessions <= 2}
+
+
 def preliminary_analysis(symbol: str, name: str, candles: list[dict],
                          nifty_candles: Optional[list[dict]] = None) -> dict:
     eligible = eligibility(candles)
@@ -663,6 +704,12 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
     data_confidence = assess_data_confidence(
         candles, fundamentals, fund_meta, cfo, earnings, reconciliation,
     )
+    event_risk = assess_event_risk(
+        fundamentals, official_date or (candles[-1].get("date") if candles else datetime.now().date()),
+    )
+    if event_risk["entry_blocked"] and not results_within_two_sessions:
+        event_name = (event_risk.get("next_event") or {}).get("event_type", "corporate event")
+        hard_blocks.append(f"Entry blocked by imminent {event_name}")
     actionable_data = (
         cfo["completeness"] == "full"
         and earnings["status"] != "unavailable"
@@ -750,6 +797,7 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
             ],
         },
         "results_risk": "blocked" if results_within_two_sessions else "clear_or_unknown",
+        "event_risk": event_risk,
         "hard_blocks": hard_blocks, "evidence": evidence,
         "freshness": fund_meta, "data_completeness": cfo["completeness"],
     }
