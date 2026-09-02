@@ -82,6 +82,9 @@ def parse_screener(html: str) -> dict:
             classification[label] = value
     d["sector"] = classification.get("sector") or classification.get("broad sector")
     d["industry"] = classification.get("industry") or classification.get("broad industry")
+    if d["sector"] or d["industry"]:
+        d["classification_source"] = "screener"
+        d["classification_version"] = 2
 
     # Top ratios
     ratios = soup.find("ul", id="top-ratios")

@@ -347,41 +347,11 @@ def persist_history(instrument: str, days: int, data: list) -> None:
 
 
 async def get_historical(instrument: str, days: int = 300) -> list:
-    sym = _yf_symbol(instrument)
-    key = (sym, days)
-    import time as _time
-    cached = _HIST_CACHE.get(key)
-    if cached and _time.time() - cached["at"] < _HIST_TTL and len(cached["data"]) > 0:
-        return cached["data"]
-    persisted, persisted_at = _read_persisted_history(sym, days)
-    if persisted and _time.time() - persisted_at < _HIST_TTL:
-        _HIST_CACHE[key] = {"at": persisted_at, "data": persisted}
-        return persisted
-
-    def _fetch():
-        try:
-            end   = datetime.now()
-            start = end - timedelta(days=days + 15)   # pad for weekends/holidays
-            # Yahoo's raw daily series is already split/bonus-adjusted;
-            # auto_adjust=True additionally folds dividends in (total-return
-            # series) so ex-dividend price gaps don't distort MAs/RSI/ATR or
-            # falsely trigger stops in the base-rate backtest. The latest
-            # candle always equals the actual traded price.
-            df    = yf.Ticker(sym).history(start=start, end=end, interval="1d", auto_adjust=True)
-            return _df_to_candles(df)
-        except Exception as e:
-            print(f"[price_service] historical error {sym}: {e}")
-            return []
-
-    data = await asyncio.to_thread(_fetch)
-    if data:
-        _HIST_CACHE[key] = {"at": _time.time(), "data": data}
-        persist_history(instrument, days, data)
-    elif cached:
-        return cached["data"]   # stale beats nothing (e.g. rate-limited)
-    elif persisted:
-        return persisted         # durable stale cache beats provider failure
-    return data
+    # Use the same compact chart JSON adapter as the market-wide scan. This is
+    # faster and far less memory-hungry than constructing yfinance/pandas data
+    # frames for a single search result, while retaining cache/stale fallback.
+    result = await get_historical_multiple([instrument], days=days, cache_results=True)
+    return result.get(instrument) or []
 
 
 async def get_historical_multiple(instruments: list[str], days: int = 300,

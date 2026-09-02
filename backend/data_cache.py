@@ -86,10 +86,18 @@ def enrich_with_yf_fundamentals(screener_data: dict, yf_funds: dict) -> dict:
     if not screener_data:
         screener_data = {}
 
-    # Sector/industry classification rides along with the statements
-    for k in ("sector", "industry", "earnings_date"):
-        if yf_funds.get(k):
+    # Prefer the exchange-aligned classification shown by Screener. Yahoo's
+    # global taxonomy is only a fallback and can misclassify Indian financial
+    # infrastructure companies (CAMS was incorrectly labelled Technology).
+    used_yahoo_classification = False
+    for k in ("sector", "industry"):
+        if yf_funds.get(k) and not screener_data.get(k):
             screener_data[k] = yf_funds[k]
+            used_yahoo_classification = True
+    if used_yahoo_classification and not screener_data.get("classification_source"):
+        screener_data["classification_source"] = "yahoo"
+    if yf_funds.get("earnings_date"):
+        screener_data["earnings_date"] = yf_funds["earnings_date"]
 
     bs_by = yf_funds.get("bs_by_year") or {}
     pl_by = yf_funds.get("pl_by_year") or {}
@@ -200,7 +208,9 @@ async def get_fundamentals(symbol: str, exchange: str = "NSE",
 
     cached = db.cache_get(symbol)
     classification_ready = bool(
-        cached and cached["payload"] and cached["payload"].get("sector")
+        cached and cached["payload"]
+        and cached["payload"].get("sector")
+        and cached["payload"].get("classification_version") == 2
     )
     if cached and cached["payload"] and cached["age_seconds"] < ttl * 3600 \
             and (not require_classification or classification_ready):

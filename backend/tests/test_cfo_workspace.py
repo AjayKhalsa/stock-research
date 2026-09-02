@@ -14,6 +14,7 @@ os.environ.setdefault("STOCKLENS_DATA_DIR", tempfile.mkdtemp())
 from fastapi.testclient import TestClient  # noqa: E402
 import cfo_engine  # noqa: E402
 import ai_committee  # noqa: E402
+import data_cache  # noqa: E402
 import db  # noqa: E402
 import price_service  # noqa: E402
 import market_pipeline  # noqa: E402
@@ -130,6 +131,18 @@ class CfoEngineTests(unittest.TestCase):
         """)
         self.assertEqual(parsed["sector"], "Financial Services")
         self.assertEqual(parsed["industry"], "Depositories and Other Intermediaries")
+        self.assertEqual(parsed["classification_source"], "screener")
+        self.assertEqual(parsed["classification_version"], 2)
+
+    def test_screener_sector_is_not_overwritten_by_yahoo_taxonomy(self):
+        result = data_cache.enrich_with_yf_fundamentals(
+            {"sector": "Financial Services", "industry": "Capital Markets",
+             "classification_source": "screener", "classification_version": 2},
+            {"sector": "Technology", "industry": "Software Infrastructure",
+             "bs_by_year": {}, "pl_by_year": {}, "cf_by_year": {}},
+        )
+        self.assertEqual(result["sector"], "Financial Services")
+        self.assertEqual(result["industry"], "Capital Markets")
 
     def test_daily_pipeline_requires_majority_price_history_coverage(self):
         self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_RATIO, 0.50)

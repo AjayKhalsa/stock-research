@@ -1,4 +1,4 @@
-name: Daily StockLens CFO snapshot
+name: Daily StockLens swing snapshot
 
 on:
   schedule:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Wake backend and start the CFO snapshot pipeline
+      - name: Wake backend and start the morning snapshot pipeline
         env:
           GITHUB_JOB_TOKEN: ${{ github.token }}
           GITHUB_RUN_IDENTIFIER: ${{ github.run_id }}
