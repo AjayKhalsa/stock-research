@@ -113,6 +113,95 @@ def assess_volatility_contraction(candles: list[dict]) -> dict:
     }
 
 
+def _scorecard(criteria: list[tuple[str, float, float, str]]) -> dict:
+    score = sum(_clamp(value) * weight for _, value, weight, _ in criteria)
+    return {
+        "score": round(_clamp(score), 1),
+        "criteria": [
+            {"name": name, "score": round(_clamp(value), 1),
+             "weight": weight, "detail": detail}
+            for name, value, weight, detail in criteria
+        ],
+    }
+
+
+def assess_setup_engines(candles: list[dict], detected_setup: str, factors: dict,
+                         price_action: dict, relative_strength: dict,
+                         volume: dict, supply: dict, tradeability: dict,
+                         contraction: dict, market_score: float) -> dict:
+    """Independent quality models for breakout, pullback, and continuation."""
+    price = _number(factors.get("price")) or 0
+    atr = _number(factors.get("atr")) or 0
+    rsi = _number(factors.get("rsi"))
+    trend = factors.get("trend_score", 0)
+    signals = price_action.get("signals") or price_action
+    close_range = ((signals.get("close_range") or {}).get("last"))
+    pullback_volume = (signals.get("pullback_volume") or {}).get("state")
+    rvol = volume.get("metrics", {}).get("rvol")
+    zones = resistance_zones(candles)
+    nearby_resistance = [zone for zone in zones if price and abs(zone["mid"] / price - 1) <= 0.05]
+    resistance_score = 100 if nearby_resistance else 35
+    resistance_distance_atr = (min(abs(zone["mid"] - price) for zone in nearby_resistance) / atr
+                               if nearby_resistance and atr else None)
+    extension_score = (_clamp(100 - resistance_distance_atr * 25)
+                       if resistance_distance_atr is not None else 55)
+    close_score = _clamp((close_range if close_range is not None else 0.5) * 100)
+    rvol_score = _clamp(35 + ((rvol or 1) - 1) * 45)
+    rs_score = relative_strength.get("score", 0)
+    market_score = _clamp(market_score)
+
+    breakout = _scorecard([
+        ("identifiable resistance", resistance_score, 0.14,
+         f"{len(nearby_resistance)} nearby historical zone(s)"),
+        ("prior contraction", contraction.get("score", 0), 0.13, contraction.get("status", "unknown")),
+        ("breakout trigger", 100 if detected_setup == "breakout" else 25, 0.14,
+         "confirmed" if detected_setup == "breakout" else "not confirmed"),
+        ("candle quality", close_score, 0.10, f"close-range {close_range}"),
+        ("relative volume", rvol_score, 0.12, f"RVOL {rvol}"),
+        ("entry extension", extension_score, 0.08, "distance from current trigger context"),
+        ("clear air", supply.get("score", 0), 0.11, supply.get("severity", "unknown")),
+        ("relative strength", rs_score, 0.10, "multi-horizon vs NIFTY 50"),
+        ("market regime", market_score, 0.08, "long-side market support"),
+    ])
+
+    rsi_score = 100 if rsi is not None and 38 <= rsi <= 58 else 55 if rsi is not None and 32 <= rsi <= 65 else 20
+    pullback_volume_score = 100 if pullback_volume == "dry_up" else 35 if pullback_volume == "expansion" else 55
+    pullback = _scorecard([
+        ("existing uptrend", 100 if trend >= 1 else 10, 0.18, f"trend score {trend}"),
+        ("support test", 100 if detected_setup == "pullback" else 35, 0.15,
+         "confirmed" if detected_setup == "pullback" else "not confirmed"),
+        ("controlled retracement", rsi_score, 0.14, f"RSI {rsi}"),
+        ("declining pullback volume", pullback_volume_score, 0.12, pullback_volume or "unknown"),
+        ("relative strength", rs_score, 0.13, "multi-horizon vs NIFTY 50"),
+        ("reversal trigger", close_score, 0.10, f"close-range {close_range}"),
+        ("structural integrity", 100 if trend >= 0 else 0, 0.10, "trend remains intact" if trend >= 0 else "damaged"),
+        ("market regime", market_score, 0.08, "long-side market support"),
+    ])
+
+    continuation = _scorecard([
+        ("higher trend structure", 100 if trend == 2 else 60 if trend == 1 else 10, 0.20,
+         f"trend score {trend}"),
+        ("clean price path", tradeability.get("score", 0), 0.15, tradeability.get("label", "unknown")),
+        ("relative strength", rs_score, 0.15, "multi-horizon vs NIFTY 50"),
+        ("volume participation", volume.get("score", 0), 0.10, f"RVOL {rvol}"),
+        ("controlled pause", contraction.get("score", 0), 0.12, contraction.get("status", "unknown")),
+        ("clear air", supply.get("score", 0), 0.13, supply.get("severity", "unknown")),
+        ("momentum sanity", 100 if rsi is not None and 48 <= rsi <= 70 else 35, 0.08, f"RSI {rsi}"),
+        ("market regime", market_score, 0.07, "long-side market support"),
+    ])
+
+    engines = {"breakout": breakout, "pullback": pullback,
+               "trend_continuation": continuation}
+    if detected_setup in engines:
+        selected_name = detected_setup
+        selected = engines[selected_name]
+    else:
+        selected_name, best = max(engines.items(), key=lambda item: item[1]["score"])
+        selected = {**best, "score": round(best["score"] * 0.75, 1),
+                    "developing": True}
+    return {**engines, "selected": {"name": selected_name, **selected}}
+
+
 def resistance_zones(candles: list[dict], span: int = 4,
                      cluster_pct: float = 1.5) -> list[dict]:
     """Cluster historical pivot highs without misclassifying them as support."""

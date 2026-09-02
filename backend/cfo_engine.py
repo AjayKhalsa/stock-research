@@ -18,7 +18,7 @@ import quant_engine
 import swing_engine
 import swing_features
 
-MODEL_VERSION = "swing-v1.3.0"
+MODEL_VERSION = "swing-v1.4.0"
 MIN_SESSIONS = 252
 MIN_PRICE = 20.0
 MIN_MEDIAN_TRADED_VALUE = 5_00_00_000.0  # ₹5 crore
@@ -590,10 +590,12 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
     contraction = swing_features.assess_volatility_contraction(candles)
     relative_strength = preliminary.get("relative_strength") or \
         swing_features.assess_relative_strength(candles, [])
+    setup_engines = swing_features.assess_setup_engines(
+        candles, setup.get("setup"), factors, pa, relative_strength, volume,
+        supply, tradeability, contraction, market_regime_score,
+    )
     components = {
-        "setup": _setup_component(
-            setup, factors, relative_strength, volume, supply, contraction,
-        ),
+        "setup": setup_engines["selected"]["score"],
         "relative_strength": relative_strength["score"],
         "volume": volume["score"],
         "business_quality": cfo["score"],
@@ -728,6 +730,7 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
         "overhead_supply": supply, "tradeability": tradeability,
         "move_potential": move_potential, "relative_strength": relative_strength,
         "volume": volume, "volatility_contraction": contraction,
+        "setup_engines": setup_engines,
         "entry_extension": entry_extension,
         "technicals": factors, "price_action": pa, "penalties": penalties,
         "trade_plan": {"entry": entry, "stop": stop, "targets": targets,

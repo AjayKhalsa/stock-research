@@ -205,6 +205,16 @@
 .cfo-target-line:last-child { margin-bottom: 0; }
 .cfo-target-line small { color: var(--cfo-muted); font-weight: 500; }
 .cfo-explanation-grid { margin-top: 16px; }
+.cfo-setup-scorecards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.cfo-setup-scorecards article { padding: 15px; background: #f8f9fb; border: 1px solid var(--cfo-line); border-radius: 9px; }
+.cfo-setup-scorecards article.active { border-color: var(--cfo-indigo); box-shadow: inset 0 0 0 1px var(--cfo-indigo); }
+.cfo-setup-scorecards article > span { color: var(--cfo-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.cfo-setup-scorecards article > strong { margin: 7px 0 10px; display: block; font: 750 28px var(--font-mono); }
+.cfo-setup-scorecards article > strong small { color: var(--cfo-muted); font-size: 11px; }
+.cfo-setup-scorecards ul { margin: 0; padding: 0; list-style: none; }
+.cfo-setup-scorecards li { padding: 7px 0; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; border-top: 1px solid #e5e8ed; }
+.cfo-setup-scorecards li b, .cfo-setup-scorecards li span { font-size: 10px; }
+.cfo-setup-scorecards li small { grid-column: 1 / -1; color: var(--cfo-muted); }
 .cfo-trust-score { margin: 16px 0; padding: 14px; display: flex; align-items: center; gap: 14px; background: #f7f8fa; border: 1px solid var(--cfo-line); border-radius: 9px; }
 .cfo-trust-score > strong { font: 750 32px/1 var(--font-mono); }
 .cfo-trust-score > strong span { color: var(--cfo-muted); font-size: 13px; }
@@ -396,6 +406,7 @@
   .cfo-definition > div { grid-template-columns: 95px minmax(0,1fr); }
   .cfo-settings { grid-template-columns: 1fr; }
   .cfo-evidence-cards, .cfo-evidence-lists { grid-template-columns: 1fr; }
+  .cfo-setup-scorecards { grid-template-columns: 1fr; }
   .cfo-settings .cfo-section-head, .cfo-settings .cfo-primary { grid-column: auto; }
   .cfo-provider-grid { grid-template-columns: 1fr; }
   .cfo-research-embed { height: auto; min-height: calc(100vh - 130px); overflow: visible; }

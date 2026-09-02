@@ -178,6 +178,24 @@ class CfoEngineTests(unittest.TestCase):
         self.assertGreater(volume["metrics"]["rvol"], 1)
         self.assertIn(contraction["status"], {"contracting", "mild", "not_contracting"})
 
+    def test_setup_types_have_independent_auditable_scorecards(self):
+        history = candles()
+        engines = cfo_engine.swing_features.assess_setup_engines(
+            history, "pullback", {"price": history[-1]["close"], "atr": 2,
+                                  "rsi": 49, "trend_score": 2},
+            {"signals": {"close_range": {"last": .75},
+                         "pullback_volume": {"state": "dry_up"}}},
+            {"score": 75}, {"score": 70, "metrics": {"rvol": 1.4}},
+            {"score": 80, "severity": "acceptable"},
+            {"score": 72, "label": "Clean"},
+            {"score": 65, "status": "contracting"}, 85,
+        )
+        self.assertEqual(engines["selected"]["name"], "pullback")
+        self.assertEqual(set(engines) - {"selected"},
+                         {"breakout", "pullback", "trend_continuation"})
+        for name in ("breakout", "pullback", "trend_continuation"):
+            self.assertAlmostEqual(sum(item["weight"] for item in engines[name]["criteria"]), 1.0)
+
     def test_data_confidence_is_explicitly_not_win_probability(self):
         cfo = {"completeness": "full", "metrics": {
             "roe": 18, "roce": 20, "cfo_pat": 1.1, "debt_to_equity": 0.3,

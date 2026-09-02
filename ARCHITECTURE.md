@@ -112,6 +112,10 @@ overhead supply, extreme entry extension, near-term results, and very erratic
 price behaviour. AI may explain or downgrade only. Data completeness is split
 by price, financial, event and AI-extraction evidence and is never called a
 success probability.
+
+Breakout, pullback and trend-continuation quality are evaluated independently.
+Each engine saves its criterion scores and weights in the candidate snapshot;
+the selected engine must still have a real trigger from `decision_engine.py`.
 Position sizing is deliberately absent: candidate dossiers show trade
 structure and risk-to-stop, while Portfolio manages exposure limits only. Each
 dossier includes an explicit trust-control panel and an on-demand adjusted

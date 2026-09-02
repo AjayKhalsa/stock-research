@@ -46,6 +46,10 @@ beforeEach(() => {
     earnings_momentum: { score: 84, coverage: 90, status: 'full', margin_direction: 'expansion',
       metrics: { revenue_growth_yoy: 20, revenue_growth_qoq: 5, ebitda_growth_yoy: 28,
         pat_growth_yoy: 32, ebitda_margin_change_yoy: 1.5, pat_margin_change_yoy: 1.2 }, cautions: [] },
+    setup_engines: { selected: { name: 'pullback' },
+      breakout: { score: 61, criteria: [] },
+      pullback: { score: 82, criteria: [{ name: 'existing uptrend', score: 100, weight: .18, detail: 'trend score 2' }] },
+      trend_continuation: { score: 74, criteria: [] } },
     evidence: { price: { source: 'NSE + Yahoo', status: 'matched' }, model: { version: 'cfo-v1' }, ai_committee: { status: 'not_run' } },
     daily_history: [], trust: { price: 'pass', financials: 'pass', cfo_gate: 'pass',
       results: 'caution', historical_validation: 'early', external_evidence: 'pass' },
@@ -104,6 +108,7 @@ test('shows a daily chart section without leaving the dossier', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Chart' }));
   expect(screen.getByText(/What the chart is doing/i)).toBeInTheDocument();
   expect(screen.getByText(/Daily chart is temporarily unavailable/i)).toBeInTheDocument();
+  expect(screen.getByText(/Independent setup engines/i)).toBeInTheDocument();
 });
 
 test('shows source-backed Bull AI evidence without changing the score', async () => {
