@@ -384,6 +384,15 @@ class CfoWorkspaceApiTests(unittest.TestCase):
             {"published_at": "now", "candidates": [candidate], "sectors": [sector]},
             [candidate], [sector], model_version="test-v1", trading_date="2026-08-29",
         )
+        review = self.client.post("/api/human-reviews", json={
+            "snapshot_id": snapshot_id, "symbol": "TCS",
+            "assessment": "TOO_OPTIMISTIC",
+            "notes": "Supply above the entry looks heavier than the score suggests",
+        })
+        self.assertEqual(review.status_code, 200)
+        self.assertEqual(review.json()["model_version"], "test-v1")
+        self.assertEqual(review.json()["recommendation_action"], "WATCH")
+        self.assertEqual(review.json()["score_at_review"], 70.0)
         morning = self.client.get("/api/morning-brief")
         self.assertEqual(morning.status_code, 200)
         self.assertEqual(morning.json()["snapshot_id"], snapshot_id)
@@ -391,12 +400,27 @@ class CfoWorkspaceApiTests(unittest.TestCase):
                    new=AsyncMock(return_value=candles(8))):
             detail = self.client.get("/api/candidates/TCS")
         self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["snapshot_id"], snapshot_id)
         self.assertNotIn("position_size", detail.json())
         self.assertEqual(len(detail.json()["daily_history"]), 8)
         self.assertIn("trust", detail.json())
         self.assertIn("external_research", detail.json())
+        self.assertEqual(detail.json()["human_reviews"][0]["assessment"], "TOO_OPTIMISTIC")
         self.assertGreaterEqual(morning.json()["external_enrichment"]["covered"], 3)
         self.assertEqual(self.client.get("/api/sectors/IT").status_code, 200)
+
+        history = self.client.get(
+            "/api/human-reviews/TCS", params={"snapshot_id": snapshot_id},
+        )
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(history.json()[0]["snapshot_id"], snapshot_id)
+
+    def test_human_review_rejects_unknown_recommendation_snapshot(self):
+        response = self.client.post("/api/human-reviews", json={
+            "snapshot_id": "missing-snapshot", "symbol": "TCS",
+            "assessment": "AGREE", "notes": "",
+        })
+        self.assertEqual(response.status_code, 404)
 
     def test_any_eligible_nse_stock_can_be_analysed_on_demand(self):
         history = candles()

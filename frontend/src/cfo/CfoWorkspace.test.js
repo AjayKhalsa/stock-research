@@ -11,6 +11,7 @@ jest.mock('../api', () => ({
   getSectorSnapshot: jest.fn(),
   getCandidateAnalysis: jest.fn(),
   updatePortfolioSettings: jest.fn(),
+  createHumanReview: jest.fn(),
   searchInstruments: jest.fn(() => Promise.resolve([])),
   resolveSymbols: jest.fn(() => Promise.resolve([])),
   createPaperTrade: jest.fn(),
@@ -42,8 +43,11 @@ beforeEach(() => {
     max_portfolio_heat_pct: 6, max_open_positions: 8 });
   api.getWatchlist.mockResolvedValue([]);
   api.createPaperTrade.mockResolvedValue({ id: 1, status: 'ARMED' });
+  api.createHumanReview.mockResolvedValue({ id: 7, assessment: 'TOO_OPTIMISTIC',
+    notes: 'Supply is heavier', model_version: 'cfo-v1' });
   api.getSectorSnapshot.mockResolvedValue({ ...brief.sectors[0], candidates: brief.candidates });
-  api.getCandidateAnalysis.mockResolvedValue({ ...brief.candidates[0], cfo: { score: 76, gate: 'pass', metrics: {} },
+  api.getCandidateAnalysis.mockResolvedValue({ ...brief.candidates[0], snapshot_id: 'snapshot-test-1',
+    human_reviews: [], cfo: { score: 76, gate: 'pass', metrics: {} },
     classification: 'Developing', data_confidence: { overall: 82, price_data: 100, financial_data: 78, event_data: 55, ai_extraction: null },
     earnings_momentum: { score: 84, coverage: 90, status: 'full', margin_direction: 'expansion',
       metrics: { revenue_growth_yoy: 20, revenue_growth_qoq: 5, ebitda_growth_yoy: 28,
@@ -116,6 +120,23 @@ test('calculates position size only after the user supplies portfolio value', as
     target_t1: 4150, action_at_add: 'WAIT_FOR_ENTRY',
   })));
   expect(await screen.findByText(/Daily candles will determine/i)).toBeInTheDocument();
+});
+
+test('stores human judgment against the exact recommendation snapshot', async () => {
+  render(<CfoWorkspace />);
+  await screen.findByText(/What looks interesting today/i);
+  fireEvent.click(screen.getByText('Tata Consultancy').closest('button'));
+  await screen.findByText(/What did the model get right or wrong/i);
+  fireEvent.click(screen.getByRole('button', { name: /Too optimistic/i }));
+  fireEvent.change(screen.getByLabelText(/Review note/i), {
+    target: { value: 'Supply is heavier' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /Save review/i }));
+  await waitFor(() => expect(api.createHumanReview).toHaveBeenCalledWith({
+    snapshot_id: 'snapshot-test-1', symbol: 'TCS',
+    assessment: 'TOO_OPTIMISTIC', notes: 'Supply is heavier',
+  }));
+  expect(await screen.findByText(/Review saved against this exact recommendation snapshot/i)).toBeInTheDocument();
 });
 
 test('shows armed entries and active trades as distinct open paper tests', async () => {

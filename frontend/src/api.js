@@ -91,3 +91,8 @@ export const getCandidateAnalysis = (symbol) => API.get(`/api/candidates/${pathS
 export const getDailyJobStatus = () => API.get('/api/jobs/daily/status').then(r => r.data);
 export const getPortfolioSettings = () => API.get('/api/portfolio/settings').then(r => r.data);
 export const updatePortfolioSettings = (settings) => API.put('/api/portfolio/settings', settings).then(r => r.data);
+export const createHumanReview = (review) => API.post('/api/human-reviews', review).then(r => r.data);
+export const getHumanReviews = (symbol, snapshotId) => API.get(
+  `/api/human-reviews/${pathSymbol(symbol)}`,
+  { params: snapshotId ? { snapshot_id: snapshotId } : {} },
+).then(r => r.data);

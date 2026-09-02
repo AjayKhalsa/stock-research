@@ -269,6 +269,20 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     closed_at     REAL
 );
 
+CREATE TABLE IF NOT EXISTS human_reviews (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id           TEXT NOT NULL,
+    symbol                TEXT NOT NULL,
+    model_version         TEXT NOT NULL,
+    recommendation_action TEXT NOT NULL,
+    score_at_review       REAL,
+    assessment            TEXT NOT NULL,
+    notes                 TEXT,
+    created_at            REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_human_reviews_candidate
+    ON human_reviews(snapshot_id, symbol, created_at);
+
 CREATE TABLE IF NOT EXISTS candidate_enrichments (
     symbol       TEXT NOT NULL,
     provider     TEXT NOT NULL,
@@ -437,6 +451,20 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     opened_at     DOUBLE PRECISION NOT NULL,
     closed_at     DOUBLE PRECISION
 );
+
+CREATE TABLE IF NOT EXISTS human_reviews (
+    id                    BIGSERIAL PRIMARY KEY,
+    snapshot_id           TEXT NOT NULL,
+    symbol                TEXT NOT NULL,
+    model_version         TEXT NOT NULL,
+    recommendation_action TEXT NOT NULL,
+    score_at_review       DOUBLE PRECISION,
+    assessment            TEXT NOT NULL,
+    notes                 TEXT,
+    created_at            DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_human_reviews_candidate
+    ON human_reviews(snapshot_id, symbol, created_at);
 
 CREATE TABLE IF NOT EXISTS candidate_enrichments (
     symbol       TEXT NOT NULL,
@@ -913,6 +941,55 @@ def candidate_analysis(symbol: str, snapshot_id: Optional[str] = None) -> Option
             (snapshot_id, symbol.upper()),
         ).fetchone()
     return _loads_payload(row["payload"], {}) if row else None
+
+
+def human_review_add(snapshot_id: str, symbol: str, assessment: str,
+                     notes: str = "") -> Optional[dict]:
+    """Append an immutable review tied to the exact recommendation row."""
+    now = time.time()
+    with _conn() as c:
+        recommendation = c.execute(_sql(
+            "SELECT ca.action, ca.score, snapshots.model_version "
+            "FROM candidate_analyses ca JOIN analysis_snapshots snapshots "
+            "ON snapshots.id = ca.snapshot_id "
+            "WHERE ca.snapshot_id = ? AND ca.symbol = ?"
+        ), (snapshot_id, symbol.upper())).fetchone()
+        if not recommendation:
+            return None
+        row = c.execute(_sql(
+            "INSERT INTO human_reviews(snapshot_id, symbol, model_version, "
+            "recommendation_action, score_at_review, assessment, notes, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?) RETURNING *"
+        ), (snapshot_id, symbol.upper(), recommendation["model_version"],
+            recommendation["action"], recommendation["score"], assessment,
+            notes, now)).fetchone()
+    result = dict(row)
+    if result.get("score_at_review") is not None:
+        result["score_at_review"] = float(result["score_at_review"])
+    return result
+
+
+def human_reviews(symbol: str, snapshot_id: Optional[str] = None,
+                  limit: int = 50) -> list[dict]:
+    safe_limit = max(1, min(int(limit), 200))
+    params: tuple = (symbol.upper(),)
+    where = "symbol = ?"
+    if snapshot_id:
+        where += " AND snapshot_id = ?"
+        params += (snapshot_id,)
+    params += (safe_limit,)
+    with _conn() as c:
+        rows = c.execute(_sql(
+            f"SELECT * FROM human_reviews WHERE {where} "
+            "ORDER BY created_at DESC, id DESC LIMIT ?"
+        ), params).fetchall()
+    output = []
+    for row in rows:
+        item = dict(row)
+        if item.get("score_at_review") is not None:
+            item["score_at_review"] = float(item["score_at_review"])
+        output.append(item)
+    return output
 
 
 _ENRICHMENT_SEED_PATH = os.path.join(os.path.dirname(__file__), "seed", "bull_ai_enrichment.json")

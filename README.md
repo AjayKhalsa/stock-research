@@ -84,3 +84,8 @@ are excluded instead of inventing an intraday path. Each result retains its
 snapshot/model version, realized R, exit price/date, and maximum favorable and
 adverse excursion; the scorecard keeps exclusions separate from resolved
 outcomes.
+
+Ranked dossiers also accept a structured human review—looks right, too
+optimistic, too conservative, or data issue—with an optional note. Reviews are
+append-only and retain the exact snapshot, model version, action, and score;
+they do not alter the live rank.

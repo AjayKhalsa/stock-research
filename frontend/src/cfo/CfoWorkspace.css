@@ -220,6 +220,15 @@
 .cfo-position-inputs label { display: grid; gap: 6px; color: var(--cfo-muted); font-size: 11px; }
 .cfo-position-inputs input { height: 44px; padding: 0 11px; color: #20283a; background: #f8f9fa; border: 1px solid #dfe3e8; border-radius: 8px; font-family: var(--font-mono); }
 .cfo-success { margin-top: 10px; color: #176d4c; }
+.cfo-human-review { margin-top: 16px; }
+.cfo-review-choices { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+.cfo-review-choices button { min-height: 38px; padding: 0 13px; color: #46516a; background: #f7f8fa; border: 1px solid #dfe3e8; border-radius: 8px; cursor: pointer; font-weight: 650; }
+.cfo-review-choices button.active { color: #fff; background: var(--cfo-indigo); border-color: var(--cfo-indigo); }
+.cfo-human-review > label { margin-top: 14px; display: grid; gap: 6px; color: var(--cfo-muted); font-size: 11px; }
+.cfo-human-review textarea { min-height: 84px; padding: 10px 11px; resize: vertical; color: #20283a; background: #f8f9fa; border: 1px solid #dfe3e8; border-radius: 8px; font: inherit; }
+.cfo-human-review .cfo-primary:disabled { opacity: .5; cursor: not-allowed; }
+.cfo-review-latest { margin-top: 16px; padding-top: 13px; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: center; border-top: 1px solid var(--cfo-line); }
+.cfo-review-latest small { grid-column: 2; color: var(--cfo-muted); }
 .cfo-trust-score { margin: 16px 0; padding: 14px; display: flex; align-items: center; gap: 14px; background: #f7f8fa; border: 1px solid var(--cfo-line); border-radius: 9px; }
 .cfo-trust-score > strong { font: 750 32px/1 var(--font-mono); }
 .cfo-trust-score > strong span { color: var(--cfo-muted); font-size: 13px; }

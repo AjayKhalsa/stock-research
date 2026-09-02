@@ -133,6 +133,10 @@ entry/stop or entry/target conflict becomes `AMBIGUOUS`. Terminal rows record
 realized R, exit price/date, MFE and MAE. Scorecard win rate and expectancy use
 resolved outcomes only; expired, invalidated and ambiguous cases remain visible
 as exclusions rather than being recast as wins or losses.
+Human reviews are append-only observations linked to the exact candidate and
+snapshot. The server copies the model version, recommendation action, and score
+from the stored recommendation rather than accepting those audit fields from
+the browser, and feedback has no immediate score effect.
 
 Bull AI enrichment appears only in the Evidence tab and in snapshot coverage
 metadata. It is a bounded, supplementary research layer: records retain source

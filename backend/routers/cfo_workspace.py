@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException
@@ -32,6 +32,13 @@ class PortfolioSettingsUpdate(BaseModel):
     t1_r: Optional[float] = Field(None, ge=1, le=5)
     t2_r: Optional[float] = Field(None, ge=1, le=8)
     time_stop_sessions: Optional[int] = Field(None, ge=5, le=120)
+
+
+class HumanReviewCreate(BaseModel):
+    snapshot_id: str = Field(min_length=8, max_length=100)
+    symbol: str = Field(min_length=1, max_length=20)
+    assessment: Literal["AGREE", "TOO_OPTIMISTIC", "TOO_CONSERVATIVE", "DATA_ISSUE"]
+    notes: str = Field(default="", max_length=2000)
 
 
 def _feature_enabled() -> None:
@@ -125,7 +132,9 @@ def sector_detail(sector: str):
 async def candidate_detail(symbol: str):
     _feature_enabled()
     symbol = symbol.upper().strip()
-    item = db.candidate_analysis(symbol)
+    latest_snapshot = db.latest_analysis_snapshot() or {}
+    snapshot_id = latest_snapshot.get("snapshot_id")
+    item = db.candidate_analysis(symbol, snapshot_id)
     if not item:
         resolved = await symbol_resolver.resolve_one(symbol)
         if not resolved.get("symbol"):
@@ -176,8 +185,8 @@ async def candidate_detail(symbol: str):
             "label": f"Ranked #{item.get('global_rank')} in today's Top 100",
         }
         candles = await price_service.get_historical(f"NSE:{symbol}", days=520)
-    latest_snapshot = db.latest_analysis_snapshot() or {}
-    item["snapshot_id"] = latest_snapshot.get("snapshot_id") if item["universe_membership"]["ranked"] else None
+    item["snapshot_id"] = snapshot_id if item["universe_membership"]["ranked"] else None
+    item["human_reviews"] = db.human_reviews(symbol, item["snapshot_id"]) if item["snapshot_id"] else []
     item["daily_history"] = candles[-252:]
     item["external_research"] = db.candidate_enrichments(symbol)
     price_status = item.get("evidence", {}).get("price", {}).get("status") or "unknown"
@@ -193,6 +202,27 @@ async def candidate_detail(symbol: str):
         "external_evidence": "pass" if item["external_research"] else "not_covered",
     }
     return item
+
+
+@router.post("/api/human-reviews")
+def create_human_review(body: HumanReviewCreate):
+    _feature_enabled()
+    review = db.human_review_add(
+        body.snapshot_id.strip(), body.symbol.strip(), body.assessment,
+        body.notes.strip(),
+    )
+    if not review:
+        raise HTTPException(
+            status_code=404,
+            detail="The exact recommendation snapshot is no longer available",
+        )
+    return review
+
+
+@router.get("/api/human-reviews/{symbol}")
+def list_human_reviews(symbol: str, snapshot_id: Optional[str] = None, limit: int = 50):
+    _feature_enabled()
+    return db.human_reviews(symbol.strip(), snapshot_id, limit)
 
 
 @router.get("/api/jobs/daily/status")

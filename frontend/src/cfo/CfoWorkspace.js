@@ -5,7 +5,7 @@ import { PriceChart } from '../components/OverviewCard';
 import {
   getCandidateAnalysis, getDailyJobStatus, getMorningBrief,
   getPaperTradeSnapshot, getPortfolioSettings, getSectorSnapshot,
-  getWatchlist, updatePortfolioSettings, createPaperTrade,
+  getWatchlist, updatePortfolioSettings, createPaperTrade, createHumanReview,
 } from '../api';
 import './CfoWorkspace.css';
 
@@ -227,6 +227,50 @@ function PositionSizeCalculator({ plan, data, defaultRisk = 0.5 }) {
   return <section className="cfo-panel cfo-position-calc"><SectionHeader eyebrow="Optional risk calculator" title="Position size from your maximum loss" detail="Your inputs stay in this view. The app does not guess your capital or place an order." /><div className="cfo-position-inputs"><label>Portfolio value (₹)<input aria-label="Portfolio value" type="number" min="0" step="1000" value={portfolioValue} onChange={e => setPortfolioValue(e.target.value)} placeholder="10,00,000" /></label><label>Maximum risk (%)<input aria-label="Maximum risk percentage" type="number" min="0.1" max="2" step="0.05" value={riskPct} onChange={e => setRiskPct(e.target.value)} /></label></div><div className="cfo-summary-strip"><Metric label="Planned entry" value={money(entry)} /><Metric label="Risk per share" value={riskPerShare > 0 ? money(riskPerShare) : '—'} /><Metric label="Maximum loss" value={maxLoss == null ? '—' : money(maxLoss)} /><Metric label="Maximum quantity" value={quantity == null ? '—' : quantity.toLocaleString('en-IN')} note={quantity != null ? `about ${money(quantity * entry)} exposure` : 'enter your portfolio value'} /></div>{riskPerShare != null && riskPerShare <= 0 && <p className="cfo-error">The stop must be below the entry before position size can be calculated.</p>}<button className="cfo-primary" disabled={!canTrack || tracking} onClick={trackPlan}>{tracking ? 'Arming…' : 'Track this setup on paper'}</button>{trackingState && <p className={trackingState.startsWith('Armed') ? 'cfo-success' : 'cfo-error'}>{trackingState}</p>}</section>;
 }
 
+const REVIEW_CHOICES = [
+  ['AGREE', 'Looks right'],
+  ['TOO_OPTIMISTIC', 'Too optimistic'],
+  ['TOO_CONSERVATIVE', 'Too conservative'],
+  ['DATA_ISSUE', 'Data issue'],
+];
+
+function HumanReviewPanel({ data }) {
+  const [assessment, setAssessment] = useState('');
+  const [notes, setNotes] = useState('');
+  const [reviews, setReviews] = useState(data?.human_reviews || []);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    setAssessment(''); setNotes(''); setMessage('');
+    setReviews(data?.human_reviews || []);
+  }, [data?.symbol, data?.snapshot_id, data?.human_reviews]);
+  if (!data?.snapshot_id) return null;
+  const saveReview = async event => {
+    event.preventDefault();
+    if (!assessment) return;
+    setSaving(true); setMessage('');
+    try {
+      const saved = await createHumanReview({
+        snapshot_id: data.snapshot_id, symbol: data.symbol, assessment, notes,
+      });
+      setReviews(current => [saved, ...current]);
+      setMessage('Review saved against this exact recommendation snapshot.');
+      setAssessment(''); setNotes('');
+    } catch (error) {
+      setMessage(error?.response?.data?.detail || 'Could not save this review.');
+    } finally { setSaving(false); }
+  };
+  const latest = reviews[0];
+  return <form className="cfo-panel cfo-human-review" onSubmit={saveReview}>
+    <SectionHeader eyebrow="Human review" title="What did the model get right or wrong?" detail="Feedback is stored with this exact snapshot, score, action, and model version. It never changes today’s ranking." />
+    <div className="cfo-review-choices">{REVIEW_CHOICES.map(([value, label]) => <button key={value} type="button" className={assessment === value ? 'active' : ''} onClick={() => setAssessment(value)}>{label}</button>)}</div>
+    <label>Optional note<textarea aria-label="Review note" maxLength="2000" value={notes} onChange={event => setNotes(event.target.value)} placeholder="What evidence or behavior should be checked later?" /></label>
+    <button className="cfo-primary" type="submit" disabled={!assessment || saving}>{saving ? 'Saving…' : 'Save review'}</button>
+    {message && <p className={message.startsWith('Review saved') ? 'cfo-success' : 'cfo-error'}>{message}</p>}
+    {latest && <div className="cfo-review-latest"><StatusPill value="neutral">Previous review</StatusPill><strong>{REVIEW_CHOICES.find(choice => choice[0] === latest.assessment)?.[1] || latest.assessment}</strong><small>{latest.notes || 'No note added'} · model {latest.model_version}</small></div>}
+  </form>;
+}
+
 function CandidateDossier({ data, loading, error, symbol, onBack, onResearch, settings }) {
   const [tab, setTab] = useState('decision');
   if (loading) return <div className="cfo-page"><button className="cfo-back" onClick={onBack}>← Back</button><div className="cfo-panel">Checking {symbol || 'this stock'} against today’s price, trend and financial data…</div></div>;
@@ -244,6 +288,7 @@ function CandidateDossier({ data, loading, error, symbol, onBack, onResearch, se
     {tab === 'decision' && <section className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow="Trade plan" title="Levels and invalidation" /><dl className="cfo-definition"><div><dt>Entry zone</dt><dd className="mono">{money(plan.entry?.low)} – {money(plan.entry?.high)}</dd></div><div><dt>Trigger</dt><dd className="mono">{money(plan.entry?.trigger_price)}</dd></div><div><dt>Stop</dt><dd className="mono">{money(plan.stop?.price)}</dd></div><div><dt>Targets</dt><dd>{(plan.targets || []).map(t => <span key={t.label} className="cfo-target-line"><b className="mono">{t.label} {money(t.price)} · {fmt(t.rr, 2)}R</b><small>{t.basis}</small></span>)}</dd></div><div><dt>Risk to stop</dt><dd>{plan.stop?.risk_pct != null ? `${fmt(plan.stop.risk_pct, 2)}% · ${fmt(plan.stop.risk_atr, 2)} ATR` : '—'}</dd></div><div><dt>Event risk</dt><dd>{data.event_risk?.level || 'unknown'}{data.event_risk?.next_event ? ` · ${data.event_risk.next_event.event_type} in ${data.event_risk.next_event.sessions_away} sessions` : ' · coverage unverified'}</dd></div><div><dt>Time stop</dt><dd>{plan.time_stop_sessions || 40} sessions</dd></div><div><dt>Invalidation</dt><dd>{plan.invalidation || 'Not available'}</dd></div></dl></div><TrustPanel data={data} /></section>}
     {tab === 'decision' && data.explanation && <section className="cfo-two-col cfo-explanation-grid"><div className="cfo-panel"><SectionHeader eyebrow="Bull evidence" title="Why it ranks" /><ul>{(data.explanation.why_it_ranks || []).map((item, i) => <li key={i}>{item}</li>)}</ul></div><div className="cfo-panel"><SectionHeader eyebrow="Bear evidence" title="What holds it back" /><ul>{(data.explanation.what_holds_it_back || []).map((item, i) => <li key={i}>{item}</li>)}</ul>{!(data.explanation.what_holds_it_back || []).length && <p>No material deterministic concern was found in the available evidence.</p>}</div></section>}
     {tab === 'decision' && <PositionSizeCalculator plan={plan} data={data} defaultRisk={settings?.risk_per_trade_pct || 0.5} />}
+    {tab === 'decision' && <HumanReviewPanel data={data} />}
     {tab === 'business' && <section className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow={data.cfo?.sector_model === 'financial' ? 'Bank and finance checks' : 'Business checks'} title="Business quality" /><div className="cfo-big-score">{fmt(data.cfo?.score, 0)}<span>/100</span></div><StatusPill value={data.cfo?.gate === 'pass' ? 'healthy' : data.cfo?.gate === 'hard_block' ? 'failed' : 'attention'}>{data.cfo?.gate === 'hard_block' ? 'Blocked' : data.cfo?.gate === 'data_insufficient' ? 'Needs data' : data.cfo?.gate}</StatusPill><div className="cfo-metric-grid"><Metric label="Return on capital" value={`${fmt(metrics.roce)}%`} /><Metric label="Return on equity" value={`${fmt(metrics.roe)}%`} /><Metric label="Cash profit coverage" value={`${fmt(metrics.cfo_pat, 2)}×`} /><Metric label="Financial strength" value={fmt(metrics.piotroski, 0)} /></div><ul>{[...(data.cfo?.hard_blocks || []), ...(data.cfo?.cautions || []), ...(data.cfo?.reasons || [])].map((r, i) => <li key={i}>{r.replace('CFO/PAT', 'Operating cash / profit')}</li>)}</ul></div><div className="cfo-panel"><SectionHeader eyebrow="Latest reported quarters" title="Earnings momentum" detail={`${fmt(momentum.coverage, 0)}% of the momentum model is supported by reported data.`} /><div className="cfo-big-score">{fmt(momentum.score, 0)}<span>/100</span></div><StatusPill value={momentum.margin_direction?.includes('contraction') ? 'attention' : momentum.status === 'unavailable' ? 'failed' : 'healthy'}>{momentum.margin_direction || 'Unavailable'}</StatusPill><div className="cfo-metric-grid"><Metric label="Revenue YoY" value={`${fmt(momentumMetrics.revenue_growth_yoy)}%`} /><Metric label="Revenue QoQ" value={`${fmt(momentumMetrics.revenue_growth_qoq)}%`} /><Metric label="EBITDA YoY" value={`${fmt(momentumMetrics.ebitda_growth_yoy)}%`} /><Metric label="PAT YoY" value={`${fmt(momentumMetrics.pat_growth_yoy)}%`} /><Metric label="EBITDA margin change" value={`${fmt(momentumMetrics.ebitda_margin_change_yoy, 2)} pts`} /><Metric label="PAT margin change" value={`${fmt(momentumMetrics.pat_margin_change_yoy, 2)} pts`} /></div><ul>{(momentum.cautions || []).map((item, i) => <li key={i}>{item}</li>)}</ul></div></section>}
     {tab === 'chart' && <section className="cfo-chart-stack"><div className="cfo-panel cfo-daily-chart"><SectionHeader eyebrow="Daily price and volume" title="What the chart is doing" detail="Daily adjusted price history; the latest close is checked against NSE data." />{(data.daily_history || []).length >= 5 ? <PriceChart history={data.daily_history} levels={plan} volumeTags={[]} /> : <div className="cfo-quiet"><span>!</span><div><strong>Daily chart is temporarily unavailable</strong><p>The saved analysis remains visible, but missing chart data is never treated as confirmation.</p></div></div>}</div><div className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow="Chart readings" title="Trend, supply, and movement" /><div className="cfo-metric-grid"><Metric label="Price" value={money(data.price)} /><Metric label="Trend" value={trendLabel(data.technicals?.trend_score)} /><Metric label="RSI" value={fmt(data.technicals?.rsi)} /><Metric label="Volume versus normal" value={`${fmt(data.technicals?.vol_ratio, 2)}×`} /><Metric label="Clear air" value={data.overhead_supply?.clear_air_pct == null ? 'No mapped ceiling' : `${fmt(data.overhead_supply.clear_air_pct, 2)}% · ${fmt(data.overhead_supply.clear_air_atr, 2)} ATR`} /><Metric label="Supply" value={`${fmt(data.overhead_supply?.score, 0)}/100`} note={data.overhead_supply?.severity} /><Metric label="Tradeability" value={`${fmt(data.tradeability?.score, 0)}/100`} note={data.tradeability?.label} /><Metric label="Move potential" value={`${fmt(data.move_potential?.score, 0)}/100`} note={data.move_potential?.label} /></div></div><div className="cfo-panel"><SectionHeader eyebrow="Why this score" title="Score breakdown" /><div className="cfo-score-bars">{Object.entries(data.components || {}).map(([key, value]) => <div key={key}><span>{key === 'cfo_health' ? 'business quality' : key.replaceAll('_', ' ')}</span><i><b style={{ width: `${value}%` }} /></i><strong>{fmt(value, 0)}</strong></div>)}</div></div></div></section>}
     {tab === 'chart' && data.setup_engines && <section className="cfo-panel"><SectionHeader eyebrow="Independent setup engines" title="Breakout, pullback, and continuation" detail="Each setup is scored against its own requirements. A high score does not create a trigger that has not occurred." /><div className="cfo-setup-scorecards">{['breakout', 'pullback', 'trend_continuation'].map(name => { const engine = data.setup_engines[name] || {}; return <article key={name} className={data.setup_engines.selected?.name === name ? 'active' : ''}><span>{name.replaceAll('_', ' ')}</span><strong>{fmt(engine.score, 0)}<small>/100</small></strong><ul>{(engine.criteria || []).filter(item => item.weight >= .12).map(item => <li key={item.name}><b>{item.name}</b><span>{fmt(item.score, 0)}</span><small>{item.detail}</small></li>)}</ul></article>; })}</div></section>}
