@@ -17,7 +17,7 @@ import price_action
 import quant_engine
 import swing_engine
 
-MODEL_VERSION = "cfo-v1.0.0"
+MODEL_VERSION = "swing-v1.1.0"
 MIN_SESSIONS = 252
 MIN_PRICE = 20.0
 MIN_MEDIAN_TRADED_VALUE = 5_00_00_000.0  # ₹5 crore
@@ -291,6 +291,45 @@ def _valuation_component(fundamentals: dict) -> float:
     return _clamp(85 - pe * 1.35, 15, 85)
 
 
+def _entry_state(current: Optional[float], entry: dict) -> str:
+    """Describe whether price is currently inside or near the planned zone."""
+    low, high = _number(entry.get("low")), _number(entry.get("high"))
+    if current is None or low is None or high is None:
+        return "unknown"
+    low, high = min(low, high), max(low, high)
+    if low <= current <= high:
+        return "in_zone"
+    distance = (low - current) / current * 100 if current < low else (current - high) / high * 100
+    return "near" if distance <= 3 else "far"
+
+
+def classify_action(*, score: float, setup_name: str, swing: dict,
+                    current: Optional[float], actionable_data: bool,
+                    hard_blocks: list[str]) -> tuple[str, str]:
+    """Turn reproducible setup evidence into a plain decision state.
+
+    Historical validation is reported separately as confidence evidence.  It
+    must not erase today's observable setup state; doing that made every valid
+    setup look identical and produced the misleading all-WATCH dashboard.
+    """
+    if hard_blocks:
+        return "AVOID", "A required safety check failed"
+    if not actionable_data:
+        return "DATA_INSUFFICIENT", "Price or financial evidence is incomplete"
+
+    rr = _number(swing.get("risk_reward")) or 0
+    state = _entry_state(current, swing.get("entry") or {})
+    active_setup = setup_name not in {"", "none", None}
+    supported_verdict = swing.get("verdict") in {"Buy", "Buy on Dip", "Wait"}
+    if score >= 72 and active_setup and supported_verdict and rr >= 1.5 and state == "in_zone":
+        return "BUY_NOW", "Strong setup is inside its entry zone with at least 1.5 reward/risk"
+    if score >= 68 and active_setup and supported_verdict and rr >= 1.2 and state in {"in_zone", "near"}:
+        return "WAIT_FOR_ENTRY", "Promising setup is near its planned entry zone"
+    if score >= 52:
+        return "WATCH", "Ranked for research, but the setup is not ready"
+    return "AVOID", "Current setup quality is too weak"
+
+
 def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
                       official_close: Optional[float] = None,
                       official_date: Optional[str] = None,
@@ -332,18 +371,11 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
     entry, stop, targets = swing.get("entry") or {}, swing.get("stop") or {}, swing.get("targets") or []
     rr = swing.get("risk_reward")
     actionable_data = cfo["completeness"] == "full" and reconciliation["status"] == "matched"
-    if hard_blocks:
-        action = "AVOID"
-    elif not actionable_data:
-        action = "DATA_INSUFFICIENT"
-    elif score >= 76 and swing.get("verdict") == "Buy" and (rr or 0) >= 1.5:
-        action = "BUY_NOW"
-    elif score >= 68 and swing.get("verdict") in {"Buy", "Buy on Dip", "Wait"}:
-        action = "WAIT_FOR_ENTRY"
-    elif score >= 52:
-        action = "WATCH"
-    else:
-        action = "AVOID"
+    action, action_reason = classify_action(
+        score=score, setup_name=setup.get("setup"), swing=swing,
+        current=factors.get("price"), actionable_data=actionable_data,
+        hard_blocks=hard_blocks,
+    )
 
     coverage = sum(v is not None for v in cfo["metrics"].values()) / max(1, len(cfo["metrics"]))
     confidence = _clamp(38 + coverage * 35 + min(len(candles), 500) / 500 * 17)
@@ -380,8 +412,10 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
         "price": current, "components": {k: round(v, 1) for k, v in components.items()},
         "cfo": cfo, "technicals": factors, "price_action": pa,
         "trade_plan": {"entry": entry, "stop": stop, "targets": targets,
+                       "verdict": swing.get("verdict"), "entry_state": _entry_state(current, entry),
                        "risk_reward": rr, "invalidation": swing.get("invalidation"),
                        "time_stop_sessions": 40},
+        "action_reason": action_reason,
         "results_risk": "blocked" if results_within_two_sessions else "clear_or_unknown",
         "hard_blocks": hard_blocks, "evidence": evidence,
         "freshness": fund_meta, "data_completeness": cfo["completeness"],

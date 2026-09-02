@@ -84,7 +84,7 @@ export const getPaperTradesList = () => API.get('/api/paper-trades/list').then(r
 export const getPaperTradeSnapshot = () => API.get('/api/paper-trades/snapshot').then(r => r.data);
 export const evaluatePaperTrades = () => API.post('/api/paper-trades/evaluate').then(r => r.data);
 
-// CFO workspace — one precomputed morning snapshot, then drill-down reads.
+// Daily swing workspace — one precomputed morning snapshot, then drill-down reads.
 export const getMorningBrief = () => API.get('/api/morning-brief').then(r => r.data);
 export const getSectorSnapshot = (sector) => API.get(`/api/sectors/${encodeURIComponent(sector)}`).then(r => r.data);
 export const getCandidateAnalysis = (symbol) => API.get(`/api/candidates/${pathSymbol(symbol)}`).then(r => r.data);

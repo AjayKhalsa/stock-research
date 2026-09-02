@@ -216,7 +216,9 @@ async def run_daily_pipeline(job_id: str) -> None:
 
             async def enrich(item: dict):
                 async with semaphore:
-                    fundamentals, meta = await data_cache.get_fundamentals(item["symbol"], ttl_hours=168)
+                    fundamentals, meta = await data_cache.get_fundamentals(
+                        item["symbol"], ttl_hours=168, require_classification=True,
+                    )
                     return item, fundamentals, meta
 
             tasks = [asyncio.create_task(enrich(item)) for item in deep]
@@ -271,16 +273,12 @@ async def run_daily_pipeline(job_id: str) -> None:
                     await task
                     db.update_job_run(job_id, stage="ai_committee", progress=index, total=len(committee_pool))
 
-            # No numerical result is presented as actionable until a genuine
-            # point-in-time walk-forward validation has passed. This switch is
-            # deliberately controlled by stored validation evidence, not UI.
+            # Historical validation is shown as a separate trust signal.  It
+            # does not erase today's observable setup state; READY/NEAR labels
+            # remain research signals until the tracked sample matures.
             validation_status = db.get_setting("cfo_historical_validation_status", "pending")
-            if validation_status != "passed":
-                for candidate in candidates:
-                    if candidate["action"] in {"BUY_NOW", "WAIT_FOR_ENTRY"}:
-                        candidate["evidence"]["model"]["pre_validation_action"] = candidate["action"]
-                        candidate["evidence"]["model"]["validation_gate"] = "pending"
-                        candidate["action"] = "WATCH"
+            for candidate in candidates:
+                candidate["evidence"]["model"]["validation_status"] = validation_status
             action_order = {"BUY_NOW": 5, "WAIT_FOR_ENTRY": 4, "WATCH": 3, "DATA_INSUFFICIENT": 2, "AVOID": 1}
             candidates.sort(key=lambda row: (action_order.get(row["action"], 0), row["rank_value"], row["score"]), reverse=True)
             candidates = candidates[:PUBLISHED_CANDIDATES]

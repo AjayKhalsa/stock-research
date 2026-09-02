@@ -17,6 +17,7 @@ import ai_committee  # noqa: E402
 import db  # noqa: E402
 import price_service  # noqa: E402
 import market_pipeline  # noqa: E402
+import screener_scraper  # noqa: E402
 from routers import cfo_workspace as cfo_router  # noqa: E402
 from main import app  # noqa: E402
 
@@ -103,6 +104,32 @@ class CfoEngineTests(unittest.TestCase):
             "setup", "relative_strength", "trend_volume", "cfo_health",
             "sector_regime", "liquidity", "valuation",
         })
+
+    def test_ready_and_near_entry_states_are_not_hidden_by_early_validation(self):
+        swing = {"entry": {"low": 98, "high": 102}, "risk_reward": 1.5,
+                 "verdict": "Wait"}
+        ready, ready_reason = cfo_engine.classify_action(
+            score=74, setup_name="pullback", swing=swing, current=100,
+            actionable_data=True, hard_blocks=[],
+        )
+        near, _ = cfo_engine.classify_action(
+            score=70, setup_name="pullback", swing=swing, current=104,
+            actionable_data=True, hard_blocks=[],
+        )
+        self.assertEqual(ready, "BUY_NOW")
+        self.assertIn("entry zone", ready_reason)
+        self.assertEqual(near, "WAIT_FOR_ENTRY")
+
+    def test_screener_classification_is_parsed_for_sector_dashboard(self):
+        parsed = screener_scraper.parse_screener("""
+            <h1 class="h2">Computer Age Management Services Ltd</h1>
+            <a title="Broad Sector">Financial Services</a>
+            <a title="Sector">Financial Services</a>
+            <a title="Broad Industry">Capital Markets</a>
+            <a title="Industry">Depositories and Other Intermediaries</a>
+        """)
+        self.assertEqual(parsed["sector"], "Financial Services")
+        self.assertEqual(parsed["industry"], "Depositories and Other Intermediaries")
 
     def test_daily_pipeline_requires_majority_price_history_coverage(self):
         self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_RATIO, 0.50)
@@ -210,6 +237,34 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertIn("external_research", detail.json())
         self.assertGreaterEqual(morning.json()["external_enrichment"]["covered"], 3)
         self.assertEqual(self.client.get("/api/sectors/IT").status_code, 200)
+
+    def test_any_eligible_nse_stock_can_be_analysed_on_demand(self):
+        history = candles()
+        fundamentals = {
+            "company_name": "Computer Age Management Services Limited",
+            "sector": "Financial Services", "industry": "Capital Markets",
+            "data_completeness": "full", "roe": 32,
+            "annual_pl": [{"year": "2024", "net_profit": 300},
+                          {"year": "2025", "net_profit": 380}],
+        }
+        with patch("routers.cfo_workspace.db.candidate_analysis", return_value=None), \
+             patch("routers.cfo_workspace.symbol_resolver.resolve_one",
+                   new=AsyncMock(return_value={"symbol": "CAMS", "name": fundamentals["company_name"]})), \
+             patch("routers.cfo_workspace.price_service.get_historical",
+                   new=AsyncMock(return_value=history)), \
+             patch("routers.cfo_workspace.price_service.get_index_historical",
+                   new=AsyncMock(return_value=history)), \
+             patch("routers.cfo_workspace.data_cache.get_fundamentals",
+                   new=AsyncMock(return_value=(fundamentals, {"source": "cache", "stale": False}))), \
+             patch("routers.cfo_workspace.nse_bhavcopy.fetch_latest_bhavcopy",
+                   new=AsyncMock(return_value={"as_of": history[-1]["date"],
+                                               "closes": {"CAMS": history[-1]["close"]}})):
+            response = self.client.get("/api/candidates/CAMS")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["symbol"], "CAMS")
+        self.assertFalse(response.json()["universe_membership"]["ranked"])
+        self.assertEqual(response.json()["sector"], "Financial Services")
+        self.assertEqual(len(response.json()["daily_history"]), 252)
 
     def test_bull_ai_seed_is_source_labelled_and_score_neutral(self):
         evidence = db.candidate_enrichments("STOVEKRAFT")

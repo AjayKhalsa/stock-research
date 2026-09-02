@@ -54,10 +54,12 @@ beforeEach(() => {
 
 test('opens on the decision-first morning brief', async () => {
   render(<CfoWorkspace />);
-  expect(await screen.findByText(/Start with the decisions/i)).toBeInTheDocument();
+  expect(await screen.findByText(/What looks interesting today/i)).toBeInTheDocument();
   expect(screen.getByText('700')).toBeInTheDocument();
   expect(screen.getAllByText('TCS').length).toBeGreaterThan(0);
   expect(screen.getByText(/Portfolio actions/i)).toBeInTheDocument();
+  expect(screen.getByText(/Research mode/i)).toBeInTheDocument();
+  expect(screen.queryByText(/CFO workspace/i)).not.toBeInTheDocument();
 });
 
 test('explains zero stocks as an unpublished guarded snapshot', async () => {
@@ -73,40 +75,60 @@ test('explains zero stocks as an unpublished guarded snapshot', async () => {
   });
   render(<CfoWorkspace />);
   expect(await screen.findByText(/Incomplete data was held back/i)).toBeInTheDocument();
-  expect(screen.getByText(/Accuracy gate protected/i)).toBeInTheDocument();
+  expect(screen.getByText(/incomplete scan was not shown/i)).toBeInTheDocument();
   expect(screen.getByText('431')).toBeInTheDocument();
   expect(screen.getByText(/not a stock verdict/i)).toBeInTheDocument();
 });
 
 test('reaches a candidate dossier within two interactions', async () => {
   render(<CfoWorkspace />);
-  await screen.findByText(/Start with the decisions/i);
+  await screen.findByText(/What looks interesting today/i);
   fireEvent.click(screen.getByText('Tata Consultancy').closest('button'));
   await waitFor(() => expect(api.getCandidateAnalysis).toHaveBeenCalledWith('TCS'));
   expect(await screen.findByText(/Levels and invalidation/i)).toBeInTheDocument();
-  expect(screen.getByText(/Why this made the list/i)).toBeInTheDocument();
+  expect(screen.getByText(/Checks behind this stock/i)).toBeInTheDocument();
   expect(screen.queryByText(/Position sizing/i)).not.toBeInTheDocument();
-  expect(screen.getByText(/Business/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Business' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Evidence' })).toBeInTheDocument();
 });
 
 test('shows a daily chart section without leaving the dossier', async () => {
   render(<CfoWorkspace />);
-  await screen.findByText(/Start with the decisions/i);
+  await screen.findByText(/What looks interesting today/i);
   fireEvent.click(screen.getByText('Tata Consultancy').closest('button'));
-  await screen.findByText(/Why this made the list/i);
+  await screen.findByText(/Checks behind this stock/i);
   fireEvent.click(screen.getByRole('button', { name: 'Chart' }));
-  expect(screen.getByText(/Daily market structure/i)).toBeInTheDocument();
+  expect(screen.getByText(/What the chart is doing/i)).toBeInTheDocument();
   expect(screen.getByText(/Daily chart is temporarily unavailable/i)).toBeInTheDocument();
 });
 
 test('shows source-backed Bull AI evidence without changing the score', async () => {
   render(<CfoWorkspace />);
-  await screen.findByText(/Start with the decisions/i);
+  await screen.findByText(/What looks interesting today/i);
   fireEvent.click(screen.getByText('Tata Consultancy').closest('button'));
-  await screen.findByText(/Why this made the list/i);
+  await screen.findByText(/Checks behind this stock/i);
   fireEvent.click(screen.getByRole('button', { name: 'Evidence' }));
   expect(screen.getByText(/Company-document enrichment/i)).toBeInTheDocument();
   expect(screen.getByText(/This target is not yet due/i)).toBeInTheDocument();
   expect(screen.getByText(/No score boost/i)).toBeInTheDocument();
+});
+
+test('search opens any NSE stock in the modern analysis view', async () => {
+  api.getCandidateAnalysis.mockResolvedValueOnce({
+    ...brief.candidates[0], symbol: 'CAMS', company: 'Computer Age Management Services',
+    global_rank: null, sector_rank: null,
+    universe_membership: { ranked: false, label: "On-demand analysis — not in today's Top 100" },
+    cfo: { score: 76, gate: 'pass', metrics: {} }, daily_history: [],
+    evidence: { price: { status: 'matched' }, fundamentals: {}, model: {}, ai_committee: {} },
+    trust: { price: 'pass', financials: 'pass', cfo_gate: 'pass', results: 'caution', historical_validation: 'early', external_evidence: 'not_covered' },
+    external_research: [],
+  });
+  render(<CfoWorkspace />);
+  await screen.findByText(/What looks interesting today/i);
+  const input = screen.getByPlaceholderText(/Search stock by name or symbol/i);
+  fireEvent.change(input, { target: { value: 'CAMS' } });
+  fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+  await waitFor(() => expect(api.getCandidateAnalysis).toHaveBeenCalledWith('CAMS'));
+  expect(await screen.findByText(/Computer Age Management Services/i)).toBeInTheDocument();
+  expect(screen.getAllByText(/On-demand analysis/i).length).toBeGreaterThan(0);
 });

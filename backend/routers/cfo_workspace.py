@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 from typing import Optional
 
@@ -10,9 +11,13 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 import config
+import cfo_engine
+import data_cache
 import db
 import market_pipeline
+import nse_bhavcopy
 import price_service
+import symbol_resolver
 
 router = APIRouter()
 
@@ -119,10 +124,59 @@ def sector_detail(sector: str):
 @router.get("/api/candidates/{symbol}")
 async def candidate_detail(symbol: str):
     _feature_enabled()
+    symbol = symbol.upper().strip()
     item = db.candidate_analysis(symbol)
     if not item:
-        raise HTTPException(status_code=404, detail="Candidate is not present in the latest snapshot")
-    item["daily_history"] = (await price_service.get_historical(f"NSE:{symbol}", days=520))[-252:]
+        resolved = await symbol_resolver.resolve_one(symbol)
+        if not resolved.get("symbol"):
+            raise HTTPException(status_code=404, detail="NSE stock was not found")
+        symbol = resolved["symbol"]
+        candles, nifty, fund_result, bhavcopy = await asyncio.gather(
+            price_service.get_historical(f"NSE:{symbol}", days=520),
+            price_service.get_index_historical("^NSEI", days=500),
+            data_cache.get_fundamentals(symbol, ttl_hours=168, require_classification=True),
+            nse_bhavcopy.fetch_latest_bhavcopy(),
+        )
+        preliminary = cfo_engine.preliminary_analysis(
+            symbol, resolved.get("name") or symbol, candles, nifty,
+        )
+        if not preliminary.get("eligible"):
+            reasons = preliminary.get("eligibility", {}).get("reasons") or []
+            raise HTTPException(
+                status_code=422,
+                detail="This stock is searchable, but is outside today's liquid swing universe: "
+                       + "; ".join(reasons),
+            )
+        fundamentals, meta = fund_result
+        earnings_sessions = market_pipeline._trading_sessions_until(
+            fundamentals.get("earnings_date"),
+            bhavcopy.get("as_of") or (candles[-1].get("date") if candles else None),
+        )
+        item = cfo_engine.analyze_candidate(
+            preliminary, fundamentals, meta,
+            official_close=(bhavcopy.get("closes") or {}).get(symbol),
+            official_date=bhavcopy.get("as_of"),
+            sector_regime_score=50,
+            results_within_two_sessions=(earnings_sessions is not None and earnings_sessions <= 2),
+        )
+        item["global_rank"] = None
+        item["sector_rank"] = None
+        item["universe_membership"] = {
+            "ranked": False,
+            "label": "On-demand analysis — not in today's Top 100",
+        }
+        item["evidence"]["model"]["validation_status"] = db.get_setting(
+            "cfo_historical_validation_status", "pending",
+        )
+        if earnings_sessions is not None:
+            item["results_date"] = fundamentals.get("earnings_date")
+    else:
+        item["universe_membership"] = {
+            "ranked": True,
+            "label": f"Ranked #{item.get('global_rank')} in today's Top 100",
+        }
+        candles = await price_service.get_historical(f"NSE:{symbol}", days=520)
+    item["daily_history"] = candles[-252:]
     item["external_research"] = db.candidate_enrichments(symbol)
     price_status = item.get("evidence", {}).get("price", {}).get("status") or "unknown"
     completeness = item.get("data_completeness") or "missing"

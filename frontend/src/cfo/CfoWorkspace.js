@@ -19,8 +19,8 @@ const NAV = [
 ];
 
 const ACTION_LABEL = {
-  BUY_NOW: 'Buy now', WAIT_FOR_ENTRY: 'Wait for entry', WATCH: 'Watch',
-  AVOID: 'Avoid', DATA_INSUFFICIENT: 'Data insufficient',
+  BUY_NOW: 'Ready now', WAIT_FOR_ENTRY: 'Near entry', WATCH: 'Watch',
+  AVOID: 'Skip', DATA_INSUFFICIENT: 'Needs data',
 };
 
 const fmt = (value, digits = 1) => value == null ? '—' : Number(value).toFixed(digits);
@@ -56,14 +56,14 @@ function CandidateRow({ candidate, onOpen, expanded, onToggle }) {
       <span className="cfo-company"><strong>{candidate.symbol}</strong><small>{candidate.company}</small></span>
       <span className="cfo-action"><StatusPill value={candidate.action} /></span>
       <span><small>Setup</small><strong>{(candidate.setup_type || 'None').replaceAll('_', ' ')}</strong></span>
-      <span><small>Expected R</small><strong className="mono">{fmt(candidate.expected_r)}R</strong></span>
+      <span><small>Reward / risk</small><strong className="mono">{fmt(plan.risk_reward, 2)}×</strong></span>
       <span><small>Entry distance</small><strong className="mono">{fmt(candidate.entry_distance_pct)}%</strong></span>
-      <span><small>CFO health</small><strong>{fmt(candidate.components?.cfo_health, 0)}</strong></span>
+      <span><small>Business quality</small><strong>{fmt(candidate.components?.cfo_health, 0)}</strong></span>
       <span><small>Confidence</small><strong>{fmt(candidate.confidence, 0)}%</strong></span>
       <span className="cfo-chevron" aria-hidden="true">⌄</span>
     </button>
     {expanded && <div className="cfo-candidate-expand">
-      <div><small>Why it is here</small><p>{candidate.setup_label || 'No active setup'}.</p></div>
+      <div><small>Why it is here</small><p>{candidate.action_reason || candidate.setup_label || 'No active setup'}.</p></div>
       <div><small>Entry</small><p className="mono">{money(plan.entry?.low)} – {money(plan.entry?.high)}</p></div>
       <div><small>Stop</small><p className="mono">{money(plan.stop?.price)}</p></div>
       <div><small>Targets</small><p className="mono">{(plan.targets || []).map(t => money(t.price)).join(' · ') || '—'}</p></div>
@@ -85,11 +85,11 @@ function Morning({ brief, job, onPage, onCandidate, onSector }) {
         <div className="cfo-regime-card"><span>Snapshot state</span><StatusPill value={failed ? 'failed' : running ? 'mixed' : 'attention'}>{failed ? 'Held back' : running ? 'Building' : 'Pending'}</StatusPill><strong>{running ? `${pct}%` : '0'}</strong><small>{running ? `${job.progress || 0} of ${job.total || 0} equities processed` : 'published candidates—not a stock verdict'}</small></div>
       </section>
       <section className="cfo-panel cfo-setup-panel">
-        <SectionHeader eyebrow="Why there are no stocks" title={failed ? 'Accuracy gate protected the dashboard' : 'The first ranking is not ready yet'} detail="StockLens publishes only after the market-wide price-history and candidate coverage checks pass." />
+        <SectionHeader eyebrow="Why there are no stocks" title={failed ? 'An incomplete scan was not shown' : 'The first ranking is not ready yet'} detail="StockLens publishes only after enough NSE price histories and candidates have been checked." />
         <div className="cfo-summary-strip">
           <Metric label="NSE processed" value={job?.progress || 0} note={`${job?.total || 0} total`} />
           <Metric label="Usable histories" value={usable ?? '—'} note="252 sessions required" />
-          <Metric label="Eligible so far" value={job?.payload?.eligible ?? '—'} note="price and liquidity gates" />
+          <Metric label="Eligible so far" value={job?.payload?.eligible ?? '—'} note="price and liquidity checks" />
           <Metric label="Bull AI evidence" value={brief.external_enrichment?.covered || 0} note="supplementary dossiers" />
         </div>
         {job?.error && <div className="cfo-setup-error"><strong>Last run stopped safely</strong><p>{job.error}</p></div>}
@@ -101,16 +101,18 @@ function Morning({ brief, job, onPage, onCandidate, onSector }) {
   const exceptions = brief.data_health?.exceptions || [];
   return <div className="cfo-page">
     <section className="cfo-hero">
-      <div><span className="cfo-eyebrow">Morning command centre</span><h1>Start with the decisions,<br />then inspect the evidence.</h1><p>{brief.market_regime?.posture || 'The morning snapshot is being prepared.'}</p></div>
-      <div className="cfo-regime-card"><span>Market regime</span><StatusPill value={brief.market_regime?.state}>{brief.market_regime?.state || 'Unknown'}</StatusPill><strong>{brief.universe?.eligible || 0}</strong><small>liquid NSE equities passed the universe gate</small></div>
+      <div><span className="cfo-eyebrow">Your morning overview</span><h1>What looks interesting today.</h1><p>{brief.market_regime?.posture || 'The morning snapshot is being prepared.'}</p></div>
+      <div className="cfo-regime-card"><span>Market mood</span><StatusPill value={brief.market_regime?.state}>{brief.market_regime?.state || 'Unknown'}</StatusPill><strong>{brief.universe?.eligible || 0}</strong><small>liquid NSE stocks checked and eligible</small></div>
     </section>
 
     <section className="cfo-summary-strip">
-      <Metric label="Actionable now" value={(brief.candidates || []).filter(c => c.action === 'BUY_NOW').length} note="hard gates passed" />
-      <Metric label="Waiting for entry" value={(brief.candidates || []).filter(c => c.action === 'WAIT_FOR_ENTRY').length} note="setup not at price" />
-      <Metric label="Portfolio heat" value={`${fmt(brief.portfolio?.heat_pct)}%`} note={`${fmt(brief.portfolio?.max_heat_pct)}% maximum`} />
-      <Metric label="Snapshot" value={brief.trading_date || 'Pending'} note={brief.validation?.status === 'early' ? 'confidence: early' : 'validated'} />
+      <Metric label="Ready now" value={(brief.candidates || []).filter(c => c.action === 'BUY_NOW').length} note="inside entry zone; checks clear" />
+      <Metric label="Near entry" value={(brief.candidates || []).filter(c => c.action === 'WAIT_FOR_ENTRY').length} note="strong setup; watch the price" />
+      <Metric label="Risk in open trades" value={`${fmt(brief.portfolio?.heat_pct)}%`} note={`${fmt(brief.portfolio?.max_heat_pct)}% limit`} />
+      <Metric label="Updated" value={brief.trading_date || 'Pending'} note={brief.validation?.status === 'early' ? 'results still being tracked' : 'historically tested'} />
     </section>
+
+    {brief.validation?.status === 'early' && <div className="cfo-validation-note"><strong>Research mode</strong><span>“Ready now” means today’s price, trend, liquidity and business checks line up. It is not a proven promise: only {brief.validation?.closed_paper_trades || 0} of 100 tracking trades have closed so far.</span></div>}
 
     <section className="cfo-panel cfo-action-panel">
       <SectionHeader eyebrow="First" title="Portfolio actions" detail="What changed in positions and setups since the last valid snapshot." />
@@ -120,9 +122,9 @@ function Morning({ brief, job, onPage, onCandidate, onSector }) {
 
     <section className="cfo-two-col">
       <div className="cfo-panel">
-        <SectionHeader eyebrow="Leadership" title="Sectors in control" action={<button onClick={() => onPage('sectors')} className="cfo-text-btn">View all</button>} />
+        <SectionHeader eyebrow="Market groups" title="Strongest sectors" action={<button onClick={() => onPage('sectors')} className="cfo-text-btn">View all</button>} />
         <div className="cfo-sector-list">{(brief.sectors || []).slice(0, 6).map(sector => <button key={sector.sector} onClick={() => onSector(sector.sector)}>
-          <span className="cfo-sector-rank">{sector.rank}</span><span><strong>{sector.sector}</strong><small>{sector.trend} · {sector.actionable_count} actionable</small></span><b className="mono">{fmt(sector.score)}</b>
+          <span className="cfo-sector-rank">{sector.rank}</span><span><strong>{sector.sector}</strong><small>{sector.trend} · {sector.actionable_count} ready or near</small></span><b className="mono">{fmt(sector.score)}</b>
         </button>)}</div>
       </div>
       <div className="cfo-panel">
@@ -132,8 +134,8 @@ function Morning({ brief, job, onPage, onCandidate, onSector }) {
     </section>
 
     <section className="cfo-panel">
-      <SectionHeader eyebrow="Opportunity bench" title="Best candidates this morning" detail="Ranked by expected R × confidence after financial and event controls." action={<button onClick={() => onPage('candidates')} className="cfo-text-btn">Open Top 100</button>} />
-      <div className="cfo-morning-cards">{top.length ? top.map(c => <button key={c.symbol} onClick={() => onCandidate(c.symbol)}><span><b>#{c.global_rank}</b><StatusPill value={c.action} /></span><strong>{c.symbol}</strong><small>{c.company}</small><div><span>{c.setup_type?.replaceAll('_', ' ') || 'No setup'}</span><b className="mono">{fmt(c.expected_r)}R</b></div></button>) : <p className="cfo-muted">No ranked candidates in the latest snapshot.</p>}</div>
+      <SectionHeader eyebrow="Today’s shortlist" title="Best setups this morning" detail="Ranked by setup quality, relative strength, business health, liquidity and reward versus risk." action={<button onClick={() => onPage('candidates')} className="cfo-text-btn">Open Top 100</button>} />
+      <div className="cfo-morning-cards">{top.length ? top.map(c => <button key={c.symbol} onClick={() => onCandidate(c.symbol)}><span><b>#{c.global_rank}</b><StatusPill value={c.action} /></span><strong>{c.symbol}</strong><small>{c.company}</small><div><span>{c.setup_type?.replaceAll('_', ' ') || 'No setup'}</span><b className="mono">{fmt(c.trade_plan?.risk_reward, 2)}×</b></div></button>) : <p className="cfo-muted">No ranked candidates in the latest snapshot.</p>}</div>
     </section>
 
     <section className="cfo-two-col">
@@ -147,9 +149,9 @@ function Sectors({ brief, selected, detail, loading, onSelect, onCandidate }) {
   const sectors = brief.sectors || [];
   const active = detail || sectors.find(s => s.sector === selected) || sectors[0];
   return <div className="cfo-page">
-    <SectionHeader eyebrow="Sector command" title="Follow leadership, not noise" detail="Breadth, relative strength and participation decide where the risk budget belongs." />
-    <div className="cfo-sector-grid">{sectors.map(s => <button className={active?.sector === s.sector ? 'active' : ''} key={s.sector} onClick={() => onSelect(s.sector)}><span><b>#{s.rank}</b><StatusPill value={s.trend === 'Leading' ? 'constructive' : s.trend === 'Lagging' ? 'defensive' : 'mixed'}>{s.trend}</StatusPill></span><h3>{s.sector}</h3><div><Metric label="Score" value={fmt(s.score)} /><Metric label="Breadth" value={`${fmt(s.breadth_pct)}%`} /></div><small>{s.actionable_count} actionable of {s.eligible_count}</small></button>)}</div>
-    {loading ? <div className="cfo-panel">Loading sector evidence…</div> : active && <section className="cfo-panel cfo-sector-detail"><SectionHeader eyebrow={`Sector #${active.rank || '—'}`} title={active.sector} detail="Current snapshot; conclusions lead and underlying candidates remain available." /><div className="cfo-summary-strip"><Metric label="Trend" value={active.trend} /><Metric label="Breadth" value={`${fmt(active.breadth_pct)}%`} /><Metric label="Relative strength" value={fmt(active.relative_strength)} /><Metric label="Volume participation" value={fmt(active.volume_participation)} /></div><div className="cfo-sector-candidates">{(active.candidates || active.top_candidates || []).map(c => <button key={c.symbol} onClick={() => onCandidate(c.symbol)}><strong>{c.symbol}</strong><span>{c.company}</span><StatusPill value={c.action} /><b className="mono">{fmt(c.expected_r)}R</b></button>)}</div></section>}
+    <SectionHeader eyebrow="Sectors" title="Where the market is strongest" detail="Trend, strength versus NIFTY and trading activity show which groups are leading." />
+    <div className="cfo-sector-grid">{sectors.map(s => <button className={active?.sector === s.sector ? 'active' : ''} key={s.sector} onClick={() => onSelect(s.sector)}><span><b>#{s.rank}</b><StatusPill value={s.trend === 'Leading' ? 'constructive' : s.trend === 'Lagging' ? 'defensive' : 'mixed'}>{s.trend}</StatusPill></span><h3>{s.sector}</h3><div><Metric label="Score" value={fmt(s.score)} /><Metric label="Breadth" value={`${fmt(s.breadth_pct)}%`} /></div><small>{s.actionable_count} ready or near · {s.eligible_count} ranked</small></button>)}</div>
+    {loading ? <div className="cfo-panel">Loading sector evidence…</div> : active && <section className="cfo-panel cfo-sector-detail"><SectionHeader eyebrow={`Sector #${active.rank || '—'}`} title={active.sector} detail="Current snapshot; conclusions lead and underlying candidates remain available." /><div className="cfo-summary-strip"><Metric label="Trend" value={active.trend} /><Metric label="Breadth" value={`${fmt(active.breadth_pct)}%`} /><Metric label="Relative strength" value={fmt(active.relative_strength)} /><Metric label="Volume participation" value={fmt(active.volume_participation)} /></div><div className="cfo-sector-candidates">{(active.candidates || active.top_candidates || []).map(c => <button key={c.symbol} onClick={() => onCandidate(c.symbol)}><strong>{c.symbol}</strong><span>{c.company}</span><StatusPill value={c.action} /><b className="mono">{fmt(c.score, 0)}</b></button>)}</div></section>}
   </div>;
 }
 
@@ -158,9 +160,9 @@ function Candidates({ candidates, onOpen }) {
   const [expanded, setExpanded] = useState(null);
   const filtered = filter === 'ALL' ? candidates : candidates.filter(c => c.action === filter);
   return <div className="cfo-page">
-    <SectionHeader eyebrow="Research bench" title="Top 100 candidates" detail="The list is finite, ranked and decision-ready. Expand a row for levels; open it for evidence." />
+    <SectionHeader eyebrow="Daily ranking" title="Top 100 setups" detail="Expand a row for the price levels and reason. Open it for the chart and source checks." />
     <div className="cfo-filterbar" role="group" aria-label="Filter candidates">{['ALL', 'BUY_NOW', 'WAIT_FOR_ENTRY', 'WATCH', 'AVOID', 'DATA_INSUFFICIENT'].map(f => <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>{f === 'ALL' ? 'All' : ACTION_LABEL[f]} <span>{f === 'ALL' ? candidates.length : candidates.filter(c => c.action === f).length}</span></button>)}</div>
-    <div className="cfo-bench-head"><span>Rank</span><span>Company</span><span>Action</span><span>Setup</span><span>Expected R</span><span>Entry distance</span><span>CFO</span><span>Confidence</span></div>
+    <div className="cfo-bench-head"><span>Rank</span><span>Company</span><span>Status</span><span>Setup</span><span>Reward / risk</span><span>Entry distance</span><span>Business</span><span>Data confidence</span></div>
     <div className="cfo-bench">{filtered.map(candidate => <CandidateRow key={candidate.symbol} candidate={candidate} expanded={expanded === candidate.symbol} onToggle={() => setExpanded(expanded === candidate.symbol ? null : candidate.symbol)} onOpen={onOpen} />)}</div>
   </div>;
 }
@@ -170,19 +172,20 @@ function TrustPanel({ data }) {
   const rows = [
     ['Price integrity', trust.price, trust.price === 'pass' ? 'NSE bhavcopy and Yahoo are on the same session and within the 1% tolerance.' : 'The independent price check did not pass.'],
     ['Financial evidence', trust.financials, trust.financials === 'pass' ? 'Required financial evidence is complete for this model.' : 'Some financial evidence is missing or partial.'],
-    ['CFO control', trust.cfo_gate, trust.cfo_gate === 'pass' ? 'No financial-quality hard block was triggered.' : 'Financial controls contain a caution or hard block.'],
+    ['Business safety checks', trust.cfo_gate, trust.cfo_gate === 'pass' ? 'No serious financial warning was found.' : 'The financial checks contain a caution or a block.'],
     ['Results window', trust.results, trust.results === 'pass' ? `Next reported result date is outside the two-session block${data.results_date ? ` (${data.results_date})` : ''}.` : trust.results === 'block' ? 'Scheduled results are within two sessions; new entries are blocked.' : 'No confirmed result date is available, so this is not counted positively.'],
-    ['Model evidence', trust.historical_validation, trust.historical_validation === 'pass' ? 'Walk-forward validation has passed the required thresholds.' : 'Early: historical validation has not passed, so actionable calls remain suppressed.'],
+    ['Track record', trust.historical_validation, trust.historical_validation === 'pass' ? 'Historical testing passed the required thresholds.' : 'Early: there are not enough closed tracking trades to prove this approach yet.'],
     ['External research', trust.external_evidence, trust.external_evidence === 'pass' ? 'Bull AI company-document evidence is attached and source-labelled. It does not increase the score.' : 'This candidate has not received bounded Bull AI coverage; absence is not treated positively.'],
   ];
   const label = state => state === 'pass' ? 'Pass' : state === 'block' ? 'Blocked' : state === 'early' ? 'Early' : state === 'not_covered' ? 'Not covered' : 'Caution';
   const tone = state => state === 'pass' ? 'healthy' : state === 'block' ? 'failed' : state === 'not_covered' ? 'neutral' : 'attention';
-  return <div className="cfo-panel cfo-trust-panel"><SectionHeader eyebrow="Trust controls" title="Why this made the list" detail="Do not trust the ticker blindly. Trust the checks, their freshness and the limits shown here." /><div className="cfo-trust-score"><strong>{fmt(data.score, 0)}<span>/100</span></strong><div><b>Deterministic rank score</b><small>#{data.global_rank} overall · #{data.sector_rank} in {data.sector}</small></div></div><div className="cfo-trust-list">{rows.map(([name, state, detail]) => <div key={name}><StatusPill value={tone(state)}>{label(state)}</StatusPill><span><strong>{name}</strong><small>{detail}</small></span></div>)}</div></div>;
+  const rankText = data.global_rank ? `#${data.global_rank} overall · #${data.sector_rank} in ${data.sector}` : data.universe_membership?.label;
+  return <div className="cfo-panel cfo-trust-panel"><SectionHeader eyebrow="Can I trust this?" title="Checks behind this stock" detail="Use the checks and their limits—not the ticker alone." /><div className="cfo-trust-score"><strong>{fmt(data.score, 0)}<span>/100</span></strong><div><b>Rules-based setup score</b><small>{rankText}</small></div></div><div className="cfo-trust-list">{rows.map(([name, state, detail]) => <div key={name}><StatusPill value={tone(state)}>{label(state)}</StatusPill><span><strong>{name}</strong><small>{detail}</small></span></div>)}</div></div>;
 }
 
 function ExternalEvidence({ research = [] }) {
   const item = research.find(entry => entry.provider === 'Bull AI');
-  if (!item) return <div className="cfo-panel cfo-bull-evidence"><SectionHeader eyebrow="Bull AI" title="No bounded coverage yet" detail="The deterministic analysis remains usable. Missing external evidence is never treated as confirmation." /><StatusPill value="neutral">Not covered</StatusPill></div>;
+  if (!item) return <div className="cfo-panel cfo-bull-evidence"><SectionHeader eyebrow="Bull AI" title="No extra document review yet" detail="The main rules-based analysis still works. Missing external evidence is never treated as confirmation." /><StatusPill value="neutral">Not covered</StatusPill></div>;
   const classes = [...(item.classification?.sectors || []), ...(item.classification?.industries || [])];
   return <div className="cfo-panel cfo-bull-evidence">
     <SectionHeader eyebrow={`Bull AI · refreshed ${item.as_of || 'date unavailable'}`} title="Company-document enrichment" detail={item.scope} action={<StatusPill value="healthy">Source-backed pilot</StatusPill>} />
@@ -192,19 +195,21 @@ function ExternalEvidence({ research = [] }) {
   </div>;
 }
 
-function CandidateDossier({ data, loading, onBack, onResearch }) {
+function CandidateDossier({ data, loading, error, symbol, onBack, onResearch }) {
   const [tab, setTab] = useState('decision');
-  if (loading || !data) return <div className="cfo-page"><button className="cfo-back" onClick={onBack}>← Back</button><div className="cfo-panel">Loading the saved decision evidence…</div></div>;
+  if (loading) return <div className="cfo-page"><button className="cfo-back" onClick={onBack}>← Back</button><div className="cfo-panel">Checking {symbol || 'this stock'} against today’s price, trend and financial data…</div></div>;
+  if (error || !data) return <div className="cfo-page"><button className="cfo-back" onClick={onBack}>← Back</button><div className="cfo-panel cfo-setup-error"><strong>Could not analyse {symbol}</strong><p>{error || 'No usable analysis was returned.'}</p><button className="cfo-primary" onClick={() => onResearch(symbol)}>Try the full research view</button></div></div>;
   const plan = data.trade_plan || {};
   const metrics = data.cfo?.metrics || {};
+  const rankText = data.global_rank ? `#${data.global_rank} overall · #${data.sector_rank} in ${data.sector}` : data.universe_membership?.label || data.sector;
   return <div className="cfo-page cfo-dossier">
-    <button className="cfo-back" onClick={onBack}>← Back to candidates</button>
-    <header className="cfo-decision-header"><div><span className="cfo-eyebrow">#{data.global_rank} overall · #{data.sector_rank} in {data.sector}</span><h1>{data.symbol} <small>{data.company}</small></h1><p>{data.setup_label || 'No active setup'}</p></div><StatusPill value={data.action} /><div className="cfo-decision-numbers"><Metric label="Entry" value={`${money(plan.entry?.low)}–${money(plan.entry?.high)}`} /><Metric label="Stop" value={money(plan.stop?.price)} /><Metric label="Expected R" value={`${fmt(data.expected_r)}R`} /><Metric label="Confidence" value={`${fmt(data.confidence, 0)}%`} /></div></header>
+    <button className="cfo-back" onClick={onBack}>← Back to list</button>
+    <header className="cfo-decision-header"><div><span className="cfo-eyebrow">{rankText}</span><h1>{data.symbol} <small>{data.company}</small></h1><p>{data.action_reason || data.setup_label || 'No active setup'}</p></div><StatusPill value={data.action} /><div className="cfo-decision-numbers"><Metric label="Entry" value={`${money(plan.entry?.low)}–${money(plan.entry?.high)}`} /><Metric label="Stop" value={money(plan.stop?.price)} /><Metric label="Reward / risk" value={`${fmt(plan.risk_reward, 2)}×`} /><Metric label="Data confidence" value={`${fmt(data.confidence, 0)}%`} /></div></header>
     <nav className="cfo-tabs">{['decision', 'business', 'chart', 'evidence'].map(t => <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}</nav>
     {tab === 'decision' && <section className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow="Trade plan" title="Levels and invalidation" /><dl className="cfo-definition"><div><dt>Entry zone</dt><dd className="mono">{money(plan.entry?.low)} – {money(plan.entry?.high)}</dd></div><div><dt>Stop</dt><dd className="mono">{money(plan.stop?.price)}</dd></div><div><dt>Targets</dt><dd className="mono">{(plan.targets || []).map(t => `${t.label} ${money(t.price)}`).join(' · ') || '—'}</dd></div><div><dt>Risk to stop</dt><dd>{plan.entry?.low != null && plan.stop?.price != null ? `${fmt(((plan.entry.low - plan.stop.price) / plan.entry.low) * 100, 2)}% from the low end of entry` : '—'}</dd></div><div><dt>Time stop</dt><dd>{plan.time_stop_sessions || 40} sessions</dd></div><div><dt>Invalidation</dt><dd>{plan.invalidation || 'Not available'}</dd></div></dl></div><TrustPanel data={data} /></section>}
-    {tab === 'business' && <section className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow={`${data.cfo?.sector_model?.replace('_', ' ')} model`} title="CFO health" /><div className="cfo-big-score">{fmt(data.cfo?.score, 0)}<span>/100</span></div><StatusPill value={data.cfo?.gate === 'pass' ? 'healthy' : data.cfo?.gate === 'hard_block' ? 'failed' : 'attention'}>{data.cfo?.gate?.replace('_', ' ')}</StatusPill><ul>{[...(data.cfo?.hard_blocks || []), ...(data.cfo?.cautions || []), ...(data.cfo?.reasons || [])].map((r, i) => <li key={i}>{r}</li>)}</ul></div><div className="cfo-panel"><SectionHeader eyebrow="Reported metrics" title="Financial evidence" /><div className="cfo-metric-grid"><Metric label="ROCE" value={`${fmt(metrics.roce)}%`} /><Metric label="ROE" value={`${fmt(metrics.roe)}%`} /><Metric label="CFO / PAT" value={`${fmt(metrics.cfo_pat, 2)}x`} /><Metric label="Revenue growth" value={`${fmt(metrics.revenue_growth)}%`} /><Metric label="Profit growth" value={`${fmt(metrics.profit_growth)}%`} /><Metric label="Piotroski" value={fmt(metrics.piotroski, 0)} /></div></div></section>}
-    {tab === 'chart' && <section className="cfo-chart-stack"><div className="cfo-panel cfo-daily-chart"><SectionHeader eyebrow="Adjusted daily · price and volume" title="Daily market structure" detail="Yahoo adjusted EOD history; the latest session is independently reconciled with NSE bhavcopy." />{(data.daily_history || []).length >= 5 ? <PriceChart history={data.daily_history} levels={plan} volumeTags={[]} /> : <div className="cfo-quiet"><span>!</span><div><strong>Daily chart is temporarily unavailable</strong><p>The saved decision remains visible, but missing chart data is never treated as confirmation.</p></div></div>}</div><div className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow="Structure" title="Technical state" /><div className="cfo-metric-grid"><Metric label="Price" value={money(data.price)} /><Metric label="Trend" value={trendLabel(data.technicals?.trend_score)} /><Metric label="RSI" value={fmt(data.technicals?.rsi)} /><Metric label="ATR" value={money(data.technicals?.atr)} /><Metric label="Volume ratio" value={`${fmt(data.technicals?.vol_ratio, 2)}x`} /><Metric label="52-week proximity" value={`${fmt((data.technicals?.prox_52w || 0) * 100)}%`} /></div></div><div className="cfo-panel"><SectionHeader eyebrow="Score anatomy" title="Deterministic components" /><div className="cfo-score-bars">{Object.entries(data.components || {}).map(([key, value]) => <div key={key}><span>{key.replaceAll('_', ' ')}</span><i><b style={{ width: `${value}%` }} /></i><strong>{fmt(value, 0)}</strong></div>)}</div></div></div></section>}
-    {tab === 'evidence' && <section className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow="Sources" title="Freshness and completeness" /><dl className="cfo-definition"><div><dt>Price</dt><dd>{data.evidence?.price?.source}</dd></div><div><dt>Price match</dt><dd>{data.evidence?.price?.status}</dd></div><div><dt>Fundamentals</dt><dd>{data.evidence?.fundamentals?.origin || 'unavailable'}</dd></div><div><dt>Completeness</dt><dd>{data.data_completeness}</dd></div><div><dt>Model</dt><dd>{data.evidence?.model?.version}</dd></div></dl></div><div className="cfo-panel"><SectionHeader eyebrow="Committee ledger" title="Bounded AI authority" /><p>AI may explain or downgrade this decision. It cannot change calculations, upgrade a gated stock, or treat missing evidence positively.</p><StatusPill value="neutral">{data.evidence?.ai_committee?.status?.replace('_', ' ') || 'Not run'}</StatusPill><button className="cfo-primary" onClick={() => onResearch(data.symbol)}>Open full live research</button></div><ExternalEvidence research={data.external_research} /></section>}
+    {tab === 'business' && <section className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow={data.cfo?.sector_model === 'financial' ? 'Bank and finance checks' : 'Business checks'} title="Business quality" /><div className="cfo-big-score">{fmt(data.cfo?.score, 0)}<span>/100</span></div><StatusPill value={data.cfo?.gate === 'pass' ? 'healthy' : data.cfo?.gate === 'hard_block' ? 'failed' : 'attention'}>{data.cfo?.gate === 'hard_block' ? 'Blocked' : data.cfo?.gate === 'data_insufficient' ? 'Needs data' : data.cfo?.gate}</StatusPill><ul>{[...(data.cfo?.hard_blocks || []), ...(data.cfo?.cautions || []), ...(data.cfo?.reasons || [])].map((r, i) => <li key={i}>{r.replace('CFO/PAT', 'Operating cash / profit')}</li>)}</ul></div><div className="cfo-panel"><SectionHeader eyebrow="Reported numbers" title="Financial evidence" /><div className="cfo-metric-grid"><Metric label="Return on capital" value={`${fmt(metrics.roce)}%`} /><Metric label="Return on equity" value={`${fmt(metrics.roe)}%`} /><Metric label="Cash profit coverage" value={`${fmt(metrics.cfo_pat, 2)}×`} /><Metric label="Revenue growth" value={`${fmt(metrics.revenue_growth)}%`} /><Metric label="Profit growth" value={`${fmt(metrics.profit_growth)}%`} /><Metric label="Financial strength" value={fmt(metrics.piotroski, 0)} /></div></div></section>}
+    {tab === 'chart' && <section className="cfo-chart-stack"><div className="cfo-panel cfo-daily-chart"><SectionHeader eyebrow="Daily price and volume" title="What the chart is doing" detail="Daily adjusted price history; the latest close is checked against NSE data." />{(data.daily_history || []).length >= 5 ? <PriceChart history={data.daily_history} levels={plan} volumeTags={[]} /> : <div className="cfo-quiet"><span>!</span><div><strong>Daily chart is temporarily unavailable</strong><p>The saved analysis remains visible, but missing chart data is never treated as confirmation.</p></div></div>}</div><div className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow="Chart readings" title="Trend and momentum" /><div className="cfo-metric-grid"><Metric label="Price" value={money(data.price)} /><Metric label="Trend" value={trendLabel(data.technicals?.trend_score)} /><Metric label="RSI" value={fmt(data.technicals?.rsi)} /><Metric label="Daily movement" value={money(data.technicals?.atr)} /><Metric label="Volume versus normal" value={`${fmt(data.technicals?.vol_ratio, 2)}×`} /><Metric label="Near 52-week high" value={`${fmt((data.technicals?.prox_52w || 0) * 100)}%`} /></div></div><div className="cfo-panel"><SectionHeader eyebrow="Why this score" title="Score breakdown" /><div className="cfo-score-bars">{Object.entries(data.components || {}).map(([key, value]) => <div key={key}><span>{key === 'cfo_health' ? 'business quality' : key.replaceAll('_', ' ')}</span><i><b style={{ width: `${value}%` }} /></i><strong>{fmt(value, 0)}</strong></div>)}</div></div></div></section>}
+    {tab === 'evidence' && <section className="cfo-tab-grid"><div className="cfo-panel"><SectionHeader eyebrow="Sources" title="How fresh is this?" /><dl className="cfo-definition"><div><dt>Price source</dt><dd>{data.evidence?.price?.source}</dd></div><div><dt>Independent price check</dt><dd>{data.evidence?.price?.status}</dd></div><div><dt>Financial source</dt><dd>{data.evidence?.fundamentals?.origin || 'unavailable'}</dd></div><div><dt>Data coverage</dt><dd>{data.data_completeness}</dd></div><div><dt>Rules version</dt><dd>{data.evidence?.model?.version}</dd></div></dl></div><div className="cfo-panel"><SectionHeader eyebrow="AI review" title="What AI can and cannot do" /><p>AI may explain or lower a status. It cannot change the numbers, promote a blocked stock, or pretend missing evidence is positive.</p><StatusPill value="neutral">{data.evidence?.ai_committee?.status?.replace('_', ' ') || 'Not run'}</StatusPill><button className="cfo-primary" onClick={() => onResearch(data.symbol)}>Open full live research</button></div><ExternalEvidence research={data.external_research} /></section>}
   </div>;
 }
 
@@ -212,10 +217,10 @@ function Portfolio({ snapshot, settings, onSave }) {
   const [draft, setDraft] = useState(settings || {});
   useEffect(() => setDraft(settings || {}), [settings]);
   const trades = snapshot?.trades || [];
-  return <div className="cfo-page"><SectionHeader eyebrow="Risk book" title="Portfolio before ideas" detail="New opportunities only matter after heat, concentration and event exposure are within policy." />
+  return <div className="cfo-page"><SectionHeader eyebrow="Portfolio" title="Your open trades" detail="See open positions, concentration and upcoming results before adding another stock." />
     <section className="cfo-summary-strip"><Metric label="Open positions" value={snapshot?.stats?.active_count || 0} note={`${settings?.max_open_positions || 8} maximum`} /><Metric label="Closed paper trades" value={(snapshot?.stats?.wins || 0) + (snapshot?.stats?.losses || 0)} note="confidence remains early to 100" /><Metric label="Win rate" value={`${fmt(snapshot?.stats?.win_rate_pct)}%`} /><Metric label="Net expectancy" value={`${fmt(snapshot?.stats?.net_pnl_r, 2)}R`} /></section>
-    <section className="cfo-two-col"><div className="cfo-panel"><SectionHeader eyebrow="Open book" title="Paper positions" />{trades.filter(t => t.status === 'ACTIVE').length ? trades.filter(t => t.status === 'ACTIVE').map(t => <div className="cfo-trade" key={t.id}><strong>{t.symbol}</strong><span>Entry <b className="mono">{money(t.entry_price)}</b></span><span>Stop <b className="mono">{money(t.stop_loss)}</b></span><StatusPill value="neutral">Active</StatusPill></div>) : <div className="cfo-quiet"><span>—</span><div><strong>No open paper trades</strong><p>Add only validated setups whose total heat fits policy.</p></div></div>}</div>
-    <form className="cfo-panel cfo-settings" onSubmit={e => { e.preventDefault(); onSave(draft); }}><SectionHeader eyebrow="Policy" title="Portfolio controls" detail="Exposure limits only. StockLens does not calculate how many shares you should buy." /><label>Risk per idea (%)<input type="number" min="0.1" max="2" step="0.05" value={draft.risk_per_trade_pct || ''} onChange={e => setDraft({ ...draft, risk_per_trade_pct: Number(e.target.value) })} /></label><label>Maximum heat (%)<input type="number" min="1" max="12" step="0.25" value={draft.max_portfolio_heat_pct || ''} onChange={e => setDraft({ ...draft, max_portfolio_heat_pct: Number(e.target.value) })} /></label><label>Maximum positions<input type="number" min="1" max="30" value={draft.max_open_positions || ''} onChange={e => setDraft({ ...draft, max_open_positions: Number(e.target.value) })} /></label><button className="cfo-primary" type="submit">Save risk policy</button></form></section>
+    <section className="cfo-two-col"><div className="cfo-panel"><SectionHeader eyebrow="Open trades" title="Paper tracking" />{trades.filter(t => t.status === 'ACTIVE').length ? trades.filter(t => t.status === 'ACTIVE').map(t => <div className="cfo-trade" key={t.id}><strong>{t.symbol}</strong><span>Entry <b className="mono">{money(t.entry_price)}</b></span><span>Stop <b className="mono">{money(t.stop_loss)}</b></span><StatusPill value="neutral">Active</StatusPill></div>) : <div className="cfo-quiet"><span>—</span><div><strong>No open paper trades</strong><p>Use paper tracking to build a real result history before relying on the rankings.</p></div></div>}</div>
+    <form className="cfo-panel cfo-settings" onSubmit={e => { e.preventDefault(); onSave(draft); }}><SectionHeader eyebrow="Limits" title="Portfolio guardrails" detail="These are exposure limits only. StockLens does not tell you how many shares to buy." /><label>Maximum risk per idea (%)<input type="number" min="0.1" max="2" step="0.05" value={draft.risk_per_trade_pct || ''} onChange={e => setDraft({ ...draft, risk_per_trade_pct: Number(e.target.value) })} /></label><label>Maximum total open risk (%)<input type="number" min="1" max="12" step="0.25" value={draft.max_portfolio_heat_pct || ''} onChange={e => setDraft({ ...draft, max_portfolio_heat_pct: Number(e.target.value) })} /></label><label>Maximum open trades<input type="number" min="1" max="30" value={draft.max_open_positions || ''} onChange={e => setDraft({ ...draft, max_open_positions: Number(e.target.value) })} /></label><button className="cfo-primary" type="submit">Save limits</button></form></section>
   </div>;
 }
 
@@ -244,6 +249,7 @@ export default function CfoWorkspace() {
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [candidateData, setCandidateData] = useState(null);
   const [candidateLoading, setCandidateLoading] = useState(false);
+  const [candidateError, setCandidateError] = useState('');
   const [researchSymbol, setResearchSymbol] = useState(null);
 
   const load = useCallback(async () => {
@@ -263,8 +269,13 @@ export default function CfoWorkspace() {
     try { setSectorDetail(await getSectorSnapshot(sector)); } catch {} finally { setSectorLoading(false); }
   };
   const openCandidate = async symbol => {
-    setPage('candidates'); setSelectedCandidate(symbol); setCandidateLoading(true); setCandidateData(null);
-    try { setCandidateData(await getCandidateAnalysis(symbol)); } catch { setCandidateData((brief?.candidates || []).find(c => c.symbol === symbol)); } finally { setCandidateLoading(false); }
+    setPage('candidates'); setSelectedCandidate(symbol); setCandidateLoading(true); setCandidateData(null); setCandidateError('');
+    try { setCandidateData(await getCandidateAnalysis(symbol)); }
+    catch (error) {
+      const saved = (brief?.candidates || []).find(c => c.symbol === symbol);
+      if (saved) setCandidateData(saved);
+      else setCandidateError(error.response?.data?.detail || 'The stock data provider did not return a usable result.');
+    } finally { setCandidateLoading(false); }
   };
   const openResearch = symbol => {
     setResearchSymbol(symbol || null);
@@ -275,10 +286,10 @@ export default function CfoWorkspace() {
 
   const currentLabel = useMemo(() => NAV.find(n => n[0] === page)?.[1] || 'Morning', [page]);
   return <div className={`cfo-shell ${railOpen ? '' : 'rail-collapsed'}`}>
-    <aside className="cfo-rail"><div className="cfo-brand"><span>SL</span><div><strong>StockLens</strong><small>CFO workspace</small></div></div><nav>{NAV.map(([id, label, sub]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { setPage(id); setSelectedCandidate(null); }}><b>{label.slice(0, 1)}</b><span><strong>{label}</strong><small>{sub}</small></span></button>)}</nav><button className="cfo-collapse" onClick={() => setRailOpen(v => !v)}>{railOpen ? 'Collapse rail' : 'Expand'}</button></aside>
+    <aside className="cfo-rail"><div className="cfo-brand"><span>SL</span><div><strong>StockLens</strong><small>Swing workspace</small></div></div><nav>{NAV.map(([id, label, sub]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { setPage(id); setSelectedCandidate(null); }}><b>{label.slice(0, 1)}</b><span><strong>{label}</strong><small>{sub}</small></span></button>)}</nav><button className="cfo-collapse" onClick={() => setRailOpen(v => !v)}>{railOpen ? 'Collapse rail' : 'Expand'}</button></aside>
     <div className="cfo-workspace">
-      <header className="cfo-topbar"><button className="cfo-menu" onClick={() => setRailOpen(v => !v)} aria-label="Toggle navigation">☰</button><div className="cfo-global-search"><SearchBar onSelect={openResearch} /></div><div className="cfo-top-status"><span><small>Snapshot</small><strong>{brief?.trading_date || 'Pending'}</strong></span><StatusPill value={brief?.data_health?.status}>{brief?.data_health?.status || 'Loading'}</StatusPill><span><small>Heat</small><strong>{fmt(brief?.portfolio?.heat_pct)}%</strong></span><button onClick={() => setDrawer(true)}>Watchlist <b>{watchlist.length}</b></button></div></header>
-      <main className="cfo-canvas">{loading ? <div className="cfo-loading"><span /><p>Opening your latest valid morning snapshot…</p></div> : error && !brief ? <EmptyState title="Morning data is unavailable" body={error} /> : selectedCandidate ? <CandidateDossier data={candidateData} loading={candidateLoading} onBack={() => setSelectedCandidate(null)} onResearch={openResearch} /> : page === 'morning' ? <Morning brief={brief} job={job} onPage={setPage} onCandidate={openCandidate} onSector={openSector} /> : page === 'sectors' ? <Sectors brief={brief} selected={selectedSector} detail={sectorDetail} loading={sectorLoading} onSelect={openSector} onCandidate={openCandidate} /> : page === 'candidates' ? <Candidates candidates={brief.candidates || []} onOpen={openCandidate} /> : page === 'portfolio' ? <Portfolio snapshot={portfolio} settings={settings} onSave={saveSettings} /> : page === 'research' ? <div className="cfo-research-embed"><LegacyResearch initialSymbol={researchSymbol} embedded /></div> : <System job={job} brief={brief} />}</main>
+      <header className="cfo-topbar"><button className="cfo-menu" onClick={() => setRailOpen(v => !v)} aria-label="Toggle navigation">☰</button><div className="cfo-global-search"><SearchBar onSelect={openCandidate} /></div><div className="cfo-top-status"><span><small>Updated</small><strong>{brief?.trading_date || 'Pending'}</strong></span><StatusPill value={brief?.data_health?.status}>{brief?.data_health?.status || 'Loading'}</StatusPill><span><small>Open risk</small><strong>{fmt(brief?.portfolio?.heat_pct)}%</strong></span><button onClick={() => setDrawer(true)}>Watchlist <b>{watchlist.length}</b></button></div></header>
+      <main className="cfo-canvas">{loading ? <div className="cfo-loading"><span /><p>Opening your latest morning snapshot…</p></div> : error && !brief ? <EmptyState title="Morning data is unavailable" body={error} /> : selectedCandidate ? <CandidateDossier data={candidateData} loading={candidateLoading} error={candidateError} symbol={selectedCandidate} onBack={() => setSelectedCandidate(null)} onResearch={openResearch} /> : page === 'morning' ? <Morning brief={brief} job={job} onPage={setPage} onCandidate={openCandidate} onSector={openSector} /> : page === 'sectors' ? <Sectors brief={brief} selected={selectedSector} detail={sectorDetail} loading={sectorLoading} onSelect={openSector} onCandidate={openCandidate} /> : page === 'candidates' ? <Candidates candidates={brief.candidates || []} onOpen={openCandidate} /> : page === 'portfolio' ? <Portfolio snapshot={portfolio} settings={settings} onSave={saveSettings} /> : page === 'research' ? <div className="cfo-research-embed"><LegacyResearch initialSymbol={researchSymbol} embedded /></div> : <System job={job} brief={brief} />}</main>
     </div>
     {drawer && <div className="cfo-drawer-scrim" onClick={() => setDrawer(false)}><aside className="cfo-drawer" onClick={e => e.stopPropagation()}><header><div><small>Context drawer</small><h2>Watchlist</h2></div><button onClick={() => setDrawer(false)}>Close</button></header>{watchlist.length ? watchlist.map(w => <button key={w.symbol} onClick={() => { setDrawer(false); openResearch(w.symbol); }}><strong>{w.symbol}</strong><span>{w.name}</span><b>Open →</b></button>) : <p>No stocks in your watchlist yet.</p>}</aside></div>}
     <nav className="cfo-mobile-nav">{[['morning', 'Morning'], ['sectors', 'Sectors'], ['watchlist', 'Watchlist'], ['search', 'Search'], ['more', 'More']].map(([id, label]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => id === 'watchlist' ? setDrawer(true) : id === 'search' ? document.querySelector('.cfo-global-search input')?.focus() : setPage(id === 'more' ? 'system' : id)}><b>{label.slice(0, 1)}</b><span>{label}</span></button>)}</nav>

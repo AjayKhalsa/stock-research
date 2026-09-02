@@ -242,7 +242,7 @@ export const demoQuant = {
       F1_positive_roa:        { score: 1, value: 12.8, unit: '% ROA', description: 'Net Income / Total Assets > 0 — company is asset-profitable' },
       F2_positive_cfo:        { score: 1, value: 690,  unit: '₹ Cr', description: 'Operating cash flow is positive — real cash being generated' },
       F3_increasing_roa:      { score: 1, value: 1.4,  unit: 'pp YoY', description: 'ROA improved year-over-year' },
-      F4_quality_earnings:    { score: 1, value: null, description: 'CFO/Assets > ROA — earnings are cash-backed, not accounting inflated' },
+      F4_quality_earnings:    { score: 1, value: null, description: 'Operating cash relative to assets exceeds reported returns — earnings are cash-backed' },
       F5_decreasing_leverage: { score: 1, value: -0.03, unit: 'Δ ratio', description: 'Long-term debt burden has not increased YoY' },
       F6_improving_liquidity: { score: 0, value: -0.08, unit: 'Δ ratio', description: 'Current ratio slipped from 2.31x to 2.23x — marginally weaker short-term cover' },
       F7_no_dilution:         { score: 1, value: 0,    description: 'No significant new share issuance detected' },

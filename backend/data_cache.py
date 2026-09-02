@@ -187,7 +187,8 @@ async def _fetch_live(symbol: str, exchange: str) -> Tuple[dict, str]:
 
 
 async def get_fundamentals(symbol: str, exchange: str = "NSE",
-                           ttl_hours: Optional[float] = None) -> Tuple[dict, dict]:
+                           ttl_hours: Optional[float] = None,
+                           require_classification: bool = False) -> Tuple[dict, dict]:
     """
     Cached fundamentals for one symbol. Returns (payload, meta).
     payload may be {} when nothing was ever fetchable — callers already
@@ -198,7 +199,11 @@ async def get_fundamentals(symbol: str, exchange: str = "NSE",
         float(db.get_setting("fundamentals_ttl_hours", TTL_HOURS_DEFAULT))
 
     cached = db.cache_get(symbol)
-    if cached and cached["payload"] and cached["age_seconds"] < ttl * 3600:
+    classification_ready = bool(
+        cached and cached["payload"] and cached["payload"].get("sector")
+    )
+    if cached and cached["payload"] and cached["age_seconds"] < ttl * 3600 \
+            and (not require_classification or classification_ready):
         return cached["payload"], _meta("cache", cached["origin"],
                                         cached["fetched_at"], ttl, stale=False)
 

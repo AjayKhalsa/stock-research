@@ -24,7 +24,7 @@ function GlassTitle({ term, glass }) {
 /* ── Piotroski signal metadata ─────────────────────────────────────────────── */
 const SIGNAL_META = {
   F1_positive_roa:         { label: 'ROA > 0',      group: 'Profitability' },
-  F2_positive_cfo:         { label: 'CFO > 0',      group: 'Profitability' },
+  F2_positive_cfo:         { label: 'Positive operating cash', group: 'Profitability' },
   F3_increasing_roa:       { label: 'ΔROA ↑',       group: 'Profitability' },
   F4_quality_earnings:     { label: 'Cash Quality',  group: 'Profitability' },
   F5_decreasing_leverage:  { label: 'Leverage ↓',   group: 'Leverage' },

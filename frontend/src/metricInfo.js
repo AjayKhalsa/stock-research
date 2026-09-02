@@ -76,7 +76,7 @@ export const GLASS_METRICS = {
   piotroski: {
     subtitle: 'Operational Efficiency Health',
     tldr: 'A 9-point checklist testing the absolute operational trajectory across profitability, capital-structure liquidity, and operating efficiency. 8-9 = excellent, ≤3 = deteriorating. Click any ✗ badge for the exact data behind the failure.',
-    math: 'F = Σ of 9 binary signals: ROA>0, CFO>0, ΔROA↑, CFO/TA>ROA (accruals), Δleverage↓, Δcurrent ratio↑, no dilution, Δgross margin↑, Δasset turnover↑',
+    math: 'F = 9 checks covering profit, operating cash, improving returns, accruals, leverage, liquidity, dilution, margins and asset use',
   },
   dupont: {
     subtitle: 'ROE Profitability Drivers',

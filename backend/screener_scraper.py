@@ -70,6 +70,19 @@ def parse_screener(html: str) -> dict:
     if h1:
         d["company_name"] = h1.get_text(strip=True)
 
+    # Screener exposes NSE's company classification as labelled links near
+    # the company header.  These fields used to be ignored, which collapsed
+    # almost the entire morning snapshot into "Unclassified" even though the
+    # source page carried a sector and industry for each company.
+    classification = {}
+    for link in soup.find_all("a", title=True):
+        label = str(link.get("title") or "").strip().lower()
+        value = link.get_text(" ", strip=True)
+        if value and label in {"sector", "broad sector", "industry", "broad industry"}:
+            classification[label] = value
+    d["sector"] = classification.get("sector") or classification.get("broad sector")
+    d["industry"] = classification.get("industry") or classification.get("broad industry")
+
     # Top ratios
     ratios = soup.find("ul", id="top-ratios")
     if ratios:
