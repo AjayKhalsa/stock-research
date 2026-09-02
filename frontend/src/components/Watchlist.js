@@ -403,6 +403,8 @@ function SavedScreensPanel({ screenTickers, screenRows, onLoadScreen }) {
 function statusTone(status) {
   if (status === 'WIN_T1' || status === 'WIN_T2') return 'win';
   if (status === 'STOPPED_OUT') return 'loss';
+  if (status === 'TIME_STOP') return 'active';
+  if (status === 'EXPIRED' || status === 'AMBIGUOUS' || status === 'INVALIDATED') return 'excluded';
   return 'active';
 }
 
@@ -466,8 +468,9 @@ function ScorecardWidget() {
     setLoadingTrades(false);
   };
 
-  const expColor = (stats?.net_pnl_r || 0) > 0 ? '#34d399'
-    : (stats?.net_pnl_r || 0) < 0 ? '#f87171' : '#94a3b8';
+  const expectancy = stats?.expectancy_r ?? 0;
+  const expColor = expectancy > 0 ? '#34d399'
+    : expectancy < 0 ? '#f87171' : '#94a3b8';
   const stateLabel = syncState === 'live' ? 'Live'
     : syncState === 'refreshing' ? 'Updating'
       : syncState === 'cached' ? 'Cached' : syncState === 'offline' ? 'Offline' : 'Connecting';
@@ -501,14 +504,18 @@ function ScorecardWidget() {
             </span>
           </div>
           <div className="pt-scorecard-row">
-            <span className="pt-scorecard-label">Net Expectancy</span>
+            <span className="pt-scorecard-label">Expectancy / Resolved Trade</span>
             <span className="pt-scorecard-value" style={{ color: expColor }}>
-              {stats.net_pnl_r > 0 ? '+' : ''}{stats.net_pnl_r}R
+              {expectancy > 0 ? '+' : ''}{expectancy}R
             </span>
           </div>
           <div className="pt-scorecard-row">
-            <span className="pt-scorecard-label">Active Paper Trades</span>
-            <span className="pt-scorecard-value">{stats.active_count} Pending</span>
+            <span className="pt-scorecard-label">Open Paper Tests</span>
+            <span className="pt-scorecard-value">{(stats.active_count || 0) + (stats.armed_count || 0)} <span className="pt-scorecard-sub">({stats.armed_count || 0} waiting)</span></span>
+          </div>
+          <div className="pt-scorecard-row">
+            <span className="pt-scorecard-label">Resolved / Excluded</span>
+            <span className="pt-scorecard-value">{stats.resolved_count ?? ((stats.wins || 0) + (stats.losses || 0))} / {stats.excluded_count || 0}</span>
           </div>
         </div>
       )}
@@ -532,18 +539,19 @@ function ScorecardWidget() {
               ) : (
                 <table className="pt-log-table">
                   <thead>
-                    <tr><th>Symbol</th><th>Entry Date</th><th>Entry</th><th>Status</th><th>R</th></tr>
+                    <tr><th>Symbol</th><th>Signal</th><th>Entry</th><th>Status</th><th>R</th><th>MFE / MAE</th></tr>
                   </thead>
                   <tbody>
                     {trades.map(t => (
                       <tr key={t.id}>
                         <td className="pt-log-symbol">{t.symbol}</td>
-                        <td>{String(t.entry_date || t.created_at).slice(0, 10)}</td>
+                        <td>{String(t.signal_date || t.entry_date || t.created_at).slice(0, 10)}</td>
                         <td>₹{Number(t.entry_price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
                         <td><span className={`pt-badge ${statusTone(t.status)}`}>{t.status}</span></td>
                         <td className={t.pnl_r > 0 ? 'pt-r-pos' : t.pnl_r < 0 ? 'pt-r-neg' : ''}>
                           {t.pnl_r > 0 ? '+' : ''}{t.pnl_r}R
                         </td>
+                        <td>{Number(t.mfe_r || 0).toFixed(2)} / {Number(t.mae_r || 0).toFixed(2)}</td>
                       </tr>
                     ))}
                   </tbody>

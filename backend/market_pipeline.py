@@ -15,6 +15,7 @@ import ai_committee
 import data_cache
 import db
 import nse_bhavcopy
+import paper_test_service
 import price_service as price
 import swing_engine
 import symbol_resolver
@@ -185,7 +186,7 @@ async def run_daily_pipeline(job_id: str) -> None:
             retained_candles: dict[str, list[dict]] = {}
             top_candle_heap: list[tuple[float, str]] = []
             priority_symbols = {w["symbol"] for w in db.watchlist_all()}
-            priority_symbols.update(t["symbol"] for t in db.paper_trades_active())
+            priority_symbols.update(t["symbol"] for t in db.paper_trades_open())
             names = {row["symbol"]: row.get("name") or row["symbol"] for row in universe}
             done = 0
             for batch in _chunks([row["symbol"] for row in universe], HISTORY_BATCH):
@@ -323,7 +324,10 @@ async def run_daily_pipeline(job_id: str) -> None:
                 candidate["sector_rank"] = sector_counts[candidate["sector"]]
             sectors = _build_sector_snapshots(candidates)
 
+            db.update_job_run(job_id, stage="paper_outcomes", progress=0, total=0)
+            paper_evaluation = await paper_test_service.evaluate_open_tests()
             active_trades = db.paper_trades_active()
+            paper_stats = db.paper_trades_stats()
             settings = db.portfolio_settings()
             # Legacy paper trades do not retain an executed share quantity, so
             # deriving heat from an arbitrary quantity would present false
@@ -354,8 +358,9 @@ async def run_daily_pipeline(job_id: str) -> None:
                               "max_heat_pct": settings["max_portfolio_heat_pct"], "actions": []},
                 "changes": _changes(previous, candidates),
                 "results_calendar": sorted(event_calendar, key=lambda event: event["date"])[:30],
-                "validation": {"status": "early", "closed_paper_trades": db.paper_trades_stats()["wins"] + db.paper_trades_stats()["losses"],
+                "validation": {"status": "early", "closed_paper_trades": paper_stats["resolved_count"],
                                "required_for_mature_confidence": 100},
+                "paper_evaluation": paper_evaluation,
                 "candidates": candidates, "sectors": sectors,
             }
             trading_date = bhavcopy.get("as_of") or (nifty[-1].get("date") if nifty else now.date().isoformat())

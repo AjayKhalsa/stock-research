@@ -176,6 +176,8 @@ async def candidate_detail(symbol: str):
             "label": f"Ranked #{item.get('global_rank')} in today's Top 100",
         }
         candles = await price_service.get_historical(f"NSE:{symbol}", days=520)
+    latest_snapshot = db.latest_analysis_snapshot() or {}
+    item["snapshot_id"] = latest_snapshot.get("snapshot_id") if item["universe_membership"]["ranked"] else None
     item["daily_history"] = candles[-252:]
     item["external_research"] = db.candidate_enrichments(symbol)
     price_status = item.get("evidence", {}).get("price", {}).get("status") or "unknown"

@@ -648,6 +648,7 @@
 .pt-badge.win    { background: rgba(16, 185, 129, 0.12); color: #059669; }
 .pt-badge.loss   { background: rgba(239, 68, 68, 0.10);  color: #dc2626; }
 .pt-badge.active { background: rgba(100, 116, 139, 0.10); color: #64748b; }
+.pt-badge.excluded { background: rgba(245, 158, 11, 0.10); color: #b45309; }
 
 .pt-r-pos { color: #059669; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pt-r-neg { color: #dc2626; font-weight: 700; font-variant-numeric: tabular-nums; }

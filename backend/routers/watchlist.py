@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import alert_store
@@ -12,6 +13,11 @@ import db
 import price_service as price
 
 router = APIRouter()
+
+
+class WatchlistUpdate(BaseModel):
+    note: Optional[str] = None
+    name: Optional[str] = None
 
 
 @router.get("/api/watchlist")
@@ -24,7 +30,24 @@ def add_watchlist(item: dict):
     sym = item.get("symbol", "").upper()
     if not sym:
         return db.watchlist_all()
-    return db.watchlist_add(sym, item.get("exchange", "NSE"), item.get("name", sym))
+    latest = db.latest_analysis_snapshot() or {}
+    return db.watchlist_add(
+        sym, item.get("exchange", "NSE"), item.get("name", sym),
+        note=str(item.get("note") or "")[:1000],
+        added_snapshot_id=item.get("snapshot_id") or latest.get("snapshot_id"),
+    )
+
+
+@router.patch("/api/watchlist/{symbol}")
+def update_watchlist(symbol: str, body: WatchlistUpdate):
+    updated = db.watchlist_update(
+        symbol,
+        note=body.note[:1000] if body.note is not None else None,
+        name=body.name[:200] if body.name is not None else None,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Stock is not in the watchlist")
+    return updated
 
 
 @router.delete("/api/watchlist/{symbol}")
@@ -39,6 +62,46 @@ async def watchlist_prices():
         return {}
     instruments = [f"{w['exchange']}:{w['symbol']}" for w in wl]
     return await price.get_ltp_multiple(instruments)
+
+
+@router.get("/api/watchlist/snapshot")
+async def watchlist_snapshot():
+    """One fast, decision-oriented view of the user's single watchlist."""
+    items = await run_in_threadpool(db.watchlist_all)
+    if not items:
+        return {"items": [], "count": 0, "snapshot_id": None}
+    latest = await run_in_threadpool(db.latest_analysis_snapshot)
+    snapshot_id = (latest or {}).get("snapshot_id")
+    instruments = [f"{item['exchange']}:{item['symbol']}" for item in items]
+    try:
+        prices = await price.get_ltp_multiple(instruments)
+    except Exception:  # cached analysis remains useful during quote failure
+        prices = {}
+    enriched = []
+    for item in items:
+        analysis = await run_in_threadpool(db.candidate_analysis, item["symbol"], snapshot_id)
+        plan = (analysis or {}).get("trade_plan") or {}
+        quote = prices.get(f"{item['exchange']}:{item['symbol']}") or prices.get(item["symbol"]) or {}
+        if not isinstance(quote, dict):
+            quote = {"ltp": quote}
+        enriched.append({
+            **item,
+            "price": quote.get("ltp") or quote.get("price") or (analysis or {}).get("price"),
+            "action": (analysis or {}).get("action") or "NOT_RANKED",
+            "action_reason": (analysis or {}).get("action_reason"),
+            "sector": (analysis or {}).get("sector"),
+            "global_rank": (analysis or {}).get("global_rank"),
+            "sector_rank": (analysis or {}).get("sector_rank"),
+            "score": (analysis or {}).get("score"),
+            "confidence": (analysis or {}).get("confidence"),
+            "entry_distance_pct": (analysis or {}).get("entry_distance_pct"),
+            "results_risk": (analysis or {}).get("results_risk") or "unknown",
+            "entry": plan.get("entry"),
+            "freshness": (latest or {}).get("trading_date"),
+            "ranked": bool(analysis),
+        })
+    return {"items": enriched, "count": len(enriched), "snapshot_id": snapshot_id,
+            "trading_date": (latest or {}).get("trading_date")}
 
 
 # ── alerts ────────────────────────────────────────────────────────────────────

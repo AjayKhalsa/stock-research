@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from chartink_scraper import _extract_scan_clause  # noqa: E402
 from main import app  # noqa: E402
 import db  # noqa: E402
+import paper_test_service  # noqa: E402
 from routers import screener as screener_router  # noqa: E402
 
 
@@ -262,6 +263,24 @@ class SavedScreensApiTests(unittest.TestCase):
             "http://127.0.0.1:3001",
         )
 
+    def test_watchlist_retains_user_note_and_point_in_time_metadata(self):
+        created = self.client.post("/api/watchlist", json={
+            "symbol": "HDFCBANK", "name": "HDFC Bank",
+            "note": "Wait for a clean close above resistance",
+            "snapshot_id": "snapshot-watch-1",
+        })
+        self.assertEqual(created.status_code, 200)
+        row = next(item for item in created.json() if item["symbol"] == "HDFCBANK")
+        self.assertEqual(row["added_snapshot_id"], "snapshot-watch-1")
+        self.assertEqual(row["note"], "Wait for a clean close above resistance")
+
+        updated = self.client.patch("/api/watchlist/HDFCBANK", json={
+            "note": "Only act inside the planned entry zone",
+        })
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["note"], "Only act inside the planned entry zone")
+        self.client.delete("/api/watchlist/HDFCBANK")
+
     def test_paper_trade_snapshot_combines_stats_and_recent_log(self):
         created = self.client.post("/api/paper-trades", json={
             "symbol": "tcs",
@@ -281,6 +300,83 @@ class SavedScreensApiTests(unittest.TestCase):
         self.assertGreaterEqual(snapshot["stats"]["active_count"], 1)
         self.assertEqual(snapshot["trades"][0]["symbol"], "TCS")
         self.assertIn("Server-Timing", response.headers)
+
+    def test_paper_test_arms_then_uses_daily_entry_and_actual_structural_r(self):
+        created = self.client.post("/api/paper-trades", json={
+            "symbol": "reliance", "entry_price": 101,
+            "entry_low": 100, "entry_high": 102, "stop_loss": 95,
+            "target_t1": 110, "target_t2": 118,
+            "signal_date": "2026-01-01", "snapshot_id": "snap-1",
+            "model_version": "swing-test", "action_at_add": "WAIT_FOR_ENTRY",
+            "invalidation": "Close below 95",
+        })
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["status"], "ARMED")
+        history = [
+            {"date": "2026-01-02", "open": 99, "high": 101, "low": 99, "close": 100},
+            {"date": "2026-01-05", "open": 104, "high": 111, "low": 103, "close": 109},
+        ]
+        with patch.object(paper_test_service.price, "get_historical",
+                          new=AsyncMock(return_value=history)):
+            evaluated = self.client.post("/api/paper-trades/evaluate")
+        self.assertEqual(evaluated.status_code, 200)
+        result = evaluated.json()["results"][0]
+        self.assertEqual(result["status"], "WIN_T1")
+        self.assertEqual(result["pnl_r"], 1.14)
+        self.assertEqual(result["trade"]["model_version"], "swing-test")
+        self.assertEqual(result["trade"]["outcome_date"], "2026-01-05")
+        self.assertEqual(result["trade"]["exit_price"], 110.0)
+        self.assertEqual(result["trade"]["mfe_r"], 1.29)
+        self.assertEqual(result["trade"]["mae_r"], 0.0)
+        stats = self.client.get("/api/paper-trades/stats").json()
+        self.assertGreaterEqual(stats["resolved_count"], 1)
+        self.assertIn("expectancy_r", stats)
+        self.assertIn("profit_factor", stats)
+
+    def test_paper_test_rejects_invalid_geometry(self):
+        response = self.client.post("/api/paper-trades", json={
+            "symbol": "BADPLAN", "entry_price": 100, "entry_low": 99,
+            "entry_high": 101, "stop_loss": 100, "target_t1": 110,
+        })
+        self.assertEqual(response.status_code, 400)
+
+    def test_paper_test_excludes_ambiguous_entry_bar(self):
+        trade = self.client.post("/api/paper-trades", json={
+            "symbol": "AMBIG", "entry_price": 101, "entry_low": 100,
+            "entry_high": 102, "stop_loss": 95, "target_t1": 110,
+            "signal_date": "2026-02-01",
+        }).json()
+        result = paper_test_service._evaluate_trade(trade, [{
+            "date": "2026-02-02", "high": 111, "low": 94, "close": 104,
+        }])
+        self.assertEqual(result["status"], "AMBIGUOUS")
+        self.assertEqual(result["trade"]["pnl_r"], 0.0)
+
+    def test_paper_test_uses_stop_first_on_later_conflict_bar(self):
+        trade = self.client.post("/api/paper-trades", json={
+            "symbol": "CONFLICT", "entry_price": 101, "entry_low": 100,
+            "entry_high": 102, "stop_loss": 95, "target_t1": 110,
+            "signal_date": "2026-03-01",
+        }).json()
+        result = paper_test_service._evaluate_trade(trade, [
+            {"date": "2026-03-02", "high": 101, "low": 99, "close": 100},
+            {"date": "2026-03-03", "high": 111, "low": 94, "close": 107},
+        ])
+        self.assertEqual(result["status"], "STOPPED_OUT")
+        self.assertEqual(result["trade"]["pnl_r"], -1.0)
+        self.assertEqual(result["trade"]["mae_r"], 1.0)
+
+    def test_paper_test_expires_an_untouched_entry_after_ten_sessions(self):
+        trade = self.client.post("/api/paper-trades", json={
+            "symbol": "UNTOUCHED", "entry_price": 101, "entry_low": 100,
+            "entry_high": 102, "stop_loss": 95, "target_t1": 110,
+            "signal_date": "2026-04-01",
+        }).json()
+        candles = [{"date": f"2026-04-{day:02d}", "high": 106, "low": 103,
+                    "close": 104} for day in range(2, 12)]
+        result = paper_test_service._evaluate_trade(trade, candles)
+        self.assertEqual(result["status"], "EXPIRED")
+        self.assertEqual(result["trade"]["armed_sessions"], 10)
 
     def test_auto_screen_requires_bearer_secret_and_starts_once(self):
         with patch.object(screener_router.config, "CRON_SECRET_KEY", "test-secret"), \

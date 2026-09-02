@@ -115,7 +115,10 @@ CREATE TABLE IF NOT EXISTS watchlist (
     symbol      TEXT PRIMARY KEY,
     exchange    TEXT NOT NULL DEFAULT 'NSE',
     name        TEXT,
-    added_at    REAL NOT NULL
+    added_at    REAL NOT NULL,
+    note        TEXT,
+    added_snapshot_id TEXT,
+    updated_at  REAL
 );
 
 CREATE TABLE IF NOT EXISTS alerts (
@@ -158,8 +161,8 @@ CREATE TABLE IF NOT EXISTS saved_screens (
     updated_at   REAL NOT NULL
 );
 
--- Forward-tested ("paper") trades logged from a Trade Plan's Position Sizer.
--- status: ACTIVE | WIN_T1 | WIN_T2 | STOPPED_OUT, advanced by /api/paper-trades/evaluate.
+-- Point-in-time paper tests logged from a published or live Trade Plan.
+-- ARMED entries are activated and resolved from later daily candles only.
 CREATE TABLE IF NOT EXISTS paper_trades (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     symbol      VARCHAR(20) NOT NULL,
@@ -172,7 +175,24 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     setup_type  TEXT,
     status      VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
     pnl_r       NUMERIC(5, 2) NOT NULL DEFAULT 0.0,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    entry_low   REAL,
+    entry_high  REAL,
+    signal_date TEXT,
+    snapshot_id TEXT,
+    model_version TEXT,
+    action_at_add TEXT,
+    invalidation TEXT,
+    note        TEXT,
+    armed_sessions INTEGER NOT NULL DEFAULT 0,
+    active_sessions INTEGER NOT NULL DEFAULT 0,
+    activated_at REAL,
+    closed_at   REAL,
+    last_evaluated_date TEXT,
+    mfe_r       REAL NOT NULL DEFAULT 0,
+    mae_r       REAL NOT NULL DEFAULT 0,
+    exit_price  REAL,
+    outcome_date TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
 
@@ -269,7 +289,10 @@ CREATE TABLE IF NOT EXISTS watchlist (
     symbol      TEXT PRIMARY KEY,
     exchange    TEXT NOT NULL DEFAULT 'NSE',
     name        TEXT,
-    added_at    DOUBLE PRECISION NOT NULL
+    added_at    DOUBLE PRECISION NOT NULL,
+    note        TEXT,
+    added_snapshot_id TEXT,
+    updated_at  DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS alerts (
@@ -324,7 +347,24 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     setup_type  TEXT,
     status      VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
     pnl_r       NUMERIC(5, 2) NOT NULL DEFAULT 0.0,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    entry_low   DOUBLE PRECISION,
+    entry_high  DOUBLE PRECISION,
+    signal_date TEXT,
+    snapshot_id TEXT,
+    model_version TEXT,
+    action_at_add TEXT,
+    invalidation TEXT,
+    note        TEXT,
+    armed_sessions INTEGER NOT NULL DEFAULT 0,
+    active_sessions INTEGER NOT NULL DEFAULT 0,
+    activated_at DOUBLE PRECISION,
+    closed_at   DOUBLE PRECISION,
+    last_evaluated_date TEXT,
+    mfe_r       DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mae_r       DOUBLE PRECISION NOT NULL DEFAULT 0,
+    exit_price  DOUBLE PRECISION,
+    outcome_date TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
 
@@ -432,6 +472,48 @@ def _migrate_saved_screens_columns() -> None:
             c.execute("ALTER TABLE saved_screens ADD COLUMN computed_at REAL")
 
 
+def _migrate_unified_research_columns() -> None:
+    """Add the unified-workspace metadata without rewriting legacy rows."""
+    watchlist_columns = {
+        "note": "TEXT",
+        "added_snapshot_id": "TEXT",
+        "updated_at": "DOUBLE PRECISION" if _PG else "REAL",
+    }
+    paper_columns = {
+        "entry_low": "DOUBLE PRECISION" if _PG else "REAL",
+        "entry_high": "DOUBLE PRECISION" if _PG else "REAL",
+        "signal_date": "TEXT",
+        "snapshot_id": "TEXT",
+        "model_version": "TEXT",
+        "action_at_add": "TEXT",
+        "invalidation": "TEXT",
+        "note": "TEXT",
+        "armed_sessions": "INTEGER NOT NULL DEFAULT 0",
+        "active_sessions": "INTEGER NOT NULL DEFAULT 0",
+        "activated_at": "DOUBLE PRECISION" if _PG else "REAL",
+        "closed_at": "DOUBLE PRECISION" if _PG else "REAL",
+        "last_evaluated_date": "TEXT",
+        "mfe_r": "DOUBLE PRECISION NOT NULL DEFAULT 0" if _PG else "REAL NOT NULL DEFAULT 0",
+        "mae_r": "DOUBLE PRECISION NOT NULL DEFAULT 0" if _PG else "REAL NOT NULL DEFAULT 0",
+        "exit_price": "DOUBLE PRECISION" if _PG else "REAL",
+        "outcome_date": "TEXT",
+    }
+    if _PG:
+        with _conn() as c:
+            with c.cursor() as cur:
+                for name, sql_type in watchlist_columns.items():
+                    cur.execute(f"ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS {name} {sql_type}")
+                for name, sql_type in paper_columns.items():
+                    cur.execute(f"ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS {name} {sql_type}")
+        return
+    with _conn() as c:
+        for table, columns in (("watchlist", watchlist_columns), ("paper_trades", paper_columns)):
+            existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
+            for name, sql_type in columns.items():
+                if name not in existing:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+
+
 def init() -> None:
     """Create schema (idempotent). SQLite path also migrates legacy JSON once."""
     if _PG:
@@ -443,6 +525,7 @@ def init() -> None:
                     if stmt.strip():
                         cur.execute(stmt)
         _migrate_saved_screens_columns()
+        _migrate_unified_research_columns()
         _seed_candidate_enrichments()
         return
     print(f"[db] Using local SQLite at {DB_PATH} — EPHEMERAL on most hosts "
@@ -453,6 +536,7 @@ def init() -> None:
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(_SCHEMA_SQLITE)
     _migrate_saved_screens_columns()
+    _migrate_unified_research_columns()
     _migrate_legacy_json()
     _seed_candidate_enrichments()
 
@@ -549,19 +633,48 @@ def _migrate_legacy_json() -> None:
 def watchlist_all() -> list:
     with _conn() as c:
         rows = c.execute(_sql(
-            "SELECT symbol, exchange, name FROM watchlist ORDER BY added_at"
+            "SELECT symbol, exchange, name, added_at, note, added_snapshot_id, updated_at "
+            "FROM watchlist ORDER BY added_at"
         )).fetchall()
     return [dict(r) for r in rows]
 
 
-def watchlist_add(symbol: str, exchange: str = "NSE", name: str = "") -> list:
+def watchlist_add(symbol: str, exchange: str = "NSE", name: str = "",
+                  note: str = "", added_snapshot_id: Optional[str] = None) -> list:
+    now = time.time()
     with _conn() as c:
         c.execute(_sql(
-            "INSERT INTO watchlist(symbol, exchange, name, added_at) "
-            "VALUES (?,?,?,?) ON CONFLICT DO NOTHING"),
-            (symbol.upper(), exchange, name or symbol.upper(), time.time()),
+            "INSERT INTO watchlist(symbol, exchange, name, added_at, note, added_snapshot_id, updated_at) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(symbol) DO UPDATE SET "
+            "exchange = excluded.exchange, name = excluded.name, "
+            "note = CASE WHEN excluded.note <> '' THEN excluded.note ELSE watchlist.note END, "
+            "updated_at = excluded.updated_at"),
+            (symbol.upper(), exchange, name or symbol.upper(), now, note or "",
+             added_snapshot_id, now),
         )
     return watchlist_all()
+
+
+def watchlist_get(symbol: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(_sql(
+            "SELECT symbol, exchange, name, added_at, note, added_snapshot_id, updated_at "
+            "FROM watchlist WHERE symbol = ?"
+        ), (symbol.upper(),)).fetchone()
+    return dict(row) if row else None
+
+
+def watchlist_update(symbol: str, note: Optional[str] = None, name: Optional[str] = None) -> Optional[dict]:
+    current = watchlist_get(symbol)
+    if not current:
+        return None
+    with _conn() as c:
+        c.execute(_sql(
+            "UPDATE watchlist SET note = ?, name = ?, updated_at = ? WHERE symbol = ?"
+        ), (current.get("note") if note is None else note,
+            current.get("name") if name is None else name,
+            time.time(), symbol.upper()))
+    return watchlist_get(symbol)
 
 
 def watchlist_remove(symbol: str) -> list:
@@ -1043,8 +1156,10 @@ def screen_delete(screen_id: int) -> bool:
 
 # ── paper trades (forward-testing log for the Position Sizer) ─────────────────
 
-_NUMERIC_TRADE_FIELDS = ("entry_price", "stop_loss", "target_t1", "target_t2",
-                          "score", "pnl_r")
+_NUMERIC_TRADE_FIELDS = ("entry_price", "entry_low", "entry_high", "stop_loss",
+                          "target_t1", "target_t2", "score", "pnl_r",
+                          "activated_at", "closed_at", "mfe_r", "mae_r",
+                          "exit_price")
 
 
 def _row_to_trade(r) -> dict:
@@ -1060,15 +1175,26 @@ def _row_to_trade(r) -> dict:
 def paper_trade_insert(symbol: str, entry_price: float, stop_loss: float,
                         target_t1: float, target_t2: float,
                         score: Optional[float] = None,
-                        setup_type: Optional[str] = None) -> dict:
+                        setup_type: Optional[str] = None, *, status: str = "ACTIVE",
+                        entry_low: Optional[float] = None,
+                        entry_high: Optional[float] = None,
+                        signal_date: Optional[str] = None,
+                        snapshot_id: Optional[str] = None,
+                        model_version: Optional[str] = None,
+                        action_at_add: Optional[str] = None,
+                        invalidation: Optional[str] = None,
+                        note: Optional[str] = None) -> dict:
     """Log a new forward-test trade; returns the created record (with id)."""
     with _conn() as c:
         r = c.execute(
             _sql("INSERT INTO paper_trades"
-                 "(symbol, entry_price, stop_loss, target_t1, target_t2, score, setup_type) "
-                 "VALUES (?,?,?,?,?,?,?) RETURNING *"),
+                 "(symbol, entry_price, stop_loss, target_t1, target_t2, score, setup_type, "
+                 "status, entry_low, entry_high, signal_date, snapshot_id, model_version, "
+                 "action_at_add, invalidation, note) "
+                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *"),
             (symbol.upper(), entry_price, stop_loss, target_t1, target_t2,
-             score, setup_type),
+             score, setup_type, status, entry_low, entry_high, signal_date,
+             snapshot_id, model_version, action_at_add, invalidation, note),
         ).fetchone()
     return _row_to_trade(r)
 
@@ -1090,36 +1216,108 @@ def paper_trades_active() -> list:
     return [_row_to_trade(r) for r in rows]
 
 
+def paper_trades_open() -> list:
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT * FROM paper_trades WHERE status IN ('ARMED','ACTIVE') ORDER BY id"
+        )).fetchall()
+    return [_row_to_trade(r) for r in rows]
+
+
+def paper_trade_get(trade_id: int) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(_sql("SELECT * FROM paper_trades WHERE id = ?"), (trade_id,)).fetchone()
+    return _row_to_trade(row) if row else None
+
+
+def paper_trade_open_for_symbol(symbol: str) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute(_sql(
+            "SELECT * FROM paper_trades WHERE symbol = ? AND status IN ('ARMED','ACTIVE') "
+            "ORDER BY id DESC LIMIT 1"
+        ), (symbol.upper(),)).fetchone()
+    return _row_to_trade(row) if row else None
+
+
+def paper_trade_patch(trade_id: int, **changes) -> Optional[dict]:
+    allowed = {"status", "pnl_r", "note", "armed_sessions", "active_sessions",
+               "activated_at", "closed_at", "last_evaluated_date", "entry_price",
+               "mfe_r", "mae_r", "exit_price", "outcome_date"}
+    values = [(key, value) for key, value in changes.items() if key in allowed]
+    if not values:
+        return paper_trade_get(trade_id)
+    assignments = ", ".join(f"{key} = ?" for key, _value in values)
+    with _conn() as c:
+        c.execute(_sql(f"UPDATE paper_trades SET {assignments} WHERE id = ?"),
+                  tuple(value for _key, value in values) + (trade_id,))
+    return paper_trade_get(trade_id)
+
+
 def paper_trade_update_status(trade_id: int, status: str, pnl_r: float) -> bool:
     with _conn() as c:
         cur = c.execute(
-            _sql("UPDATE paper_trades SET status = ?, pnl_r = ? WHERE id = ?"),
-            (status, pnl_r, trade_id),
+            _sql("UPDATE paper_trades SET status = ?, pnl_r = ?, closed_at = ? WHERE id = ?"),
+            (status, pnl_r, time.time(), trade_id),
         )
         return cur.rowcount > 0
 
 
-def paper_trades_stats() -> dict:
-    """Aggregate the scorecard without loading every trade into Python."""
-    with _conn() as c:
-        row = c.execute(_sql(
-            "SELECT COUNT(*) AS total_trades, "
-            "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2') THEN 1 ELSE 0 END) AS wins, "
-            "SUM(CASE WHEN status = 'STOPPED_OUT' THEN 1 ELSE 0 END) AS losses, "
-            "SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_count, "
-            "COALESCE(SUM(pnl_r), 0) AS net_pnl_r FROM paper_trades"
-        )).fetchone()
+_PAPER_STATS_SQL = (
+    "SELECT COUNT(*) AS total_trades, "
+    "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2') OR "
+    " (status = 'TIME_STOP' AND pnl_r > 0) THEN 1 ELSE 0 END) AS wins, "
+    "SUM(CASE WHEN status = 'STOPPED_OUT' OR "
+    " (status = 'TIME_STOP' AND pnl_r < 0) THEN 1 ELSE 0 END) AS losses, "
+    "SUM(CASE WHEN status = 'TIME_STOP' AND pnl_r = 0 THEN 1 ELSE 0 END) AS breakeven, "
+    "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP') "
+    " THEN 1 ELSE 0 END) AS resolved_count, "
+    "SUM(CASE WHEN status NOT IN ('ARMED','ACTIVE') THEN 1 ELSE 0 END) AS terminal_count, "
+    "SUM(CASE WHEN status = 'EXPIRED' THEN 1 ELSE 0 END) AS expired_count, "
+    "SUM(CASE WHEN status = 'AMBIGUOUS' THEN 1 ELSE 0 END) AS ambiguous_count, "
+    "SUM(CASE WHEN status = 'INVALIDATED' THEN 1 ELSE 0 END) AS invalidated_count, "
+    "SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_count, "
+    "SUM(CASE WHEN status = 'ARMED' THEN 1 ELSE 0 END) AS armed_count, "
+    "COALESCE(SUM(pnl_r), 0) AS net_pnl_r, "
+    "COALESCE(SUM(CASE WHEN pnl_r > 0 THEN pnl_r ELSE 0 END), 0) AS gross_profit_r, "
+    "COALESCE(SUM(CASE WHEN pnl_r < 0 THEN -pnl_r ELSE 0 END), 0) AS gross_loss_r "
+    "FROM paper_trades"
+)
+
+
+def _paper_stats(row) -> dict:
     wins = int(row["wins"] or 0)
     losses = int(row["losses"] or 0)
-    closed = wins + losses
+    breakeven = int(row["breakeven"] or 0)
+    resolved = int(row["resolved_count"] or 0)
+    net_r = float(row["net_pnl_r"] or 0.0)
+    gross_profit = float(row["gross_profit_r"] or 0.0)
+    gross_loss = float(row["gross_loss_r"] or 0.0)
+    terminal = int(row["terminal_count"] or 0)
     return {
         "total_trades": int(row["total_trades"] or 0),
         "wins": wins,
         "losses": losses,
-        "win_rate_pct": round(wins / closed * 100, 1) if closed else 0.0,
-        "net_pnl_r": round(float(row["net_pnl_r"] or 0.0), 2),
+        "breakeven": breakeven,
+        "resolved_count": resolved,
+        "terminal_count": terminal,
+        "excluded_count": max(0, terminal - resolved),
+        "expired_count": int(row["expired_count"] or 0),
+        "ambiguous_count": int(row["ambiguous_count"] or 0),
+        "invalidated_count": int(row["invalidated_count"] or 0),
+        "win_rate_pct": round(wins / resolved * 100, 1) if resolved else 0.0,
+        "net_pnl_r": round(net_r, 2),
+        "expectancy_r": round(net_r / resolved, 2) if resolved else 0.0,
+        "profit_factor": round(gross_profit / gross_loss, 2) if gross_loss else None,
         "active_count": int(row["active_count"] or 0),
+        "armed_count": int(row["armed_count"] or 0),
     }
+
+
+def paper_trades_stats() -> dict:
+    """Aggregate every outcome class without treating exclusions as losses."""
+    with _conn() as c:
+        row = c.execute(_sql(_PAPER_STATS_SQL)).fetchone()
+    return _paper_stats(row)
 
 
 def paper_trades_snapshot(limit: int = 100) -> dict:
@@ -1129,25 +1327,8 @@ def paper_trades_snapshot(limit: int = 100) -> dict:
         rows = c.execute(_sql(
             "SELECT * FROM paper_trades ORDER BY id DESC LIMIT ?"
         ), (safe_limit,)).fetchall()
-        aggregate = c.execute(_sql(
-            "SELECT COUNT(*) AS total_trades, "
-            "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2') THEN 1 ELSE 0 END) AS wins, "
-            "SUM(CASE WHEN status = 'STOPPED_OUT' THEN 1 ELSE 0 END) AS losses, "
-            "SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_count, "
-            "COALESCE(SUM(pnl_r), 0) AS net_pnl_r FROM paper_trades"
-        )).fetchone()
-    wins = int(aggregate["wins"] or 0)
-    losses = int(aggregate["losses"] or 0)
-    closed = wins + losses
-    stats = {
-        "total_trades": int(aggregate["total_trades"] or 0),
-        "wins": wins,
-        "losses": losses,
-        "win_rate_pct": round(wins / closed * 100, 1) if closed else 0.0,
-        "net_pnl_r": round(float(aggregate["net_pnl_r"] or 0.0), 2),
-        "active_count": int(aggregate["active_count"] or 0),
-    }
-    return {"stats": stats, "trades": [_row_to_trade(r) for r in rows]}
+        aggregate = c.execute(_sql(_PAPER_STATS_SQL)).fetchone()
+    return {"stats": _paper_stats(aggregate), "trades": [_row_to_trade(r) for r in rows]}
 
 
 # Schema is created on import so any entry point gets a working DB.

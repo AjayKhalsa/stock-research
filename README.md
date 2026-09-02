@@ -75,3 +75,12 @@ Known earnings and corporate events receive an explicit low/medium/high risk
 state while missing calendar coverage remains unverified. The dossier includes
 an optional position-size calculator driven only by the user's portfolio value,
 risk limit, and the model's structural entry/stop.
+
+Paper tracking is point-in-time and rules-based. A selected setup is first
+**armed** at its published entry zone, activates only when a later daily candle
+touches that zone, and then closes at the structural stop, target, or 40-session
+time stop. Untouched entries expire after 10 sessions. Ambiguous same-day bars
+are excluded instead of inventing an intraday path. Each result retains its
+snapshot/model version, realized R, exit price/date, and maximum favorable and
+adverse excursion; the scorecard keeps exclusions separate from resolved
+outcomes.

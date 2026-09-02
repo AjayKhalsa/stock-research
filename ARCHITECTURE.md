@@ -119,11 +119,20 @@ the selected engine must still have a real trigger from `decision_engine.py`.
 Candidate dossiers classify known event proximity separately from unknown
 coverage and provide a browser-local position-size calculator. No account value
 is inferred or persisted and the calculator cannot place orders.
-Position sizing is deliberately absent: candidate dossiers show trade
-structure and risk-to-stop, while Portfolio manages exposure limits only. Each
+Candidate dossiers show trade structure and risk-to-stop, while Portfolio
+manages exposure limits only. Each
 dossier includes an explicit trust-control panel and an on-demand adjusted
 daily price/volume chart. The detailed Research terminal renders inside the CFO
 shell rather than replacing the application's navigation.
+
+User-selected paper tests preserve the signal date, snapshot/model version,
+entry zone, stop, targets, invalidation and action at creation. The daily
+pipeline evaluates later candles through `ARMED` and `ACTIVE` states: entries
+expire after 10 sessions, active trades time out after 40, and a same-bar
+entry/stop or entry/target conflict becomes `AMBIGUOUS`. Terminal rows record
+realized R, exit price/date, MFE and MAE. Scorecard win rate and expectancy use
+resolved outcomes only; expired, invalidated and ambiguous cases remain visible
+as exclusions rather than being recast as wins or losses.
 
 Bull AI enrichment appears only in the Evidence tab and in snapshot coverage
 metadata. It is a bounded, supplementary research layer: records retain source

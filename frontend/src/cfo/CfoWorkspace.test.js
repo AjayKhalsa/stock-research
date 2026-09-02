@@ -13,6 +13,7 @@ jest.mock('../api', () => ({
   updatePortfolioSettings: jest.fn(),
   searchInstruments: jest.fn(() => Promise.resolve([])),
   resolveSymbols: jest.fn(() => Promise.resolve([])),
+  createPaperTrade: jest.fn(),
 }));
 
 const brief = {
@@ -40,6 +41,7 @@ beforeEach(() => {
   api.getPortfolioSettings.mockResolvedValue({ risk_per_trade_pct: .75,
     max_portfolio_heat_pct: 6, max_open_positions: 8 });
   api.getWatchlist.mockResolvedValue([]);
+  api.createPaperTrade.mockResolvedValue({ id: 1, status: 'ARMED' });
   api.getSectorSnapshot.mockResolvedValue({ ...brief.sectors[0], candidates: brief.candidates });
   api.getCandidateAnalysis.mockResolvedValue({ ...brief.candidates[0], cfo: { score: 76, gate: 'pass', metrics: {} },
     classification: 'Developing', data_confidence: { overall: 82, price_data: 100, financial_data: 78, event_data: 55, ai_extraction: null },
@@ -108,6 +110,31 @@ test('calculates position size only after the user supplies portfolio value', as
   expect(screen.getByText(/enter your portfolio value/i)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText(/Portfolio value/i), { target: { value: '1000000' } });
   expect(screen.getByText('50', { selector: 'strong' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /Track this setup on paper/i }));
+  await waitFor(() => expect(api.createPaperTrade).toHaveBeenCalledWith(expect.objectContaining({
+    symbol: 'TCS', entry_low: 3900, entry_high: 3950, stop_loss: 3775,
+    target_t1: 4150, action_at_add: 'WAIT_FOR_ENTRY',
+  })));
+  expect(await screen.findByText(/Daily candles will determine/i)).toBeInTheDocument();
+});
+
+test('shows armed entries and active trades as distinct open paper tests', async () => {
+  api.getPaperTradeSnapshot.mockResolvedValueOnce({
+    stats: { armed_count: 1, active_count: 1, resolved_count: 2,
+      wins: 1, losses: 1, win_rate_pct: 50, expectancy_r: 0.25 },
+    trades: [
+      { id: 1, symbol: 'TCS', status: 'ARMED', entry_low: 3900,
+        entry_high: 3950, entry_price: 3925, stop_loss: 3775 },
+      { id: 2, symbol: 'INFY', status: 'ACTIVE', entry_price: 1600, stop_loss: 1540 },
+    ],
+  });
+  render(<CfoWorkspace />);
+  await screen.findByText(/What looks interesting today/i);
+  fireEvent.click(screen.getByRole('button', { name: /Portfolio Risk book/i }));
+  expect(await screen.findByText(/Waiting for entry/i)).toBeInTheDocument();
+  expect(screen.getByText('Active')).toBeInTheDocument();
+  expect(screen.getByText(/1 waiting · 1 active/i)).toBeInTheDocument();
+  expect(screen.getByText(/0.25R/i)).toBeInTheDocument();
 });
 
 test('shows a daily chart section without leaving the dossier', async () => {

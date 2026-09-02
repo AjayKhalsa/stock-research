@@ -76,7 +76,7 @@ const BUDGET_PRESETS = [5000, 10000, 25000];
 /* Compact sizing + broker-order helper for the currently displayed swing/
    positional plan. Purely a UI/clipboard convenience — it does not place
    any order, it only computes quantity/risk and formats a GTT-ready string. */
-function PositionSizer({ plan, symbol, score, readOnly }) {
+function PositionSizer({ plan, data, symbol, score, readOnly }) {
   const [budget, setBudget] = useState(5000);
   const [logging, setLogging] = useState(false);
 
@@ -112,14 +112,21 @@ function PositionSizer({ plan, symbol, score, readOnly }) {
       await createPaperTrade({
         symbol,
         entry_price: entryPrice,
+        entry_low: entry.low,
+        entry_high: entry.high,
         stop_loss: stopPrice,
         target_t1: t1,
         target_t2: t2,
         score: score ?? null,
         setup_type: plan.setup || null,
+        signal_date: data?.as_of || null,
+        snapshot_id: data?.snapshot_id || null,
+        model_version: data?.model_version || null,
+        action_at_add: plan.verdict || null,
+        invalidation: plan.invalidation || null,
       });
       window.dispatchEvent(new CustomEvent('stocklens:paper-trade-changed'));
-      toast.success(`Paper trade logged for ${symbol}`);
+      toast.success(`Paper test armed for ${symbol}`);
     } catch {
       toast.error('Failed to log paper trade — is the backend running?');
     } finally {
@@ -497,6 +504,7 @@ export default function TradePlan({ data, loading, horizon, onHorizonChange, aiC
 
           <PositionSizer
             plan={plan}
+            data={data}
             symbol={symbol || data.symbol}
             score={data.dossier?.case?.conviction ?? null}
             readOnly={readOnly}

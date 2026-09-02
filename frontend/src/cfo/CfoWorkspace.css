@@ -219,6 +219,7 @@
 .cfo-position-inputs { margin: 14px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .cfo-position-inputs label { display: grid; gap: 6px; color: var(--cfo-muted); font-size: 11px; }
 .cfo-position-inputs input { height: 44px; padding: 0 11px; color: #20283a; background: #f8f9fa; border: 1px solid #dfe3e8; border-radius: 8px; font-family: var(--font-mono); }
+.cfo-success { margin-top: 10px; color: #176d4c; }
 .cfo-trust-score { margin: 16px 0; padding: 14px; display: flex; align-items: center; gap: 14px; background: #f7f8fa; border: 1px solid var(--cfo-line); border-radius: 9px; }
 .cfo-trust-score > strong { font: 750 32px/1 var(--font-mono); }
 .cfo-trust-score > strong span { color: var(--cfo-muted); font-size: 13px; }
