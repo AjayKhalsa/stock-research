@@ -29,6 +29,90 @@ def _closes(candles: list[dict]) -> list[float]:
             if value is not None and value > 0]
 
 
+def assess_relative_strength(candles: list[dict], benchmark: list[dict]) -> dict:
+    stock, index = _closes(candles), _closes(benchmark)
+    horizons = {}
+    weighted = []
+    for sessions, weight in ((5, 0.10), (20, 0.25), (60, 0.35), (120, 0.30)):
+        relative = None
+        if len(stock) > sessions and len(index) > sessions:
+            stock_return = stock[-1] / stock[-1 - sessions] - 1
+            index_return = index[-1] / index[-1 - sessions] - 1
+            relative = (stock_return - index_return) * 100
+            weighted.append((_clamp(50 + relative * 2.5), weight))
+        horizons[f"{sessions}d"] = round(relative, 2) if relative is not None else None
+    score = (sum(value * weight for value, weight in weighted)
+             / sum(weight for _, weight in weighted)) if weighted else 0.0
+    return {"score": round(score, 1), "horizons_pct_points": horizons,
+            "benchmark": "NIFTY 50"}
+
+
+def assess_volume(candles: list[dict]) -> dict:
+    volumes = [_number(row.get("volume")) for row in candles]
+    volumes = [value for value in volumes if value is not None and value >= 0]
+    if len(volumes) < 20:
+        return {"score": 0.0, "status": "unavailable", "metrics": {}}
+    avg20 = sum(volumes[-20:]) / 20
+    avg50 = sum(volumes[-50:]) / min(50, len(volumes))
+    latest = volumes[-1]
+    rvol = latest / avg20 if avg20 else None
+    participation = avg20 / avg50 if avg50 else None
+    history = sorted(volumes[-252:])
+    percentile = (sum(value <= latest for value in history) / len(history) * 100) if history else None
+    recent10 = sum(volumes[-10:]) / 10
+    prior20 = sum(volumes[-30:-10]) / 20 if len(volumes) >= 30 else avg20
+    contraction = recent10 / prior20 if prior20 else None
+    score = 45
+    if rvol is not None:
+        score += _clamp((rvol - 1) * 30, -20, 30)
+    if percentile is not None:
+        score += (percentile - 50) * 0.25
+    if participation is not None:
+        score += _clamp((participation - 1) * 20, -10, 10)
+    return {
+        "score": round(_clamp(score), 1), "status": "available",
+        "metrics": {"latest": round(latest), "average_20d": round(avg20),
+                    "average_50d": round(avg50), "rvol": _round(rvol, 2),
+                    "volume_percentile": _round(percentile, 1),
+                    "contraction_ratio": _round(contraction, 2)},
+    }
+
+
+def assess_volatility_contraction(candles: list[dict]) -> dict:
+    closes = _closes(candles)
+    ranges = _true_ranges(candles)
+    if len(closes) < 50 or len(ranges) < 50:
+        return {"score": 0.0, "status": "unavailable", "metrics": {}}
+    atr10 = sum(ranges[-10:]) / 10
+    atr50 = sum(ranges[-50:]) / 50
+    atr_ratio = atr10 / atr50 if atr50 else None
+    width10 = pstdev(closes[-10:]) / (sum(closes[-10:]) / 10)
+    width50 = pstdev(closes[-50:]) / (sum(closes[-50:]) / 50)
+    width_ratio = width10 / width50 if width50 else None
+    inside_bars = 0
+    for index in range(max(1, len(candles) - 10), len(candles)):
+        high, low = _number(candles[index].get("high")), _number(candles[index].get("low"))
+        prior_high = _number(candles[index - 1].get("high"))
+        prior_low = _number(candles[index - 1].get("low"))
+        if None not in (high, low, prior_high, prior_low) and high <= prior_high and low >= prior_low:
+            inside_bars += 1
+    volume = assess_volume(candles)
+    volume_ratio = volume.get("metrics", {}).get("contraction_ratio")
+    score = 0.0
+    score += _clamp((1.25 - (atr_ratio or 1.25)) / 0.65 * 40)
+    score += _clamp((1.25 - (width_ratio or 1.25)) / 0.65 * 35)
+    score += min(15, inside_bars * 5)
+    score += _clamp((1.1 - (volume_ratio or 1.1)) / 0.5 * 10)
+    return {
+        "score": round(_clamp(score), 1),
+        "status": "contracting" if score >= 60 else "mild" if score >= 35 else "not_contracting",
+        "metrics": {"atr_contraction_ratio": _round(atr_ratio, 2),
+                    "bandwidth_contraction_ratio": _round(width_ratio, 2),
+                    "inside_bars_10d": inside_bars,
+                    "volume_contraction_ratio": volume_ratio},
+    }
+
+
 def resistance_zones(candles: list[dict], span: int = 4,
                      cluster_pct: float = 1.5) -> list[dict]:
     """Cluster historical pivot highs without misclassifying them as support."""

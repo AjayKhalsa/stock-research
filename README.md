@@ -59,10 +59,13 @@ full candles are retained only for the top-150/owned/watched bench. A snapshot
 is held back unless at least half the official universe has 252-session history
 and at least 100 stocks pass the price/liquidity gates.
 
-Swing model `swing-v1.2.0` separates business quality from quarterly earnings
+Swing model `swing-v1.3.0` separates business quality from quarterly earnings
 momentum, labels margin expansion/contraction, measures overhead supply, clear
 air, tradeability and move potential, and derives targets from chart structure
 before calculating reward/risk. Data completeness is shown separately for
 price, financial and event evidence and is never presented as win probability.
 The published decision surface is intentionally limited to five ready-now and
 ten near-trigger candidates; all other names remain searchable research.
+Multi-horizon strength versus NIFTY, relative-volume participation, volatility
+contraction, market breadth and risk-on/risk-off context feed the same auditable
+snapshot. Severe risk-off conditions fail closed for new long entries.

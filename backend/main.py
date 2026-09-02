@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers import cfo_workspace, paper_trades, screener, screens, stocks, watchlist
+import cfo_engine
 import db
 
 
@@ -23,7 +24,7 @@ async def lifespan(_app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="Stock Research API", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="Stock Research API", version="2.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -70,6 +71,7 @@ async def request_observability(request: Request, call_next):
 @app.get("/api/health")
 def health():
     return {"ok": db.ping(), "storage": db.storage_status(), "version": app.version,
+            "model_version": cfo_engine.MODEL_VERSION,
             "features": {
                 "cfo_workspace_v1": config.CFO_WORKSPACE_V1,
                 "daily_job_auth": ["github_job_token", "shared_secret"],

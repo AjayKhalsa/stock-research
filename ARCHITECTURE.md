@@ -104,7 +104,8 @@ an explicit coverage failure and Morning explains why no snapshot was shown.
 Candidate scores use versioned, deterministic components: setup 20%, earnings
 momentum 15%, relative strength 10%, trend/volume 10%, overhead supply 10%,
 tradeability 10%, move potential 8%, business quality 7%, sector regime 5%, and
-liquidity 5%. Banks/NBFCs/insurers use a financial-sector model and never
+market regime 5%. Liquidity is an eligibility gate rather than a score boost.
+Banks/NBFCs/insurers use a financial-sector model and never
 receive industrial Altman/debt-equity rules. Hard blocks include missing or
 conflicting evidence, sub-1.5 structural reward/risk, impractical stops, severe
 overhead supply, extreme entry extension, near-term results, and very erratic

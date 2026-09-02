@@ -18,7 +18,7 @@ import quant_engine
 import swing_engine
 import swing_features
 
-MODEL_VERSION = "swing-v1.2.0"
+MODEL_VERSION = "swing-v1.3.0"
 MIN_SESSIONS = 252
 MIN_PRICE = 20.0
 MIN_MEDIAN_TRADED_VALUE = 5_00_00_000.0  # ₹5 crore
@@ -31,14 +31,14 @@ FINANCIAL_SECTOR_TERMS = (
 SCORE_WEIGHTS = {
     "setup": 0.20,
     "relative_strength": 0.10,
-    "trend_volume": 0.10,
+    "volume": 0.10,
     "business_quality": 0.07,
     "earnings_momentum": 0.15,
     "overhead_supply": 0.10,
     "tradeability": 0.10,
     "move_potential": 0.08,
     "sector_regime": 0.05,
-    "liquidity": 0.05,
+    "market_regime": 0.05,
 }
 
 ACTIONS = {"BUY_NOW", "WAIT_FOR_ENTRY", "WATCH", "AVOID", "DATA_INSUFFICIENT"}
@@ -432,10 +432,8 @@ def preliminary_analysis(symbol: str, name: str, candles: list[dict],
     if not eligible["eligible"]:
         return {"symbol": symbol, "name": name, "eligibility": eligible, "eligible": False}
     factors = swing_engine.compute_price_factors(candles)
-    nifty_factors = swing_engine.compute_price_factors(nifty_candles or [])
-    rs_3m = None
-    if factors.get("ret_3m") is not None and nifty_factors.get("ret_3m") is not None:
-        rs_3m = (factors["ret_3m"] - nifty_factors["ret_3m"]) * 100
+    relative_strength = swing_features.assess_relative_strength(candles, nifty_candles or [])
+    rs_3m = relative_strength["horizons_pct_points"].get("60d")
     setup_points = 35
     trend = factors.get("trend_score", 0)
     if trend == 2:
@@ -448,12 +446,13 @@ def preliminary_analysis(symbol: str, name: str, candles: list[dict],
         setup_points += 10
     if (factors.get("vol_ratio") or 0) >= 1.1:
         setup_points += 10
-    rs_points = _clamp(50 + (rs_3m or 0) * 2)
+    rs_points = relative_strength["score"]
     liquidity_points = _clamp(35 + math.log10(max(eligible["median_traded_value"], 1) / MIN_MEDIAN_TRADED_VALUE) * 35)
     preliminary = 0.55 * _clamp(setup_points) + 0.30 * rs_points + 0.15 * liquidity_points
     return {
         "symbol": symbol, "name": name, "eligible": True, "eligibility": eligible,
-        "factors": factors, "rs_3m_pct": round(rs_3m, 2) if rs_3m is not None else None,
+        "factors": factors, "relative_strength": relative_strength,
+        "rs_3m_pct": round(rs_3m, 2) if rs_3m is not None else None,
         "components": {"setup": round(_clamp(setup_points), 1),
                        "relative_strength": round(rs_points, 1),
                        "liquidity": round(liquidity_points, 1)},
@@ -461,11 +460,20 @@ def preliminary_analysis(symbol: str, name: str, candles: list[dict],
     }
 
 
-def _setup_component(setup: dict, factors: dict) -> float:
+def _setup_component(setup: dict, factors: dict, relative_strength: dict,
+                     volume: dict, supply: dict, contraction: dict) -> float:
     base = {"breakout": 90, "pullback": 82, "trend_continuation": 78, "none": 30}.get(setup.get("setup"), 30)
     if (factors.get("rsi") or 0) > 75:
         base -= 25
-    return _clamp(base)
+    if setup.get("setup") == "none":
+        return _clamp(base)
+    return _clamp(
+        base * 0.45
+        + relative_strength.get("score", 0) * 0.15
+        + volume.get("score", 0) * 0.15
+        + supply.get("score", 0) * 0.15
+        + contraction.get("score", 0) * 0.10
+    )
 
 
 def _trend_volume_component(factors: dict, pa: dict) -> float:
@@ -551,6 +559,7 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
                       official_close: Optional[float] = None,
                       official_date: Optional[str] = None,
                       sector_regime_score: float = 50.0,
+                      market_regime_score: float = 50.0,
                       results_within_two_sessions: bool = False) -> dict:
     candles = preliminary["candles"]
     factors = preliminary["factors"]
@@ -577,17 +586,23 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
     )
     tradeability = swing_features.assess_tradeability(candles)
     move_potential = swing_features.assess_move_potential(candles, factors.get("atr"))
+    volume = swing_features.assess_volume(candles)
+    contraction = swing_features.assess_volatility_contraction(candles)
+    relative_strength = preliminary.get("relative_strength") or \
+        swing_features.assess_relative_strength(candles, [])
     components = {
-        "setup": _setup_component(setup, factors),
-        "relative_strength": preliminary["components"]["relative_strength"],
-        "trend_volume": _trend_volume_component(factors, pa),
+        "setup": _setup_component(
+            setup, factors, relative_strength, volume, supply, contraction,
+        ),
+        "relative_strength": relative_strength["score"],
+        "volume": volume["score"],
         "business_quality": cfo["score"],
         "earnings_momentum": earnings["score"],
         "overhead_supply": supply["score"],
         "tradeability": tradeability["score"],
         "move_potential": move_potential["score"],
         "sector_regime": _clamp(sector_regime_score),
-        "liquidity": preliminary["components"]["liquidity"],
+        "market_regime": _clamp(market_regime_score),
     }
     score = sum(components[key] * weight for key, weight in SCORE_WEIGHTS.items())
 
@@ -598,12 +613,17 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
     elif earnings["margin_direction"] == "contraction":
         score *= 0.93
         penalties.append({"factor": "margin_contraction", "multiplier": 0.93})
+    if market_regime_score < 40:
+        score *= 0.90
+        penalties.append({"factor": "risk_off_market", "multiplier": 0.90})
 
     hard_blocks = list(cfo["hard_blocks"])
     if reconciliation["status"] == "conflict":
         hard_blocks.append(reconciliation["detail"])
     if results_within_two_sessions:
         hard_blocks.append("Scheduled results within two trading sessions")
+    if market_regime_score <= 15:
+        hard_blocks.append("Severe risk-off market regime blocks new swing longs")
 
     rr = swing.get("risk_reward")
     active_setup = setup.get("setup") not in {"", "none", None}
@@ -706,7 +726,9 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
         "price": current, "components": {k: round(v, 1) for k, v in components.items()},
         "cfo": cfo, "earnings_momentum": earnings,
         "overhead_supply": supply, "tradeability": tradeability,
-        "move_potential": move_potential, "entry_extension": entry_extension,
+        "move_potential": move_potential, "relative_strength": relative_strength,
+        "volume": volume, "volatility_contraction": contraction,
+        "entry_extension": entry_extension,
         "technicals": factors, "price_action": pa, "penalties": penalties,
         "trade_plan": {"entry": entry, "stop": stop, "targets": targets,
                        "verdict": swing.get("verdict"), "entry_state": _entry_state(current, entry),

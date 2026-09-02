@@ -30,8 +30,8 @@ const trendLabel = (score) => ({
 }[String(score)] || 'Unknown');
 
 function StatusPill({ value, children }) {
-  const tone = value === 'BUY_NOW' || value === 'healthy' || value === 'constructive' ? 'positive'
-    : value === 'AVOID' || value === 'failed' || value === 'defensive' ? 'negative'
+  const tone = value === 'BUY_NOW' || value === 'healthy' || value === 'constructive' || value === 'risk_on' ? 'positive'
+    : value === 'AVOID' || value === 'failed' || value === 'defensive' || value === 'risk_off' || value === 'severe_risk_off' ? 'negative'
       : value === 'WAIT_FOR_ENTRY' || value === 'attention' || value === 'mixed' ? 'caution' : 'neutral';
   return <span className={`cfo-pill cfo-pill-${tone}`}><i aria-hidden="true" />{children || ACTION_LABEL[value] || value || 'Unknown'}</span>;
 }
@@ -102,7 +102,7 @@ function Morning({ brief, job, onPage, onCandidate, onSector }) {
   return <div className="cfo-page">
     <section className="cfo-hero">
       <div><span className="cfo-eyebrow">Your morning overview</span><h1>What looks interesting today.</h1><p>{brief.market_regime?.posture || 'The morning snapshot is being prepared.'}</p></div>
-      <div className="cfo-regime-card"><span>Market mood</span><StatusPill value={brief.market_regime?.state}>{brief.market_regime?.state || 'Unknown'}</StatusPill><strong>{brief.universe?.eligible || 0}</strong><small>liquid NSE stocks checked and eligible</small></div>
+      <div className="cfo-regime-card"><span>Market mood</span><StatusPill value={brief.market_regime?.state}>{brief.market_regime?.state?.replaceAll('_', ' ') || 'Unknown'}</StatusPill><strong>{brief.market_regime?.breadth_pct == null ? (brief.universe?.eligible || 0) : `${brief.market_regime.breadth_pct}%`}</strong><small>{brief.market_regime?.breadth_pct == null ? 'liquid NSE stocks checked and eligible' : 'eligible stocks in a positive trend'}</small></div>
     </section>
 
     <section className="cfo-summary-strip">

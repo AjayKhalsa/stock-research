@@ -102,9 +102,9 @@ class CfoEngineTests(unittest.TestCase):
     def test_score_weights_are_complete_and_deterministic(self):
         self.assertAlmostEqual(sum(cfo_engine.SCORE_WEIGHTS.values()), 1.0)
         self.assertEqual(set(cfo_engine.SCORE_WEIGHTS), {
-            "setup", "relative_strength", "trend_volume", "business_quality",
+            "setup", "relative_strength", "volume", "business_quality",
             "earnings_momentum", "overhead_supply", "tradeability",
-            "move_potential", "sector_regime", "liquidity",
+            "move_potential", "sector_regime", "market_regime",
         })
 
     def test_earnings_momentum_uses_yoy_qoq_margins_and_acceleration(self):
@@ -160,6 +160,24 @@ class CfoEngineTests(unittest.TestCase):
         self.assertIn(result["label"], {"Very clean", "Clean"})
         self.assertGreater(result["metrics"]["r2_50"], .99)
 
+    def test_relative_strength_has_multiple_market_horizons(self):
+        stock = candles(close=100)
+        benchmark = candles(close=100)
+        for index, row in enumerate(stock):
+            row["close"] += index * .15
+        result = cfo_engine.swing_features.assess_relative_strength(stock, benchmark)
+        self.assertGreater(result["score"], 50)
+        self.assertEqual(set(result["horizons_pct_points"]), {"5d", "20d", "60d", "120d"})
+
+    def test_volume_and_contraction_are_explicit_features(self):
+        history = candles()
+        for index, row in enumerate(history):
+            row["volume"] = 2_000_000 if index == len(history) - 1 else 1_000_000
+        volume = cfo_engine.swing_features.assess_volume(history)
+        contraction = cfo_engine.swing_features.assess_volatility_contraction(history)
+        self.assertGreater(volume["metrics"]["rvol"], 1)
+        self.assertIn(contraction["status"], {"contracting", "mild", "not_contracting"})
+
     def test_data_confidence_is_explicitly_not_win_probability(self):
         cfo = {"completeness": "full", "metrics": {
             "roe": 18, "roce": 20, "cfo_pat": 1.1, "debt_to_equity": 0.3,
@@ -213,6 +231,15 @@ class CfoEngineTests(unittest.TestCase):
     def test_daily_pipeline_requires_majority_price_history_coverage(self):
         self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_RATIO, 0.50)
         self.assertEqual(market_pipeline.PUBLISHED_CANDIDATES, 100)
+
+    def test_market_regime_includes_breadth_and_risk_score(self):
+        regime = market_pipeline._market_regime(
+            candles(), [{"factors": {"trend_score": 2}} for _ in range(8)]
+            + [{"factors": {"trend_score": -1}} for _ in range(2)],
+        )
+        self.assertEqual(regime["state"], "risk_on")
+        self.assertEqual(regime["breadth_pct"], 80)
+        self.assertEqual(regime["score"], 85)
 
     def test_daily_shortlists_are_intentionally_capped(self):
         candidates = [
@@ -270,6 +297,11 @@ class CfoWorkspaceApiTests(unittest.TestCase):
     def test_daily_job_is_protected(self):
         response = self.client.post("/api/jobs/daily/run")
         self.assertEqual(response.status_code, 401)
+
+    def test_health_exposes_deployed_model_version(self):
+        response = self.client.get("/api/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["model_version"], cfo_engine.MODEL_VERSION)
 
     def test_daily_job_accepts_verified_github_oidc(self):
         with patch("routers.cfo_workspace._daily_job_authorized",

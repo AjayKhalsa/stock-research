@@ -49,16 +49,24 @@ def _chunks(items: list, size: int):
         yield items[start:start + size]
 
 
-def _market_regime(nifty: list[dict]) -> dict:
+def _market_regime(nifty: list[dict], universe: list[dict] | None = None) -> dict:
     factors = swing_engine.compute_price_factors(nifty)
     trend = factors.get("trend_score", 0)
-    if trend >= 2:
-        state, posture = "constructive", "Normal risk; favour sector leaders"
-    elif trend >= 0:
-        state, posture = "mixed", "Selective entries; demand cleaner setups"
+    universe = universe or []
+    breadth = (sum(row.get("factors", {}).get("trend_score", 0) > 0 for row in universe)
+               / len(universe) * 100) if universe else None
+    if trend >= 2 and (breadth is None or breadth >= 55):
+        state, posture, score = "risk_on", "Normal risk; favour sector leaders", 85
+    elif trend <= -1 and breadth is not None and breadth < 25:
+        state, posture, score = "severe_risk_off", "Avoid new swing longs; protect capital", 10
+    elif trend < 0 or (breadth is not None and breadth < 40):
+        state, posture, score = "risk_off", "Reduce new risk and demand exceptional setups", 30
     else:
-        state, posture = "defensive", "Reduce new risk and protect open positions"
-    return {"state": state, "posture": posture, "nifty": factors,
+        state, posture, score = "neutral", "Selective entries; demand cleaner setups", 55
+    return {"state": state, "posture": posture, "score": score,
+            "breadth_pct": round(breadth, 1) if breadth is not None else None,
+            "vix": None, "vix_status": "unavailable",
+            "nifty": factors,
             "as_of": nifty[-1].get("date") if nifty else None}
 
 
@@ -86,11 +94,11 @@ def _build_sector_snapshots(candidates: list[dict]) -> list[dict]:
         ordered = sorted(rows, key=lambda r: (r.get("rank_value", -9), r.get("score", 0)), reverse=True)
         actionable = sum(r.get("action") in {"BUY_NOW", "WAIT_FOR_ENTRY"} for r in rows)
         avg_rs = median([r["components"]["relative_strength"] for r in rows])
-        avg_trend = median([r["components"]["trend_volume"] for r in rows])
+        avg_volume = median([r["components"]["volume"] for r in rows])
         sectors.append({
             "sector": sector, "score": round(median([r["score"] for r in rows]), 1),
             "breadth_pct": round(sum(r["technicals"].get("trend_score", 0) > 0 for r in rows) / len(rows) * 100, 1),
-            "relative_strength": round(avg_rs, 1), "volume_participation": round(avg_trend, 1),
+            "relative_strength": round(avg_rs, 1), "volume_participation": round(avg_volume, 1),
             "eligible_count": len(rows), "actionable_count": actionable,
             "top_candidates": [{k: r.get(k) for k in ("symbol", "company", "action", "score", "expected_r", "confidence")}
                                for r in ordered[:5]],
@@ -222,6 +230,7 @@ async def run_daily_pipeline(job_id: str) -> None:
                 )
 
             preliminary.sort(key=lambda item: item.get("preliminary_score", 0), reverse=True)
+            market_regime = _market_regime(nifty, preliminary)
             deep = preliminary[:DEEP_CANDIDATES]
             seen = {item["symbol"] for item in deep}
             deep.extend(item for item in preliminary if item["symbol"] in priority_symbols and item["symbol"] not in seen)
@@ -263,6 +272,7 @@ async def run_daily_pipeline(job_id: str) -> None:
                     item, fundamentals, meta, official_close=official.get(item["symbol"]),
                     official_date=bhavcopy.get("as_of"),
                     sector_regime_score=regimes.get(fundamentals.get("sector") or "Unclassified", 50),
+                    market_regime_score=market_regime["score"],
                     results_within_two_sessions=blocked_for_results,
                 )
                 if sessions_to_results is not None:
@@ -332,7 +342,7 @@ async def run_daily_pipeline(job_id: str) -> None:
                 data_exceptions.append(f"{missing_fund} ranked candidates have partial or missing financial evidence")
             summary = {
                 "published_at": now.isoformat(), "snapshot_time_ist": now.strftime("%d %b %Y, %H:%M IST"),
-                "market_regime": _market_regime(nifty), "universe": {
+                "market_regime": market_regime, "universe": {
                     "official_equities": len(universe), "eligible": len(preliminary),
                     "deeply_enriched": len(enriched), "published": len(candidates),
                 },
