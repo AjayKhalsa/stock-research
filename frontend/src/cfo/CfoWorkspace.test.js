@@ -60,6 +60,24 @@ test('opens on the decision-first morning brief', async () => {
   expect(screen.getByText(/Portfolio actions/i)).toBeInTheDocument();
 });
 
+test('explains zero stocks as an unpublished guarded snapshot', async () => {
+  api.getMorningBrief.mockResolvedValueOnce({
+    status: 'setup_required', candidates: [], sectors: [],
+    market_regime: { state: 'unknown' }, universe: {}, portfolio: {},
+    external_enrichment: { covered: 3 },
+  });
+  api.getDailyJobStatus.mockResolvedValueOnce({
+    status: 'failed', stage: 'failed', progress: 2302, total: 2302,
+    error: 'Price-history coverage too low: 431/2302 usable (minimum 1151)',
+    payload: { usable_histories: 431, eligible: 222 },
+  });
+  render(<CfoWorkspace />);
+  expect(await screen.findByText(/Incomplete data was held back/i)).toBeInTheDocument();
+  expect(screen.getByText(/Accuracy gate protected/i)).toBeInTheDocument();
+  expect(screen.getByText('431')).toBeInTheDocument();
+  expect(screen.getByText(/not a stock verdict/i)).toBeInTheDocument();
+});
+
 test('reaches a candidate dossier within two interactions', async () => {
   render(<CfoWorkspace />);
   await screen.findByText(/Start with the decisions/i);

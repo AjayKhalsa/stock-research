@@ -261,6 +261,11 @@
 .cfo-job p { color: var(--cfo-muted); }
 .cfo-job > div { height: 7px; margin: 12px 0; overflow: hidden; background: #e9ebef; border-radius: 99px; }
 .cfo-job > div i { display: block; height: 100%; background: var(--cfo-indigo); }
+.cfo-setup-hero h1 { max-width: 760px; }
+.cfo-setup-panel { border-color: #cfd5e7; }
+.cfo-setup-error { margin-top: 18px; padding: 14px 16px; border: 1px solid #efc8c5; border-radius: 10px; background: #fff7f6; color: #8f2f28; }
+.cfo-setup-error p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.cfo-setup-actions { display: flex; align-items: center; gap: 16px; margin-top: 18px; }
 .cfo-error { display: block; color: #b33b47; }
 .cfo-provider-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .cfo-provider-grid > div { min-height: 145px; padding: 16px; background: #f8f9fa; border: 1px solid #e5e8ed; border-radius: 9px; }

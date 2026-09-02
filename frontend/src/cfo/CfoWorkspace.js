@@ -73,7 +73,30 @@ function CandidateRow({ candidate, onOpen, expanded, onToggle }) {
   </div>;
 }
 
-function Morning({ brief, onPage, onCandidate, onSector }) {
+function Morning({ brief, job, onPage, onCandidate, onSector }) {
+  if (brief.status === 'setup_required') {
+    const running = job?.status === 'running';
+    const failed = job?.status === 'failed';
+    const pct = job?.total ? Math.round((job.progress || 0) / job.total * 100) : 0;
+    const usable = job?.payload?.usable_histories;
+    return <div className="cfo-page">
+      <section className="cfo-hero cfo-setup-hero">
+        <div><span className="cfo-eyebrow">First trusted snapshot</span><h1>{running ? 'Scanning NSE now.' : failed ? 'Incomplete data was held back.' : 'Your morning brief is being prepared.'}</h1><p>{running ? 'StockLens is building the first full-market ranking in the background. You can leave this page; no manual wait is required.' : failed ? 'You see no stocks because StockLens refused to rank a partial market. Your watchlist and Research remain available while the next guarded run retries.' : 'The automated daily pipeline has not published a complete snapshot yet.'}</p></div>
+        <div className="cfo-regime-card"><span>Snapshot state</span><StatusPill value={failed ? 'failed' : running ? 'mixed' : 'attention'}>{failed ? 'Held back' : running ? 'Building' : 'Pending'}</StatusPill><strong>{running ? `${pct}%` : '0'}</strong><small>{running ? `${job.progress || 0} of ${job.total || 0} equities processed` : 'published candidates—not a stock verdict'}</small></div>
+      </section>
+      <section className="cfo-panel cfo-setup-panel">
+        <SectionHeader eyebrow="Why there are no stocks" title={failed ? 'Accuracy gate protected the dashboard' : 'The first ranking is not ready yet'} detail="StockLens publishes only after the market-wide price-history and candidate coverage checks pass." />
+        <div className="cfo-summary-strip">
+          <Metric label="NSE processed" value={job?.progress || 0} note={`${job?.total || 0} total`} />
+          <Metric label="Usable histories" value={usable ?? '—'} note="252 sessions required" />
+          <Metric label="Eligible so far" value={job?.payload?.eligible ?? '—'} note="price and liquidity gates" />
+          <Metric label="Bull AI evidence" value={brief.external_enrichment?.covered || 0} note="supplementary dossiers" />
+        </div>
+        {job?.error && <div className="cfo-setup-error"><strong>Last run stopped safely</strong><p>{job.error}</p></div>}
+        <div className="cfo-setup-actions"><button className="cfo-primary" onClick={() => onPage('system')}>View pipeline details</button><button className="cfo-text-btn" onClick={() => onPage('research')}>Open Research</button></div>
+      </section>
+    </div>;
+  }
   const top = (brief.candidates || []).filter(c => ['BUY_NOW', 'WAIT_FOR_ENTRY', 'WATCH'].includes(c.action)).slice(0, 8);
   const exceptions = brief.data_health?.exceptions || [];
   return <div className="cfo-page">
@@ -255,7 +278,7 @@ export default function CfoWorkspace() {
     <aside className="cfo-rail"><div className="cfo-brand"><span>SL</span><div><strong>StockLens</strong><small>CFO workspace</small></div></div><nav>{NAV.map(([id, label, sub]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { setPage(id); setSelectedCandidate(null); }}><b>{label.slice(0, 1)}</b><span><strong>{label}</strong><small>{sub}</small></span></button>)}</nav><button className="cfo-collapse" onClick={() => setRailOpen(v => !v)}>{railOpen ? 'Collapse rail' : 'Expand'}</button></aside>
     <div className="cfo-workspace">
       <header className="cfo-topbar"><button className="cfo-menu" onClick={() => setRailOpen(v => !v)} aria-label="Toggle navigation">☰</button><div className="cfo-global-search"><SearchBar onSelect={openResearch} /></div><div className="cfo-top-status"><span><small>Snapshot</small><strong>{brief?.trading_date || 'Pending'}</strong></span><StatusPill value={brief?.data_health?.status}>{brief?.data_health?.status || 'Loading'}</StatusPill><span><small>Heat</small><strong>{fmt(brief?.portfolio?.heat_pct)}%</strong></span><button onClick={() => setDrawer(true)}>Watchlist <b>{watchlist.length}</b></button></div></header>
-      <main className="cfo-canvas">{loading ? <div className="cfo-loading"><span /><p>Opening your latest valid morning snapshot…</p></div> : error && !brief ? <EmptyState title="Morning data is unavailable" body={error} /> : selectedCandidate ? <CandidateDossier data={candidateData} loading={candidateLoading} onBack={() => setSelectedCandidate(null)} onResearch={openResearch} /> : page === 'morning' ? <Morning brief={brief} onPage={setPage} onCandidate={openCandidate} onSector={openSector} /> : page === 'sectors' ? <Sectors brief={brief} selected={selectedSector} detail={sectorDetail} loading={sectorLoading} onSelect={openSector} onCandidate={openCandidate} /> : page === 'candidates' ? <Candidates candidates={brief.candidates || []} onOpen={openCandidate} /> : page === 'portfolio' ? <Portfolio snapshot={portfolio} settings={settings} onSave={saveSettings} /> : page === 'research' ? <div className="cfo-research-embed"><LegacyResearch initialSymbol={researchSymbol} embedded /></div> : <System job={job} brief={brief} />}</main>
+      <main className="cfo-canvas">{loading ? <div className="cfo-loading"><span /><p>Opening your latest valid morning snapshot…</p></div> : error && !brief ? <EmptyState title="Morning data is unavailable" body={error} /> : selectedCandidate ? <CandidateDossier data={candidateData} loading={candidateLoading} onBack={() => setSelectedCandidate(null)} onResearch={openResearch} /> : page === 'morning' ? <Morning brief={brief} job={job} onPage={setPage} onCandidate={openCandidate} onSector={openSector} /> : page === 'sectors' ? <Sectors brief={brief} selected={selectedSector} detail={sectorDetail} loading={sectorLoading} onSelect={openSector} onCandidate={openCandidate} /> : page === 'candidates' ? <Candidates candidates={brief.candidates || []} onOpen={openCandidate} /> : page === 'portfolio' ? <Portfolio snapshot={portfolio} settings={settings} onSave={saveSettings} /> : page === 'research' ? <div className="cfo-research-embed"><LegacyResearch initialSymbol={researchSymbol} embedded /></div> : <System job={job} brief={brief} />}</main>
     </div>
     {drawer && <div className="cfo-drawer-scrim" onClick={() => setDrawer(false)}><aside className="cfo-drawer" onClick={e => e.stopPropagation()}><header><div><small>Context drawer</small><h2>Watchlist</h2></div><button onClick={() => setDrawer(false)}>Close</button></header>{watchlist.length ? watchlist.map(w => <button key={w.symbol} onClick={() => { setDrawer(false); openResearch(w.symbol); }}><strong>{w.symbol}</strong><span>{w.name}</span><b>Open →</b></button>) : <p>No stocks in your watchlist yet.</p>}</aside></div>}
     <nav className="cfo-mobile-nav">{[['morning', 'Morning'], ['sectors', 'Sectors'], ['watchlist', 'Watchlist'], ['search', 'Search'], ['more', 'More']].map(([id, label]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => id === 'watchlist' ? setDrawer(true) : id === 'search' ? document.querySelector('.cfo-global-search input')?.focus() : setPage(id === 'more' ? 'system' : id)}><b>{label.slice(0, 1)}</b><span>{label}</span></button>)}</nav>

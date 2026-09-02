@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -150,17 +151,36 @@ async def run_daily_pipeline(job_id: str) -> None:
 
             preliminary: list[dict] = []
             usable_histories = 0
+            retained_candles: dict[str, list[dict]] = {}
+            top_candle_heap: list[tuple[float, str]] = []
+            priority_symbols = {w["symbol"] for w in db.watchlist_all()}
+            priority_symbols.update(t["symbol"] for t in db.paper_trades_active())
             names = {row["symbol"]: row.get("name") or row["symbol"] for row in universe}
             done = 0
             for batch in _chunks([row["symbol"] for row in universe], HISTORY_BATCH):
-                histories = await price.get_historical_multiple([f"NSE:{s}" for s in batch], days=520)
+                histories = await price.get_historical_multiple(
+                    [f"NSE:{s}" for s in batch], days=520, cache_results=False,
+                )
                 for symbol in batch:
                     candles = histories.get(f"NSE:{symbol}") or []
                     if len(candles) >= 252:
                         usable_histories += 1
                     row = cfo_engine.preliminary_analysis(symbol, names[symbol], candles, nifty)
                     if row.get("eligible"):
+                        row.pop("candles", None)
                         preliminary.append(row)
+                        heap_key = (float(row.get("preliminary_score") or 0), symbol)
+                        if symbol in priority_symbols:
+                            retained_candles[symbol] = candles
+                        if len(top_candle_heap) < DEEP_CANDIDATES:
+                            heapq.heappush(top_candle_heap, heap_key)
+                            retained_candles[symbol] = candles
+                        elif heap_key > top_candle_heap[0]:
+                            _score, displaced = heapq.heapreplace(top_candle_heap, heap_key)
+                            if displaced not in priority_symbols:
+                                retained_candles.pop(displaced, None)
+                            retained_candles[symbol] = candles
+                del histories
                 done += len(batch)
                 db.update_job_run(job_id, stage="technical_scan", progress=done, total=len(universe),
                                   payload={"eligible": len(preliminary), "universe": len(universe),
@@ -179,8 +199,6 @@ async def run_daily_pipeline(job_id: str) -> None:
                 )
 
             preliminary.sort(key=lambda item: item.get("preliminary_score", 0), reverse=True)
-            priority_symbols = {w["symbol"] for w in db.watchlist_all()}
-            priority_symbols.update(t["symbol"] for t in db.paper_trades_active())
             deep = preliminary[:DEEP_CANDIDATES]
             seen = {item["symbol"] for item in deep}
             deep.extend(item for item in preliminary if item["symbol"] in priority_symbols and item["symbol"] not in seen)
@@ -188,6 +206,7 @@ async def run_daily_pipeline(job_id: str) -> None:
             # unreachable, so retain daily price/volume bars for the enriched
             # bench rather than fetching them only when a user opens a stock.
             for item in deep:
+                item["candles"] = retained_candles.get(item["symbol"]) or []
                 price.persist_history(f"NSE:{item['symbol']}", 520, item.get("candles") or [])
             db.update_job_run(job_id, stage="fundamental_enrichment", progress=0, total=len(deep),
                               payload={"eligible": len(preliminary), "deep_candidates": len(deep)})

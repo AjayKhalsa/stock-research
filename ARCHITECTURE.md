@@ -94,6 +94,12 @@ instruments, downloads adjusted history in bulk, applies the 252-session,
 ₹20, and ₹5-crore traded-value gates, reconciles Yahoo with NSE bhavcopy, and
 deep-enriches the strongest 150 plus the watchlist/paper portfolio. It stores a
 versioned Top-100 snapshot; a failed run never replaces the last valid one.
+The universe pass uses Yahoo's compact chart JSON with six bounded concurrent
+requests rather than retaining pandas frames or spawning a second yfinance
+process. Only the current 75-symbol batch and a top-150 candle heap stay in
+memory. Publication requires usable 252-session history for at least 50% of the
+official universe and at least 100 eligible equities; otherwise the run records
+an explicit coverage failure and Morning explains why no snapshot was shown.
 
 Candidate scores use the fixed weighting: setup 25%, relative strength 20%,
 trend/volume 15%, CFO health 15%, sector regime 10%, liquidity 10%, valuation

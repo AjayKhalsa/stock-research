@@ -52,3 +52,9 @@ upgrade a gated recommendation, and missing Bull AI coverage is never treated
 as positive evidence. The unattended daily scan remains independent of the
 plugin, so an unavailable connector cannot prevent the last valid snapshot
 from loading.
+
+The all-NSE price pass is sized for Render's free memory limit: six bounded
+Yahoo chart requests run at once, only one 75-symbol batch is resident, and
+full candles are retained only for the top-150/owned/watched bench. A snapshot
+is held back unless at least half the official universe has 252-session history
+and at least 100 stocks pass the price/liquidity gates.

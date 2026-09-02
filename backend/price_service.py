@@ -15,12 +15,10 @@ import json
 import math
 import os
 import re
-import subprocess
-import sys
-import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import httpx
 import yfinance as yf
 
 import config
@@ -37,50 +35,73 @@ except Exception as exc:
 
 _SUFFIX = {"NSE": ".NS", "BSE": ".BO"}
 _REVERSE_SUFFIX = {".NS": "NSE", ".BO": "BSE"}
-BULK_HISTORY_TIMEOUT_SECONDS = 75
+YAHOO_CHART_CONCURRENCY = 6
 
 
-def _fetch_bulk_isolated(missing: list[tuple[str, str]], days: int) -> dict[str, list]:
-    """Run yfinance bulk download in a process that can be killed on timeout."""
-    input_fd, input_path = tempfile.mkstemp(prefix="stocklens_bulk_", suffix=".json",
-                                            dir=config.DATA_DIR)
-    output_fd, output_path = tempfile.mkstemp(prefix="stocklens_bulk_result_", suffix=".json",
-                                              dir=config.DATA_DIR)
-    os.close(input_fd)
-    os.close(output_fd)
+def _chart_payload_to_candles(payload: dict) -> list[dict]:
+    """Convert Yahoo's compact chart JSON into adjusted daily OHLCV bars."""
     try:
-        with open(input_path, "w", encoding="utf-8") as handle:
-            json.dump({"missing": missing, "days": days}, handle)
-        worker = os.path.join(config.BACKEND_DIR, "bulk_history_worker.py")
-        completed = subprocess.run(
-            [sys.executable, worker, input_path, output_path],
-            timeout=BULK_HISTORY_TIMEOUT_SECONDS,
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if completed.returncode != 0:
-            detail = (completed.stderr or "").strip().splitlines()
-            print(f"[price_service] isolated bulk fetch failed ({len(missing)} symbols): "
-                  f"{detail[-1] if detail else 'worker exit ' + str(completed.returncode)}")
-            return {}
-        with open(output_path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        return payload if isinstance(payload, dict) else {}
-    except subprocess.TimeoutExpired:
-        print(f"[price_service] isolated bulk timeout ({len(missing)} symbols); "
-              "worker terminated, continuing with cached coverage")
-        return {}
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        print(f"[price_service] isolated bulk error ({len(missing)} symbols): {exc}")
-        return {}
-    finally:
-        for path in (input_path, output_path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        result = payload["chart"]["result"][0]
+        timestamps = result.get("timestamp") or []
+        quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+        adjusted = (result.get("indicators", {}).get("adjclose") or [{}])[0].get("adjclose") or []
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return []
+
+    closes = quote.get("close") or []
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    volumes = quote.get("volume") or []
+    candles: list[dict] = []
+    for index, timestamp in enumerate(timestamps):
+        try:
+            raw_close = float(closes[index])
+            adj_close = float(adjusted[index]) if index < len(adjusted) and adjusted[index] is not None else raw_close
+            if not math.isfinite(raw_close) or not math.isfinite(adj_close) or raw_close <= 0:
+                continue
+            ratio = adj_close / raw_close
+
+            def adjusted_price(values: list) -> float:
+                value = values[index] if index < len(values) else raw_close
+                value = raw_close if value is None else float(value)
+                return round(value * ratio, 2) if math.isfinite(value) else round(adj_close, 2)
+
+            volume = volumes[index] if index < len(volumes) else 0
+            candles.append({
+                "date": datetime.fromtimestamp(int(timestamp), tz=timezone.utc).date().isoformat(),
+                "open": adjusted_price(opens), "high": adjusted_price(highs),
+                "low": adjusted_price(lows), "close": round(adj_close, 2),
+                "volume": int(volume or 0),
+            })
+        except (TypeError, ValueError, IndexError, OverflowError):
+            continue
+    return candles
+
+
+async def _fetch_chart_history(client: httpx.AsyncClient, semaphore: asyncio.Semaphore,
+                               raw: str, yf_symbol: str, days: int) -> tuple[str, list]:
+    period2 = int(datetime.now(tz=timezone.utc).timestamp()) + 86_400
+    period1 = period2 - (days + 15) * 86_400
+    params = {"period1": period1, "period2": period2, "interval": "1d",
+              "events": "div,splits", "includeAdjustedClose": "true"}
+    for attempt, host in enumerate(("query1.finance.yahoo.com", "query2.finance.yahoo.com")):
+        try:
+            async with semaphore:
+                response = await client.get(
+                    f"https://{host}/v8/finance/chart/{yf_symbol}", params=params,
+                )
+            if response.status_code == 429:
+                await asyncio.sleep(0.5 * (attempt + 1))
+                continue
+            response.raise_for_status()
+            candles = _chart_payload_to_candles(response.json())
+            if candles:
+                return raw, candles
+        except (httpx.HTTPError, ValueError, TypeError):
+            if attempt == 0:
+                await asyncio.sleep(0.2)
+    return raw, []
 
 
 def _yf_symbol(instrument: str) -> str:
@@ -363,12 +384,12 @@ async def get_historical(instrument: str, days: int = 300) -> list:
     return data
 
 
-async def get_historical_multiple(instruments: list[str], days: int = 300) -> dict[str, list]:
-    """Fetch daily candles for many symbols in one Yahoo request.
+async def get_historical_multiple(instruments: list[str], days: int = 300,
+                                  cache_results: bool = True) -> dict[str, list]:
+    """Fetch candles with bounded async chart requests and optional caching.
 
-    Full-NSE screening is otherwise thousands of serial HTTP conversations.
-    Cached symbols are skipped, Yahoo's multi-ticker endpoint fills the rest,
-    and callers can retry only the few symbols absent from the bulk response.
+    The market-wide pipeline disables result caching so only one 75-symbol
+    batch plus its top-candidate heap remains in memory on the free instance.
     """
     import time as _time
 
@@ -400,14 +421,28 @@ async def get_historical_multiple(instruments: list[str], days: int = 300) -> di
     if not missing:
         return out
 
-    fresh = await asyncio.to_thread(_fetch_bulk_isolated, missing, days)
+    timeout = httpx.Timeout(15, connect=8)
+    limits = httpx.Limits(max_connections=YAHOO_CHART_CONCURRENCY,
+                          max_keepalive_connections=YAHOO_CHART_CONCURRENCY)
+    semaphore = asyncio.Semaphore(YAHOO_CHART_CONCURRENCY)
+    fresh: dict[str, list] = {}
+    async with httpx.AsyncClient(timeout=timeout, limits=limits,
+                                 headers=config.SCRAPE_HEADERS) as client:
+        tasks = [asyncio.create_task(
+            _fetch_chart_history(client, semaphore, raw, yf_symbol, days)
+        ) for raw, yf_symbol in missing]
+        for task in asyncio.as_completed(tasks):
+            raw, candles = await task
+            if candles:
+                fresh[raw] = candles
     out.update(fresh)
     for raw, candles in stale_fallback.items():
         out.setdefault(raw, candles)
-    cached_at = _time.time()
-    yf_by_raw = dict(missing)
-    for raw, candles in fresh.items():
-        _HIST_CACHE[(yf_by_raw[raw], days)] = {"at": cached_at, "data": candles}
+    if cache_results:
+        cached_at = _time.time()
+        yf_by_raw = dict(missing)
+        for raw, candles in fresh.items():
+            _HIST_CACHE[(yf_by_raw[raw], days)] = {"at": cached_at, "data": candles}
     return out
 
 

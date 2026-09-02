@@ -35,19 +35,26 @@ class CfoEngineTests(unittest.TestCase):
         fallback = candles(3)
         with patch.object(price_service, "_read_persisted_history",
                           return_value=(fallback, 1)), \
-             patch.object(price_service, "_fetch_bulk_isolated", return_value={}):
+             patch.object(price_service, "_fetch_chart_history",
+                          new=AsyncMock(return_value=("NSE:TIMEOUTTEST", []))):
             result = asyncio.run(price_service.get_historical_multiple(
                 ["NSE:TIMEOUTTEST"], days=520,
             ))
         self.assertEqual(result["NSE:TIMEOUTTEST"], fallback)
 
-    def test_isolated_bulk_worker_timeout_returns_without_data(self):
-        with patch("price_service.subprocess.run",
-                   side_effect=price_service.subprocess.TimeoutExpired("worker", 75)):
-            result = price_service._fetch_bulk_isolated(
-                [("NSE:TIMEOUTTEST2", "TIMEOUTTEST2.NS")], 520,
-            )
-        self.assertEqual(result, {})
+    def test_chart_payload_adjusts_ohlc_and_keeps_volume(self):
+        payload = {"chart": {"result": [{
+            "timestamp": [1_725_000_000],
+            "indicators": {
+                "quote": [{"open": [100], "high": [110], "low": [90],
+                           "close": [100], "volume": [12345]}],
+                "adjclose": [{"adjclose": [50]}],
+            },
+        }]}}
+        result = price_service._chart_payload_to_candles(payload)
+        self.assertEqual(result[0]["open"], 50)
+        self.assertEqual(result[0]["high"], 55)
+        self.assertEqual(result[0]["volume"], 12345)
 
     def test_eligibility_enforces_history_price_and_traded_value(self):
         accepted = cfo_engine.eligibility(candles())
