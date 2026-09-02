@@ -101,13 +101,16 @@ memory. Publication requires usable 252-session history for at least 50% of the
 official universe and at least 100 eligible equities; otherwise the run records
 an explicit coverage failure and Morning explains why no snapshot was shown.
 
-Candidate scores use the fixed weighting: setup 25%, relative strength 20%,
-trend/volume 15%, CFO health 15%, sector regime 10%, liquidity 10%, valuation
-5%. Banks/NBFCs/insurers use a financial-sector model and never receive
-industrial Altman/debt-equity rules. Hard blocks, missing evidence, a price
-conflict above 1%, and results within two sessions are deterministic. AI may
-explain or downgrade only. Historical-validation status is a server-side gate,
-so pre-validation outputs remain WATCH rather than actionable calls.
+Candidate scores use versioned, deterministic components: setup 20%, earnings
+momentum 15%, relative strength 10%, trend/volume 10%, overhead supply 10%,
+tradeability 10%, move potential 8%, business quality 7%, sector regime 5%, and
+liquidity 5%. Banks/NBFCs/insurers use a financial-sector model and never
+receive industrial Altman/debt-equity rules. Hard blocks include missing or
+conflicting evidence, sub-1.5 structural reward/risk, impractical stops, severe
+overhead supply, extreme entry extension, near-term results, and very erratic
+price behaviour. AI may explain or downgrade only. Data completeness is split
+by price, financial, event and AI-extraction evidence and is never called a
+success probability.
 Position sizing is deliberately absent: candidate dossiers show trade
 structure and risk-to-stop, while Portfolio manages exposure limits only. Each
 dossier includes an explicit trust-control panel and an on-demand adjusted

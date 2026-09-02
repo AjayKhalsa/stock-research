@@ -42,6 +42,10 @@ beforeEach(() => {
   api.getWatchlist.mockResolvedValue([]);
   api.getSectorSnapshot.mockResolvedValue({ ...brief.sectors[0], candidates: brief.candidates });
   api.getCandidateAnalysis.mockResolvedValue({ ...brief.candidates[0], cfo: { score: 76, gate: 'pass', metrics: {} },
+    classification: 'Developing', data_confidence: { overall: 82, price_data: 100, financial_data: 78, event_data: 55, ai_extraction: null },
+    earnings_momentum: { score: 84, coverage: 90, status: 'full', margin_direction: 'expansion',
+      metrics: { revenue_growth_yoy: 20, revenue_growth_qoq: 5, ebitda_growth_yoy: 28,
+        pat_growth_yoy: 32, ebitda_margin_change_yoy: 1.5, pat_margin_change_yoy: 1.2 }, cautions: [] },
     evidence: { price: { source: 'NSE + Yahoo', status: 'matched' }, model: { version: 'cfo-v1' }, ai_committee: { status: 'not_run' } },
     daily_history: [], trust: { price: 'pass', financials: 'pass', cfo_gate: 'pass',
       results: 'caution', historical_validation: 'early', external_evidence: 'pass' },
@@ -111,6 +115,17 @@ test('shows source-backed Bull AI evidence without changing the score', async ()
   expect(screen.getByText(/Company-document enrichment/i)).toBeInTheDocument();
   expect(screen.getByText(/This target is not yet due/i)).toBeInTheDocument();
   expect(screen.getByText(/No score boost/i)).toBeInTheDocument();
+});
+
+test('shows earnings momentum separately from business quality', async () => {
+  render(<CfoWorkspace />);
+  await screen.findByText(/What looks interesting today/i);
+  fireEvent.click(screen.getByText('Tata Consultancy').closest('button'));
+  await screen.findByText(/Checks behind this stock/i);
+  fireEvent.click(screen.getByRole('button', { name: 'Business' }));
+  expect(screen.getByText(/Earnings momentum/i)).toBeInTheDocument();
+  expect(screen.getByText(/Latest reported quarters/i)).toBeInTheDocument();
+  expect(screen.getByText(/EBITDA margin change/i)).toBeInTheDocument();
 });
 
 test('search opens any NSE stock in the modern analysis view', async () => {

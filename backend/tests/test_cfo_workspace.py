@@ -102,9 +102,75 @@ class CfoEngineTests(unittest.TestCase):
     def test_score_weights_are_complete_and_deterministic(self):
         self.assertAlmostEqual(sum(cfo_engine.SCORE_WEIGHTS.values()), 1.0)
         self.assertEqual(set(cfo_engine.SCORE_WEIGHTS), {
-            "setup", "relative_strength", "trend_volume", "cfo_health",
-            "sector_regime", "liquidity", "valuation",
+            "setup", "relative_strength", "trend_volume", "business_quality",
+            "earnings_momentum", "overhead_supply", "tradeability",
+            "move_potential", "sector_regime", "liquidity",
         })
+
+    def test_earnings_momentum_uses_yoy_qoq_margins_and_acceleration(self):
+        fundamentals = {
+            "sector": "Industrials", "debt_to_equity": 0.4,
+            "quarterly_results": [
+                {"quarter": "Q-5", "revenue": 80, "ebitda": 8, "net_profit": 4, "opm": 10},
+                {"quarter": "Q-4", "revenue": 100, "ebitda": 10, "net_profit": 5, "opm": 10},
+                {"quarter": "Q-3", "revenue": 102, "ebitda": 10.2, "net_profit": 5.1, "opm": 10},
+                {"quarter": "Q-2", "revenue": 105, "ebitda": 10.5, "net_profit": 5.2, "opm": 10},
+                {"quarter": "Q-1", "revenue": 110, "ebitda": 11, "net_profit": 5.5, "opm": 10},
+                {"quarter": "Q0", "revenue": 140, "ebitda": 21, "net_profit": 11.2, "opm": 15},
+            ],
+            "annual_pl": [{"net_profit": 100}], "annual_cf": [{"cfo": 110}],
+        }
+        result = cfo_engine.assess_earnings_momentum(fundamentals)
+        self.assertEqual(result["status"], "full")
+        self.assertEqual(result["margin_direction"], "strong expansion")
+        self.assertAlmostEqual(result["metrics"]["revenue_growth_yoy"], 40.0)
+        self.assertAlmostEqual(result["metrics"]["ebitda_margin_change_yoy"], 5.0)
+        self.assertGreater(result["score"], 75)
+
+    def test_targets_are_structural_then_rr_is_calculated(self):
+        targets = cfo_engine.decision_engine._structural_targets(
+            entry_mid=100, entry_high=101, risk=5, atr=2,
+            pivots={"supports": [{"price": 94, "touches": 2}],
+                    "resistances": [{"price": 112, "touches": 3}]},
+            setup_kind="pullback",
+        )
+        self.assertEqual(targets[0]["price"], 112)
+        self.assertEqual(targets[0]["rr"], 2.4)
+        self.assertIn("historical resistance", targets[0]["basis"])
+
+    def test_overhead_supply_measures_clear_air_in_pct_and_atr(self):
+        highs = [95, 96, 97, 98, 102, 99, 98, 97, 96]
+        history = [
+            {"date": f"2026-01-{index + 1:02d}", "open": high - 2,
+             "high": high, "low": high - 3, "close": high - 2, "volume": 1000}
+            for index, high in enumerate(highs)
+        ]
+        result = cfo_engine.swing_features.assess_overhead_supply(history, 100, 2)
+        self.assertEqual(result["clear_air_pct"], 2.0)
+        self.assertEqual(result["clear_air_atr"], 1.0)
+        self.assertEqual(result["severity"], "severe")
+
+    def test_tradeability_rewards_linear_price_paths(self):
+        history = [
+            {"date": str(index), "open": 100 + index - .2, "high": 100 + index + .4,
+             "low": 100 + index - .4, "close": 100 + index, "volume": 1000}
+            for index in range(100)
+        ]
+        result = cfo_engine.swing_features.assess_tradeability(history)
+        self.assertIn(result["label"], {"Very clean", "Clean"})
+        self.assertGreater(result["metrics"]["r2_50"], .99)
+
+    def test_data_confidence_is_explicitly_not_win_probability(self):
+        cfo = {"completeness": "full", "metrics": {
+            "roe": 18, "roce": 20, "cfo_pat": 1.1, "debt_to_equity": 0.3,
+        }}
+        earnings = {"coverage": 100}
+        result = cfo_engine.assess_data_confidence(
+            candles(), {"annual_pl": [{}], "annual_cf": [{}], "earnings_date": "2026-09-20"},
+            {"stale": False}, cfo, earnings, {"status": "matched"},
+        )
+        self.assertEqual(result["overall"], 100)
+        self.assertIn("not win probability", result["meaning"])
 
     def test_ready_and_near_entry_states_are_not_hidden_by_early_validation(self):
         swing = {"entry": {"low": 98, "high": 102}, "risk_reward": 1.5,
@@ -147,6 +213,22 @@ class CfoEngineTests(unittest.TestCase):
     def test_daily_pipeline_requires_majority_price_history_coverage(self):
         self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_RATIO, 0.50)
         self.assertEqual(market_pipeline.PUBLISHED_CANDIDATES, 100)
+
+    def test_daily_shortlists_are_intentionally_capped(self):
+        candidates = [
+            {"symbol": f"READY{i}", "action": "BUY_NOW", "score": 90 - i,
+             "rank_value": 90 - i, "classification": "A"}
+            for i in range(8)
+        ] + [
+            {"symbol": f"NEAR{i}", "action": "WAIT_FOR_ENTRY", "score": 70 - i,
+             "rank_value": 70 - i, "classification": "Developing"}
+            for i in range(12)
+        ]
+        market_pipeline._enforce_shortlist_caps(candidates)
+        self.assertEqual(sum(row["action"] == "BUY_NOW" for row in candidates), 5)
+        self.assertEqual(sum(row["action"] == "WAIT_FOR_ENTRY" for row in candidates), 10)
+        self.assertTrue(any(row.get("shortlist_limiter") == "near_trigger_cap"
+                            for row in candidates))
 
     def test_ai_committee_cannot_upgrade_and_can_downgrade(self):
         candidate = {"symbol": "TCS", "action": "WATCH", "price": 100,

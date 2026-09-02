@@ -23,6 +23,8 @@ IST = ZoneInfo("Asia/Kolkata")
 HISTORY_BATCH = 75
 DEEP_CANDIDATES = 150
 PUBLISHED_CANDIDATES = 100
+MAX_ACTIONABLE_TODAY = 5
+MAX_NEAR_TRIGGER = 10
 FUNDAMENTAL_CONCURRENCY = 4
 MINIMUM_USABLE_HISTORY_RATIO = 0.50
 
@@ -98,6 +100,27 @@ def _build_sector_snapshots(candidates: list[dict]) -> list[dict]:
         sector["rank"] = rank
         sector["trend"] = "Leading" if rank <= max(2, len(sectors) // 4) else "Improving" if sector["score"] >= 55 else "Lagging"
     return sectors
+
+
+def _enforce_shortlist_caps(candidates: list[dict]) -> None:
+    """Keep the daily decision surface selective without hiding research rows."""
+    ready = sorted((row for row in candidates if row.get("action") == "BUY_NOW"),
+                   key=lambda row: (row.get("rank_value", -9), row.get("score", 0)),
+                   reverse=True)
+    for row in ready[MAX_ACTIONABLE_TODAY:]:
+        row["action"] = "WAIT_FOR_ENTRY"
+        row["classification"] = "Developing"
+        row["action_reason"] = "Valid setup held outside today's five-stock actionable shortlist"
+        row["shortlist_limiter"] = "actionable_cap"
+
+    near = sorted((row for row in candidates if row.get("action") == "WAIT_FOR_ENTRY"),
+                  key=lambda row: (row.get("rank_value", -9), row.get("score", 0)),
+                  reverse=True)
+    for row in near[MAX_NEAR_TRIGGER:]:
+        row["action"] = "WATCH"
+        row["classification"] = "Developing"
+        row["action_reason"] = "Valid research candidate held outside today's near-trigger shortlist"
+        row["shortlist_limiter"] = "near_trigger_cap"
 
 
 def _changes(previous: dict | None, candidates: list[dict]) -> dict:
@@ -279,6 +302,7 @@ async def run_daily_pipeline(job_id: str) -> None:
             validation_status = db.get_setting("cfo_historical_validation_status", "pending")
             for candidate in candidates:
                 candidate["evidence"]["model"]["validation_status"] = validation_status
+            _enforce_shortlist_caps(candidates)
             action_order = {"BUY_NOW": 5, "WAIT_FOR_ENTRY": 4, "WATCH": 3, "DATA_INSUFFICIENT": 2, "AVOID": 1}
             candidates.sort(key=lambda row: (action_order.get(row["action"], 0), row["rank_value"], row["score"]), reverse=True)
             candidates = candidates[:PUBLISHED_CANDIDATES]

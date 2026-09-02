@@ -201,6 +201,10 @@
 .cfo-definition > div:first-child { border-top: 0; }
 .cfo-definition dt { color: var(--cfo-muted); font-size: 11px; }
 .cfo-definition dd { color: #20283a; font-weight: 600; }
+.cfo-target-line { display: grid; gap: 2px; margin-bottom: 7px; }
+.cfo-target-line:last-child { margin-bottom: 0; }
+.cfo-target-line small { color: var(--cfo-muted); font-weight: 500; }
+.cfo-explanation-grid { margin-top: 16px; }
 .cfo-trust-score { margin: 16px 0; padding: 14px; display: flex; align-items: center; gap: 14px; background: #f7f8fa; border: 1px solid var(--cfo-line); border-radius: 9px; }
 .cfo-trust-score > strong { font: 750 32px/1 var(--font-mono); }
 .cfo-trust-score > strong span { color: var(--cfo-muted); font-size: 13px; }

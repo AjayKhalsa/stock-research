@@ -185,20 +185,68 @@ def detect_setup(factors: dict, pivots: dict, ma50=None, ma200=None,
 
 # ── plan builders ─────────────────────────────────────────────────────────────
 
-def _targets_from_risk(entry_mid: float, risk: float, pivots: dict,
-                       mults=(1.5, 2.5)) -> list:
-    """R-multiple targets; T1 capped at the nearest overhead resistance."""
+def _structural_targets(entry_mid: float, entry_high: float, risk: float,
+                        atr: float, pivots: dict, setup_kind: str) -> list:
+    """Choose chart-derived targets first, then calculate their resulting R/R.
+
+    A target is never manufactured from a desired R multiple.  Historical
+    resistance is preferred.  A breakout with no resistance overhead uses a
+    measured move from the nearest consolidation/support anchor.  ATR is only
+    the documented fallback when the available chart has no usable structure.
+    """
+    candidates = []
+    for resistance in pivots.get("resistances", []):
+        price = resistance.get("price")
+        if price and price > entry_mid * 1.002:
+            candidates.append({
+                "price": price,
+                "basis": (f"historical resistance {price} "
+                          f"({resistance.get('touches', 1)} touches)"),
+            })
+
+    if setup_kind == "breakout" or not candidates:
+        supports = [s for s in pivots.get("supports", [])
+                    if s.get("price") and s["price"] < entry_mid]
+        anchor = max(supports, key=lambda s: s["price"]) if supports else None
+        if anchor:
+            # The recent base height is chart geometry.  Bound only pathological
+            # stale levels; the bound is not an R/R optimization.
+            base_height = min(entry_mid - anchor["price"], 8 * atr)
+            if base_height >= 0.75 * atr:
+                candidates.append({
+                    "price": entry_mid + base_height,
+                    "basis": (f"measured move from support {anchor['price']} "
+                              f"to breakout/entry structure"),
+                })
+
+    if not candidates:
+        candidates.append({
+            "price": entry_high + 2 * atr,
+            "basis": "2 ATR extension (no reliable overhead chart level)",
+        })
+
+    # Nearest meaningful structural objective is T1.  De-duplicate clustered
+    # projections and retain at most two objectives for an executable plan.
+    ordered = []
+    for candidate in sorted(candidates, key=lambda item: item["price"]):
+        price = float(candidate["price"])
+        if price <= entry_mid:
+            continue
+        if ordered and abs(price / ordered[-1]["price"] - 1) < 0.005:
+            continue
+        ordered.append(candidate)
+        if len(ordered) == 2:
+            break
+
     targets = []
-    for i, m in enumerate(mults):
-        t = entry_mid + m * risk
-        basis = f"{m}R"
-        if i == 0:
-            res = _nearest_resistance(entry_mid, pivots, above=entry_mid * 1.01)
-            if res and res["price"] < t:
-                t = res["price"]
-                basis = f"{m}R capped at resistance {res['price']} ({res['touches']} touches)"
-        rr = round((t - entry_mid) / risk, 2) if risk > 0 else None
-        targets.append({"label": f"T{i + 1}", "price": round(t, 2), "basis": basis, "rr": rr})
+    for i, candidate in enumerate(ordered):
+        price = float(candidate["price"])
+        targets.append({
+            "label": f"T{i + 1}",
+            "price": round(price, 2),
+            "basis": candidate["basis"],
+            "rr": round((price - entry_mid) / risk, 2) if risk > 0 else None,
+        })
     return targets
 
 
@@ -269,7 +317,7 @@ def build_swing_plan(factors: dict, pivots: dict, setup: dict,
                      ma50=None, ma200=None,
                      intraday_candles: Optional[list] = None,
                      intraday_candles_15m: Optional[list] = None) -> dict:
-    """Days-to-weeks technical plan: setup entry band, ATR/structure stop, R-multiple targets."""
+    """Days-to-weeks plan with structural entry, invalidation, and targets."""
     price = factors["price"]
     atr   = factors.get("atr")
     rsi   = factors.get("rsi")
@@ -295,15 +343,18 @@ def build_swing_plan(factors: dict, pivots: dict, setup: dict,
         entry_low, entry_high = anchor - 0.5 * atr, anchor + 0.5 * atr
         which = sup["kind"] if sup else "recent lows"
         rationale = f"Band around {which} support at {round(anchor, 2)}"
+        trigger = entry_high
     elif kind == "trend_continuation":
         entry_low, entry_high = price - 0.5 * atr, price + 0.5 * atr
         rationale = "Trend continuation — enter near current price"
+        trigger = entry_high
     else:
         # Uptrend but no active setup: stage a dip-buy at the nearest support
         sup = _nearest_support(price, pivots, ma50, ma200)
         if sup and (price - sup["price"]) / price * 100 <= 10:
             entry_low, entry_high = sup["price"] - 0.5 * atr, sup["price"] + 0.5 * atr
             rationale = f"No active setup — stage a dip-buy at {sup['kind']} support {sup['price']}"
+            trigger = entry_high
         else:
             return _no_trade_plan("swing", setup, factors,
                                   "Uptrend but no setup and no nearby support to stage an entry")
@@ -347,7 +398,7 @@ def build_swing_plan(factors: dict, pivots: dict, setup: dict,
         return _no_trade_plan("swing", setup, factors, "Could not derive a valid stop below entry")
     risk_pct = risk / entry_mid * 100
 
-    targets = _targets_from_risk(entry_mid, risk, pivots)
+    targets = _structural_targets(entry_mid, entry_high, risk, atr, pivots, kind)
     rr = targets[0]["rr"] if targets else None
 
     # ── verdict ───────────────────────────────────────────────────────────────
@@ -383,10 +434,12 @@ def build_swing_plan(factors: dict, pivots: dict, setup: dict,
         "confidence": _confidence(factors, setup,
                                   12.5 + (6 if (factors.get("ret_3m") or 0) > 0 else 0)),
         "entry": {"low": round(entry_low, 2), "high": round(entry_high, 2),
+                  "trigger_price": round(trigger, 2),
                   "type": kind, "rationale": rationale},
         "stop": {"price": round(stop_price, 2), "basis": basis,
                  "timeframe": stop_timeframe or "D",
-                 "rationale": stop_rationale, "risk_pct": round(risk_pct, 2)},
+                 "rationale": stop_rationale, "risk_pct": round(risk_pct, 2),
+                 "risk_atr": round(risk / atr, 2)},
         "targets": targets,
         "risk_reward": rr,
         "invalidation": invalidation,
