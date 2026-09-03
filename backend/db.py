@@ -267,12 +267,18 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     score         REAL,
     setup_type    TEXT,
     classification TEXT,
+    sector        TEXT,
+    market_regime TEXT,
+    global_rank   INTEGER,
+    sector_rank   INTEGER,
     entry_low     REAL,
     entry_high    REAL,
     entry_price   REAL,
     stop_price    REAL,
     target_t1     REAL,
     target_t2     REAL,
+    signal_adjustment_factor REAL NOT NULL DEFAULT 1,
+    level_adjustment_factor REAL NOT NULL DEFAULT 1,
     status        TEXT NOT NULL DEFAULT 'ARMED',
     outcome       TEXT,
     pnl_r         REAL NOT NULL DEFAULT 0,
@@ -469,12 +475,18 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     score         DOUBLE PRECISION,
     setup_type    TEXT,
     classification TEXT,
+    sector        TEXT,
+    market_regime TEXT,
+    global_rank   INTEGER,
+    sector_rank   INTEGER,
     entry_low     DOUBLE PRECISION,
     entry_high    DOUBLE PRECISION,
     entry_price   DOUBLE PRECISION,
     stop_price    DOUBLE PRECISION,
     target_t1     DOUBLE PRECISION,
     target_t2     DOUBLE PRECISION,
+    signal_adjustment_factor DOUBLE PRECISION NOT NULL DEFAULT 1,
+    level_adjustment_factor DOUBLE PRECISION NOT NULL DEFAULT 1,
     status        TEXT NOT NULL DEFAULT 'ARMED',
     outcome       TEXT,
     pnl_r         DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -571,10 +583,16 @@ def _migrate_unified_research_columns() -> None:
         "score": "DOUBLE PRECISION" if _PG else "REAL",
         "setup_type": "TEXT",
         "classification": "TEXT",
+        "sector": "TEXT",
+        "market_regime": "TEXT",
+        "global_rank": "INTEGER",
+        "sector_rank": "INTEGER",
         "entry_low": "DOUBLE PRECISION" if _PG else "REAL",
         "entry_high": "DOUBLE PRECISION" if _PG else "REAL",
         "target_t1": "DOUBLE PRECISION" if _PG else "REAL",
         "target_t2": "DOUBLE PRECISION" if _PG else "REAL",
+        "signal_adjustment_factor": "DOUBLE PRECISION NOT NULL DEFAULT 1" if _PG else "REAL NOT NULL DEFAULT 1",
+        "level_adjustment_factor": "DOUBLE PRECISION NOT NULL DEFAULT 1" if _PG else "REAL NOT NULL DEFAULT 1",
         "status": "TEXT NOT NULL DEFAULT 'ARMED'",
         "invalidation": "TEXT",
         "armed_sessions": "INTEGER NOT NULL DEFAULT 0",
@@ -941,7 +959,8 @@ def _as_finite_float(value) -> Optional[float]:
 
 def _recommendation_outcome_values(snapshot_id: str, item: dict, *,
                                    model_version: str, trading_date: str,
-                                   opened_at: float) -> Optional[tuple]:
+                                   opened_at: float,
+                                   market_regime: Optional[str]) -> Optional[tuple]:
     """Return a validated automatic forward-test row for actionable states."""
     if item.get("action") not in {"BUY_NOW", "WAIT_FOR_ENTRY"}:
         return None
@@ -956,14 +975,21 @@ def _recommendation_outcome_values(snapshot_id: str, item: dict, *,
     t2_candidate = (_as_finite_float((targets[1] or {}).get("price"))
                     if len(targets) > 1 else None)
     t2 = t2_candidate if t2_candidate is not None else t1
+    signal_factor = _as_finite_float(
+        ((item.get("evidence") or {}).get("price") or {}).get("adjustment_factor")
+    ) or 1.0
+    if signal_factor <= 0:
+        signal_factor = 1.0
     if (None in (low, high, stop_price, t1, t2) or low <= 0 or high < low
             or stop_price <= 0 or stop_price >= low or t1 <= high or t2 < t1):
         return None
     return (
         snapshot_id, str(item.get("symbol") or "").upper(), item["action"],
         model_version, trading_date, _as_finite_float(item.get("score")),
-        item.get("setup_type"), item.get("classification"), low, high,
-        (low + high) / 2, stop_price, t1, t2, "ARMED", None, 0.0,
+        item.get("setup_type"), item.get("classification"), item.get("sector"),
+        market_regime, item.get("global_rank"), item.get("sector_rank"),
+        low, high, (low + high) / 2, stop_price, t1, t2,
+        signal_factor, 1.0, "ARMED", None, 0.0,
         plan.get("invalidation"), opened_at,
     )
 
@@ -978,6 +1004,8 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
     safe_summary["snapshot_id"] = snapshot_id
     safe_summary["model_version"] = model_version
     safe_summary["trading_date"] = trading_date
+    market_regime = ((summary.get("market_regime") or {}).get("state")
+                     if isinstance(summary.get("market_regime"), dict) else None)
     with _conn() as c:
         c.execute(
             _sql("INSERT INTO analysis_snapshots(id, trading_date, model_version, status, "
@@ -998,14 +1026,17 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
             outcome_values = _recommendation_outcome_values(
                 snapshot_id, item, model_version=model_version,
                 trading_date=trading_date, opened_at=now,
+                market_regime=market_regime,
             )
             if outcome_values:
                 c.execute(_sql(
                     "INSERT INTO recommendation_outcomes(snapshot_id, symbol, action, "
                     "model_version, signal_date, score, setup_type, classification, "
-                    "entry_low, entry_high, entry_price, stop_price, target_t1, target_t2, "
+                    "sector, market_regime, global_rank, sector_rank, entry_low, entry_high, "
+                    "entry_price, stop_price, target_t1, target_t2, signal_adjustment_factor, "
+                    "level_adjustment_factor, "
                     "status, outcome, pnl_r, invalidation, opened_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 ), outcome_values)
         for item in sectors:
             c.execute(
@@ -1112,7 +1143,8 @@ def human_reviews(symbol: str, snapshot_id: Optional[str] = None,
 _NUMERIC_OUTCOME_FIELDS = (
     "score", "entry_low", "entry_high", "entry_price", "stop_price",
     "target_t1", "target_t2", "pnl_r", "activated_at", "mfe_r", "mae_r",
-    "exit_price", "opened_at", "closed_at",
+    "exit_price", "opened_at", "closed_at", "signal_adjustment_factor",
+    "level_adjustment_factor",
 )
 
 
@@ -1143,11 +1175,27 @@ def recommendation_outcomes_recent(limit: int = 100) -> list[dict]:
     return [_row_to_recommendation_outcome(row) for row in rows]
 
 
+def recommendation_outcomes_resolved(model_version: Optional[str] = None) -> list[dict]:
+    params: tuple = ()
+    model_clause = ""
+    if model_version:
+        model_clause = " AND model_version = ?"
+        params = (model_version,)
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT * FROM recommendation_outcomes WHERE status IN "
+            "('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP')" + model_clause
+            + " ORDER BY outcome_date, id"
+        ), params).fetchall()
+    return [_row_to_recommendation_outcome(row) for row in rows]
+
+
 def recommendation_outcome_patch(outcome_id: int, **changes) -> Optional[dict]:
     allowed = {
         "status", "outcome", "pnl_r", "armed_sessions", "active_sessions",
         "activated_at", "closed_at", "last_evaluated_date", "entry_price",
         "mfe_r", "mae_r", "exit_price", "outcome_date",
+        "level_adjustment_factor",
     }
     values = [(key, value) for key, value in changes.items() if key in allowed]
     if values:
@@ -1200,6 +1248,50 @@ def recommendation_outcome_stats() -> dict:
         "avg_mfe_r": round(float(row["avg_mfe_r"] or 0), 2),
         "avg_mae_r": round(float(row["avg_mae_r"] or 0), 2),
     }
+
+
+def backtest_run_add(model_version: str, status: str, payload: dict) -> dict:
+    run_id = uuid.uuid4().hex
+    now = time.time()
+    with _conn() as c:
+        c.execute(_sql(
+            "INSERT INTO backtest_runs(id, model_version, status, payload, created_at) "
+            "VALUES (?,?,?,?,?)"
+        ), (run_id, model_version, status,
+            json.dumps(_json_nan_safe(payload)), now))
+    return {"id": run_id, "model_version": model_version, "status": status,
+            "created_at": now, **payload}
+
+
+def _row_to_backtest_run(row) -> Optional[dict]:
+    if not row:
+        return None
+    payload = _loads_payload(row["payload"], {})
+    return {"id": row["id"], "model_version": row["model_version"],
+            "status": row["status"], "created_at": float(row["created_at"]),
+            **payload}
+
+
+def latest_backtest_run(model_version: Optional[str] = None) -> Optional[dict]:
+    params: tuple = ()
+    where = ""
+    if model_version:
+        where = "WHERE model_version = ? "
+        params = (model_version,)
+    with _conn() as c:
+        row = c.execute(_sql(
+            f"SELECT * FROM backtest_runs {where}ORDER BY created_at DESC LIMIT 1"
+        ), params).fetchone()
+    return _row_to_backtest_run(row)
+
+
+def backtest_runs(limit: int = 20) -> list[dict]:
+    safe_limit = max(1, min(int(limit), 100))
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT * FROM backtest_runs ORDER BY created_at DESC LIMIT ?"
+        ), (safe_limit,)).fetchall()
+    return [_row_to_backtest_run(row) for row in rows]
 
 
 _ENRICHMENT_SEED_PATH = os.path.join(os.path.dirname(__file__), "seed", "bull_ai_enrichment.json")

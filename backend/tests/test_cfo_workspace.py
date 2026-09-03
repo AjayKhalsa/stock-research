@@ -15,6 +15,7 @@ os.environ.setdefault("STOCKLENS_DATA_DIR", tempfile.mkdtemp())
 from fastapi.testclient import TestClient  # noqa: E402
 import cfo_engine  # noqa: E402
 import ai_committee  # noqa: E402
+import backtest_engine  # noqa: E402
 import data_cache  # noqa: E402
 import db  # noqa: E402
 import price_service  # noqa: E402
@@ -36,6 +37,43 @@ def candles(count=300, close=100.0, volume=1_000_000):
 
 
 class CfoEngineTests(unittest.TestCase):
+    def test_point_in_time_backtest_applies_costs_and_segments_results(self):
+        rows = [
+            {"id": 1, "status": "WIN_T1", "outcome_date": "2026-05-10",
+             "entry_price": 100, "stop_price": 95, "pnl_r": 2,
+             "mfe_r": 2.2, "mae_r": .2, "active_sessions": 4,
+             "global_rank": 3, "setup_type": "pullback",
+             "market_regime": "risk_on", "action": "BUY_NOW"},
+            {"id": 2, "status": "STOPPED_OUT", "outcome_date": "2026-05-11",
+             "entry_price": 50, "stop_price": 45, "pnl_r": -1,
+             "mfe_r": .3, "mae_r": 1, "active_sessions": 2,
+             "global_rank": 17, "setup_type": "breakout",
+             "market_regime": "neutral", "action": "WAIT_FOR_ENTRY"},
+        ]
+        with patch("backtest_engine.db.recommendation_outcomes_resolved",
+                   return_value=rows):
+            result = backtest_engine.run_snapshot_backtest(persist=False)
+        self.assertTrue(result["point_in_time"])
+        self.assertEqual(result["overall"]["sample"], 2)
+        self.assertLess(result["overall"]["net_expectancy_r"],
+                        result["overall"]["gross_expectancy_r"])
+        self.assertEqual({item["group"] for item in result["by_setup"]},
+                         {"breakout", "pullback"})
+        self.assertEqual({item["group"] for item in result["by_rank_decile"]},
+                         {"1", "2"})
+        self.assertEqual(len(result["overall"]["win_rate_95ci_pct"]), 2)
+        self.assertGreater(result["overall"]["max_drawdown_r"], 0)
+
+    def test_point_in_time_backtest_rejects_unknown_or_extreme_costs(self):
+        with self.assertRaises(ValueError):
+            backtest_engine.run_snapshot_backtest(
+                costs={"mystery_bps": 1}, persist=False,
+            )
+        with self.assertRaises(ValueError):
+            backtest_engine.run_snapshot_backtest(
+                costs={"entry_slippage_bps": 101}, persist=False,
+            )
+
     def test_daily_lifecycle_never_replays_candles_before_numeric_open_time(self):
         record = {
             "status": "ACTIVE", "opened_at": datetime(
@@ -74,7 +112,28 @@ class CfoEngineTests(unittest.TestCase):
         result = price_service._chart_payload_to_candles(payload)
         self.assertEqual(result[0]["open"], 50)
         self.assertEqual(result[0]["high"], 55)
+        self.assertEqual(result[0]["raw_close"], 100)
+        self.assertEqual(result[0]["adjustment_factor"], 0.5)
         self.assertEqual(result[0]["volume"], 12345)
+
+    def test_daily_lifecycle_rescales_levels_after_corporate_action(self):
+        record = {
+            "status": "ARMED", "signal_date": "2026-05-01",
+            "signal_adjustment_factor": 1.0,
+            "entry_price": 101, "entry_low": 100, "entry_high": 102,
+            "stop_price": 95, "target_t1": 110, "target_t2": 118,
+        }
+        result = trade_lifecycle.evaluate_daily(record, [
+            {"date": "2026-05-01", "high": 51, "low": 49, "close": 50,
+             "adjustment_factor": 0.5},
+            {"date": "2026-05-04", "high": 50.5, "low": 49.5, "close": 50,
+             "adjustment_factor": 1.0},
+            {"date": "2026-05-05", "high": 56, "low": 52, "close": 55,
+             "adjustment_factor": 1.0},
+        ], now=1)
+        self.assertEqual(result["status"], "WIN_T1")
+        self.assertEqual(result["updates"]["level_adjustment_factor"], 0.5)
+        self.assertEqual(result["updates"]["exit_price"], 55.0)
 
     def test_eligibility_enforces_history_price_and_traded_value(self):
         accepted = cfo_engine.eligibility(candles())
@@ -348,6 +407,21 @@ class CfoWorkspaceApiTests(unittest.TestCase):
     def test_daily_job_is_protected(self):
         response = self.client.post("/api/jobs/daily/run")
         self.assertEqual(response.status_code, 401)
+
+    def test_backtest_endpoints_expose_point_in_time_report_and_validate_costs(self):
+        report = backtest_engine.run_snapshot_backtest(persist=False)
+        with patch("routers.cfo_workspace.db.latest_backtest_run", return_value=None), \
+             patch("routers.cfo_workspace.backtest_engine.run_snapshot_backtest",
+                   return_value=report):
+            response = self.client.get("/api/backtests/latest")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["method"], "out_of_sample_snapshot_replay")
+        invalid = self.client.post("/api/backtests/run", json={
+            "entry_slippage_bps": 101,
+            "exit_slippage_bps": 10,
+            "fees_and_taxes_bps": 15,
+        })
+        self.assertEqual(invalid.status_code, 422)
 
     def test_health_exposes_deployed_model_version(self):
         response = self.client.get("/api/health")

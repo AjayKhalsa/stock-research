@@ -72,6 +72,8 @@ def _chart_payload_to_candles(payload: dict) -> list[dict]:
                 "date": datetime.fromtimestamp(int(timestamp), tz=timezone.utc).date().isoformat(),
                 "open": adjusted_price(opens), "high": adjusted_price(highs),
                 "low": adjusted_price(lows), "close": round(adj_close, 2),
+                "raw_close": round(raw_close, 2),
+                "adjustment_factor": round(ratio, 10),
                 "volume": int(volume or 0),
             })
         except (TypeError, ValueError, IndexError, OverflowError):

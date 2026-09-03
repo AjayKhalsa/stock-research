@@ -754,7 +754,9 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
 
     evidence = {
         "price": {"source": "Yahoo adjusted EOD + NSE bhavcopy",
-                  "as_of": candles[-1].get("date"), **reconciliation},
+                  "as_of": candles[-1].get("date"),
+                  "adjustment_factor": candles[-1].get("adjustment_factor", 1.0),
+                  **reconciliation},
         "fundamentals": {**fund_meta, "completeness": cfo["completeness"]},
         "model": {"version": MODEL_VERSION, "weights": SCORE_WEIGHTS,
                   "historical_comparables": 0, "expected_r_method": "unavailable_until_validated",

@@ -100,3 +100,10 @@ export const getRecommendationOutcomeStats = () => API.get('/api/recommendation-
 export const getRecommendationOutcomes = (limit = 100) => API.get(
   '/api/recommendation-outcomes', { params: { limit } },
 ).then(r => r.data);
+export const getLatestBacktest = (modelVersion) => API.get(
+  '/api/backtests/latest', { params: modelVersion ? { model_version: modelVersion } : {} },
+).then(r => r.data);
+export const getBacktests = (limit = 20) => API.get('/api/backtests', { params: { limit } }).then(r => r.data);
+export const runBacktest = (costs, modelVersion) => API.post(
+  '/api/backtests/run', costs, { params: modelVersion ? { model_version: modelVersion } : {} },
+).then(r => r.data);

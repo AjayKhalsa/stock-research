@@ -138,6 +138,15 @@ snapshot. The server copies the model version, recommendation action, and score
 from the stored recommendation rather than accepting those audit fields from
 the browser, and feedback has no immediate score effect.
 
+Every actionable published candidate also enters an automatic outcome ledger.
+The shared lifecycle evaluates only bars after the signal date and preserves
+the adjustment-factor basis needed to rescale levels after splits or dividends.
+Resolved rows feed an out-of-sample snapshot replay with explicit slippage,
+fees and taxes; Wilson intervals, drawdown and setup/regime/rank-decile/action
+breakdowns are stored as versioned backtest runs. Earlier complete NSE
+constituent masters were not archived, so the report freezes published
+selections without claiming a survivorship-free historical-universe backfill.
+
 Snapshot publication also creates one `recommendation_outcomes` row for every
 `BUY_NOW` or `WAIT_FOR_ENTRY` candidate with valid geometry, in the same
 database transaction as the immutable candidate payload. The next daily runs
@@ -286,6 +295,10 @@ All routes are prefixed `/api/`. The personal research reads remain open; daily-
 | GET | `/api/morning-brief` | Latest valid immutable morning snapshot |
 | GET | `/api/sectors/{sector}` | Sector evidence and ranked constituents |
 | GET | `/api/candidates/{symbol}` | Saved decision dossier, trust controls and external evidence |
+| GET | `/api/recommendation-outcomes[/stats]` | Automatic forward-outcome ledger and scorecard |
+| GET | `/api/backtests/latest` | Latest point-in-time, cost-adjusted validation report |
+| GET | `/api/backtests` | Recent stored validation runs |
+| POST | `/api/backtests/run` | Recompute validation with bounded cost assumptions |
 | GET | `/api/jobs/daily/status` | Staged daily-job progress/error |
 | POST | `/api/jobs/daily/run` | Protected all-NSE snapshot launch |
 | GET/PUT | `/api/portfolio/settings` | Versioned portfolio risk policy |

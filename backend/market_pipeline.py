@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import cfo_engine
 import ai_committee
+import backtest_engine
 import data_cache
 import db
 import nse_bhavcopy
@@ -339,6 +340,11 @@ async def run_daily_pipeline(job_id: str) -> None:
                 "errors": sum(1 for result in recommendation_evaluation["results"]
                               if result.get("error")),
             }
+            db.update_job_run(job_id, stage="point_in_time_backtest", progress=0, total=0)
+            backtest = await asyncio.to_thread(
+                backtest_engine.run_snapshot_backtest,
+                model_version=cfo_engine.MODEL_VERSION,
+            )
             db.update_job_run(job_id, stage="paper_outcomes", progress=0, total=0)
             paper_evaluation = await paper_test_service.evaluate_open_tests()
             active_trades = db.paper_trades_active()
@@ -380,6 +386,7 @@ async def run_daily_pipeline(job_id: str) -> None:
                     **db.recommendation_outcome_stats(),
                     "last_evaluation": recommendation_evaluation_summary,
                 },
+                "latest_backtest": backtest,
                 "candidates": candidates, "sectors": sectors,
             }
             trading_date = bhavcopy.get("as_of") or (nifty[-1].get("date") if nifty else now.date().isoformat())

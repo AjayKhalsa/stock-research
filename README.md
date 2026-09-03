@@ -96,3 +96,12 @@ evaluation reuses retained scan candles where possible, fetches each missing
 symbol only once, and reports resolved/excluded counts, expectancy, MFE, and
 MAE in System. This broader ledger is separate from the user's chosen paper
 tests.
+
+The System page also runs a point-in-time snapshot replay over resolved ledger
+rows. It reports gross and cost-adjusted expectancy, Wilson win-rate ranges,
+profit factor, drawdown, holding time, MFE/MAE, and breakdowns by setup, market
+regime, original rank decile, and action. Stored signal adjustment factors keep
+entry, stop, and target levels comparable across later splits and dividends.
+The report does not backfill current fundamentals or pretend that the complete
+historical NSE constituent master was archived; it remains explicitly early
+below 30 outcomes and becomes mature only at 100.

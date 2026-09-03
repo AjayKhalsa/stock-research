@@ -11,6 +11,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 import config
+import backtest_engine
 import cfo_engine
 import data_cache
 import db
@@ -39,6 +40,12 @@ class HumanReviewCreate(BaseModel):
     symbol: str = Field(min_length=1, max_length=20)
     assessment: Literal["AGREE", "TOO_OPTIMISTIC", "TOO_CONSERVATIVE", "DATA_ISSUE"]
     notes: str = Field(default="", max_length=2000)
+
+
+class BacktestCosts(BaseModel):
+    entry_slippage_bps: float = Field(10, ge=0, le=100)
+    exit_slippage_bps: float = Field(10, ge=0, le=100)
+    fees_and_taxes_bps: float = Field(15, ge=0, le=100)
 
 
 def _feature_enabled() -> None:
@@ -101,6 +108,7 @@ def morning_brief():
     if snapshot:
         snapshot["external_enrichment"] = db.enrichment_coverage("Bull AI")
         snapshot["historical_truth"] = db.recommendation_outcome_stats()
+        snapshot["latest_backtest"] = db.latest_backtest_run()
         return snapshot
     return {
         "status": "setup_required", "snapshot_id": None, "published_at": None,
@@ -115,6 +123,7 @@ def morning_brief():
         "candidates": [], "sectors": [],
         "external_enrichment": db.enrichment_coverage("Bull AI"),
         "historical_truth": db.recommendation_outcome_stats(),
+        "latest_backtest": db.latest_backtest_run(),
     }
 
 
@@ -237,6 +246,29 @@ def recommendation_outcome_stats():
 def recommendation_outcomes(limit: int = 100):
     _feature_enabled()
     return db.recommendation_outcomes_recent(limit)
+
+
+@router.get("/api/backtests/latest")
+def latest_backtest(model_version: Optional[str] = None):
+    _feature_enabled()
+    return db.latest_backtest_run(model_version) or backtest_engine.run_snapshot_backtest(
+        model_version=model_version, persist=False,
+    )
+
+
+@router.get("/api/backtests")
+def list_backtests(limit: int = 20):
+    _feature_enabled()
+    return db.backtest_runs(limit)
+
+
+@router.post("/api/backtests/run")
+def run_backtest(body: BacktestCosts, model_version: Optional[str] = None):
+    _feature_enabled()
+    return backtest_engine.run_snapshot_backtest(
+        model_version=model_version,
+        costs=body.model_dump(),
+    )
 
 
 @router.get("/api/jobs/daily/status")
