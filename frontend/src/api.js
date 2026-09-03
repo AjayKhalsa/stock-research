@@ -96,3 +96,7 @@ export const getHumanReviews = (symbol, snapshotId) => API.get(
   `/api/human-reviews/${pathSymbol(symbol)}`,
   { params: snapshotId ? { snapshot_id: snapshotId } : {} },
 ).then(r => r.data);
+export const getRecommendationOutcomeStats = () => API.get('/api/recommendation-outcomes/stats').then(r => r.data);
+export const getRecommendationOutcomes = (limit = 100) => API.get(
+  '/api/recommendation-outcomes', { params: { limit } },
+).then(r => r.data);

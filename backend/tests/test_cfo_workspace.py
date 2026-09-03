@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,8 @@ import data_cache  # noqa: E402
 import db  # noqa: E402
 import price_service  # noqa: E402
 import market_pipeline  # noqa: E402
+import recommendation_outcome_service  # noqa: E402
+import trade_lifecycle  # noqa: E402
 import screener_scraper  # noqa: E402
 from routers import cfo_workspace as cfo_router  # noqa: E402
 from main import app  # noqa: E402
@@ -33,6 +36,21 @@ def candles(count=300, close=100.0, volume=1_000_000):
 
 
 class CfoEngineTests(unittest.TestCase):
+    def test_daily_lifecycle_never_replays_candles_before_numeric_open_time(self):
+        record = {
+            "status": "ACTIVE", "opened_at": datetime(
+                2026, 5, 1, tzinfo=timezone.utc,
+            ).timestamp(),
+            "entry_price": 100, "entry_low": 99, "entry_high": 101,
+            "stop_price": 95, "target_t1": 108, "target_t2": 112,
+        }
+        result = trade_lifecycle.evaluate_daily(record, [
+            {"date": "2026-04-30", "high": 101, "low": 90, "close": 94},
+            {"date": "2026-05-04", "high": 109, "low": 99, "close": 108},
+        ], now=1)
+        self.assertEqual(result["status"], "WIN_T1")
+        self.assertEqual(result["updates"]["active_sessions"], 1)
+
     def test_bulk_history_timeout_falls_back_to_persisted_candles(self):
         fallback = candles(3)
         with patch.object(price_service, "_read_persisted_history",
@@ -408,12 +426,53 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(detail.json()["human_reviews"][0]["assessment"], "TOO_OPTIMISTIC")
         self.assertGreaterEqual(morning.json()["external_enrichment"]["covered"], 3)
         self.assertEqual(self.client.get("/api/sectors/IT").status_code, 200)
-
         history = self.client.get(
             "/api/human-reviews/TCS", params={"snapshot_id": snapshot_id},
         )
         self.assertEqual(history.status_code, 200)
         self.assertEqual(history.json()[0]["snapshot_id"], snapshot_id)
+
+    def test_actionable_snapshot_creates_and_resolves_automatic_outcome(self):
+        candidate = {
+            "symbol": "AUTOTEST", "company": "Automatic Test", "sector": "IT",
+            "global_rank": 2, "sector_rank": 2, "action": "WAIT_FOR_ENTRY",
+            "classification": "B", "score": 74, "confidence": 80,
+            "setup_type": "pullback", "trade_plan": {
+                "entry": {"low": 100, "high": 102}, "stop": {"price": 95},
+                "targets": [{"label": "T1", "price": 110},
+                            {"label": "T2", "price": 118}],
+                "invalidation": "Close below 95",
+            },
+        }
+        snapshot_id = db.publish_analysis_snapshot(
+            {"candidates": [candidate], "sectors": []}, [candidate], [],
+            model_version="outcome-test-v1", trading_date="2026-05-01",
+        )
+        row = next(item for item in db.recommendation_outcomes_open()
+                   if item["snapshot_id"] == snapshot_id)
+        self.assertEqual(row["status"], "ARMED")
+        self.assertEqual(row["model_version"], "outcome-test-v1")
+
+        evaluated = asyncio.run(
+            recommendation_outcome_service.evaluate_open_outcomes({
+                "AUTOTEST": [
+                    {"date": "2026-05-04", "high": 101, "low": 99, "close": 100},
+                    {"date": "2026-05-05", "high": 111, "low": 103, "close": 109},
+                ],
+            })
+        )
+        result = next(item for item in evaluated["results"]
+                      if item["snapshot_id"] == snapshot_id)
+        self.assertEqual(result["status"], "WIN_T1")
+        self.assertEqual(result["outcome"]["pnl_r"], 1.14)
+        self.assertEqual(result["outcome"]["mfe_r"], 1.29)
+        self.assertEqual(evaluated["provider_requests"], 0)
+        stats = self.client.get("/api/recommendation-outcomes/stats").json()
+        self.assertGreaterEqual(stats["resolved"], 1)
+        self.assertIn("expectancy_r", stats)
+        history = self.client.get("/api/recommendation-outcomes", params={"limit": 10})
+        self.assertEqual(history.status_code, 200)
+        self.assertTrue(any(item["snapshot_id"] == snapshot_id for item in history.json()))
 
     def test_human_review_rejects_unknown_recommendation_snapshot(self):
         response = self.client.post("/api/human-reviews", json={

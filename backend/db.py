@@ -29,6 +29,7 @@ existing data/watchlist.json and data/alerts.json are migrated in on first run.
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import time
@@ -261,10 +262,29 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     snapshot_id   TEXT NOT NULL,
     symbol        TEXT NOT NULL,
     action        TEXT NOT NULL,
+    model_version TEXT,
+    signal_date   TEXT,
+    score         REAL,
+    setup_type    TEXT,
+    classification TEXT,
+    entry_low     REAL,
+    entry_high    REAL,
     entry_price   REAL,
     stop_price    REAL,
+    target_t1     REAL,
+    target_t2     REAL,
+    status        TEXT NOT NULL DEFAULT 'ARMED',
     outcome       TEXT,
-    pnl_r         REAL,
+    pnl_r         REAL NOT NULL DEFAULT 0,
+    invalidation  TEXT,
+    armed_sessions INTEGER NOT NULL DEFAULT 0,
+    active_sessions INTEGER NOT NULL DEFAULT 0,
+    activated_at  REAL,
+    last_evaluated_date TEXT,
+    mfe_r         REAL NOT NULL DEFAULT 0,
+    mae_r         REAL NOT NULL DEFAULT 0,
+    exit_price    REAL,
+    outcome_date  TEXT,
     opened_at     REAL NOT NULL,
     closed_at     REAL
 );
@@ -444,10 +464,29 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     snapshot_id   TEXT NOT NULL,
     symbol        TEXT NOT NULL,
     action        TEXT NOT NULL,
+    model_version TEXT,
+    signal_date   TEXT,
+    score         DOUBLE PRECISION,
+    setup_type    TEXT,
+    classification TEXT,
+    entry_low     DOUBLE PRECISION,
+    entry_high    DOUBLE PRECISION,
     entry_price   DOUBLE PRECISION,
     stop_price    DOUBLE PRECISION,
+    target_t1     DOUBLE PRECISION,
+    target_t2     DOUBLE PRECISION,
+    status        TEXT NOT NULL DEFAULT 'ARMED',
     outcome       TEXT,
-    pnl_r         DOUBLE PRECISION,
+    pnl_r         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    invalidation  TEXT,
+    armed_sessions INTEGER NOT NULL DEFAULT 0,
+    active_sessions INTEGER NOT NULL DEFAULT 0,
+    activated_at  DOUBLE PRECISION,
+    last_evaluated_date TEXT,
+    mfe_r         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mae_r         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    exit_price    DOUBLE PRECISION,
+    outcome_date  TEXT,
     opened_at     DOUBLE PRECISION NOT NULL,
     closed_at     DOUBLE PRECISION
 );
@@ -526,6 +565,27 @@ def _migrate_unified_research_columns() -> None:
         "exit_price": "DOUBLE PRECISION" if _PG else "REAL",
         "outcome_date": "TEXT",
     }
+    outcome_columns = {
+        "model_version": "TEXT",
+        "signal_date": "TEXT",
+        "score": "DOUBLE PRECISION" if _PG else "REAL",
+        "setup_type": "TEXT",
+        "classification": "TEXT",
+        "entry_low": "DOUBLE PRECISION" if _PG else "REAL",
+        "entry_high": "DOUBLE PRECISION" if _PG else "REAL",
+        "target_t1": "DOUBLE PRECISION" if _PG else "REAL",
+        "target_t2": "DOUBLE PRECISION" if _PG else "REAL",
+        "status": "TEXT NOT NULL DEFAULT 'ARMED'",
+        "invalidation": "TEXT",
+        "armed_sessions": "INTEGER NOT NULL DEFAULT 0",
+        "active_sessions": "INTEGER NOT NULL DEFAULT 0",
+        "activated_at": "DOUBLE PRECISION" if _PG else "REAL",
+        "last_evaluated_date": "TEXT",
+        "mfe_r": "DOUBLE PRECISION NOT NULL DEFAULT 0" if _PG else "REAL NOT NULL DEFAULT 0",
+        "mae_r": "DOUBLE PRECISION NOT NULL DEFAULT 0" if _PG else "REAL NOT NULL DEFAULT 0",
+        "exit_price": "DOUBLE PRECISION" if _PG else "REAL",
+        "outcome_date": "TEXT",
+    }
     if _PG:
         with _conn() as c:
             with c.cursor() as cur:
@@ -533,13 +593,21 @@ def _migrate_unified_research_columns() -> None:
                     cur.execute(f"ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS {name} {sql_type}")
                 for name, sql_type in paper_columns.items():
                     cur.execute(f"ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS {name} {sql_type}")
+                for name, sql_type in outcome_columns.items():
+                    cur.execute(f"ALTER TABLE recommendation_outcomes ADD COLUMN IF NOT EXISTS {name} {sql_type}")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_recommendation_outcomes_status "
+                            "ON recommendation_outcomes(status, symbol)")
         return
     with _conn() as c:
-        for table, columns in (("watchlist", watchlist_columns), ("paper_trades", paper_columns)):
+        for table, columns in (("watchlist", watchlist_columns),
+                               ("paper_trades", paper_columns),
+                               ("recommendation_outcomes", outcome_columns)):
             existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
             for name, sql_type in columns.items():
                 if name not in existing:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_recommendation_outcomes_status "
+                  "ON recommendation_outcomes(status, symbol)")
 
 
 def init() -> None:
@@ -863,6 +931,43 @@ def latest_job_run(job_type: str = "daily_cfo") -> Optional[dict]:
     return _row_to_job(row)
 
 
+def _as_finite_float(value) -> Optional[float]:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _recommendation_outcome_values(snapshot_id: str, item: dict, *,
+                                   model_version: str, trading_date: str,
+                                   opened_at: float) -> Optional[tuple]:
+    """Return a validated automatic forward-test row for actionable states."""
+    if item.get("action") not in {"BUY_NOW", "WAIT_FOR_ENTRY"}:
+        return None
+    plan = item.get("trade_plan") or {}
+    entry = plan.get("entry") or {}
+    stop = plan.get("stop") or {}
+    targets = plan.get("targets") or []
+    low = _as_finite_float(entry.get("low"))
+    high = _as_finite_float(entry.get("high"))
+    stop_price = _as_finite_float(stop.get("price"))
+    t1 = _as_finite_float((targets[0] or {}).get("price")) if targets else None
+    t2_candidate = (_as_finite_float((targets[1] or {}).get("price"))
+                    if len(targets) > 1 else None)
+    t2 = t2_candidate if t2_candidate is not None else t1
+    if (None in (low, high, stop_price, t1, t2) or low <= 0 or high < low
+            or stop_price <= 0 or stop_price >= low or t1 <= high or t2 < t1):
+        return None
+    return (
+        snapshot_id, str(item.get("symbol") or "").upper(), item["action"],
+        model_version, trading_date, _as_finite_float(item.get("score")),
+        item.get("setup_type"), item.get("classification"), low, high,
+        (low + high) / 2, stop_price, t1, t2, "ARMED", None, 0.0,
+        plan.get("invalidation"), opened_at,
+    )
+
+
 def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                               sectors: list[dict], *, model_version: str,
                               trading_date: str) -> str:
@@ -890,6 +995,18 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                  item.get("score"), item.get("confidence"),
                  json.dumps(_json_nan_safe(item)), now),
             )
+            outcome_values = _recommendation_outcome_values(
+                snapshot_id, item, model_version=model_version,
+                trading_date=trading_date, opened_at=now,
+            )
+            if outcome_values:
+                c.execute(_sql(
+                    "INSERT INTO recommendation_outcomes(snapshot_id, symbol, action, "
+                    "model_version, signal_date, score, setup_type, classification, "
+                    "entry_low, entry_high, entry_price, stop_price, target_t1, target_t2, "
+                    "status, outcome, pnl_r, invalidation, opened_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                ), outcome_values)
         for item in sectors:
             c.execute(
                 _sql("INSERT INTO sector_snapshots(snapshot_id, sector, sector_rank, payload) "
@@ -990,6 +1107,99 @@ def human_reviews(symbol: str, snapshot_id: Optional[str] = None,
             item["score_at_review"] = float(item["score_at_review"])
         output.append(item)
     return output
+
+
+_NUMERIC_OUTCOME_FIELDS = (
+    "score", "entry_low", "entry_high", "entry_price", "stop_price",
+    "target_t1", "target_t2", "pnl_r", "activated_at", "mfe_r", "mae_r",
+    "exit_price", "opened_at", "closed_at",
+)
+
+
+def _row_to_recommendation_outcome(row) -> dict:
+    result = dict(row)
+    for field in _NUMERIC_OUTCOME_FIELDS:
+        if result.get(field) is not None:
+            result[field] = float(result[field])
+    return result
+
+
+def recommendation_outcomes_open(limit: int = 2000) -> list[dict]:
+    safe_limit = max(1, min(int(limit), 5000))
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT * FROM recommendation_outcomes "
+            "WHERE status IN ('ARMED','ACTIVE') ORDER BY id LIMIT ?"
+        ), (safe_limit,)).fetchall()
+    return [_row_to_recommendation_outcome(row) for row in rows]
+
+
+def recommendation_outcomes_recent(limit: int = 100) -> list[dict]:
+    safe_limit = max(1, min(int(limit), 500))
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT * FROM recommendation_outcomes ORDER BY id DESC LIMIT ?"
+        ), (safe_limit,)).fetchall()
+    return [_row_to_recommendation_outcome(row) for row in rows]
+
+
+def recommendation_outcome_patch(outcome_id: int, **changes) -> Optional[dict]:
+    allowed = {
+        "status", "outcome", "pnl_r", "armed_sessions", "active_sessions",
+        "activated_at", "closed_at", "last_evaluated_date", "entry_price",
+        "mfe_r", "mae_r", "exit_price", "outcome_date",
+    }
+    values = [(key, value) for key, value in changes.items() if key in allowed]
+    if values:
+        assignments = ", ".join(f"{key} = ?" for key, _value in values)
+        with _conn() as c:
+            row = c.execute(_sql(
+                f"UPDATE recommendation_outcomes SET {assignments} "
+                "WHERE id = ? RETURNING *"
+            ), tuple(value for _key, value in values) + (outcome_id,)).fetchone()
+    else:
+        with _conn() as c:
+            row = c.execute(_sql(
+                "SELECT * FROM recommendation_outcomes WHERE id = ?"
+            ), (outcome_id,)).fetchone()
+    return _row_to_recommendation_outcome(row) if row else None
+
+
+def recommendation_outcome_stats() -> dict:
+    with _conn() as c:
+        row = c.execute(_sql(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN status = 'ARMED' THEN 1 ELSE 0 END) AS armed, "
+            "SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active, "
+            "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP') "
+            "THEN 1 ELSE 0 END) AS resolved, "
+            "SUM(CASE WHEN status NOT IN ('ARMED','ACTIVE','WIN_T1','WIN_T2',"
+            "'STOPPED_OUT','TIME_STOP') THEN 1 ELSE 0 END) AS excluded, "
+            "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2') OR "
+            "(status = 'TIME_STOP' AND pnl_r > 0) THEN 1 ELSE 0 END) AS wins, "
+            "COALESCE(SUM(pnl_r), 0) AS net_r, "
+            "COALESCE(AVG(CASE WHEN status IN ('WIN_T1','WIN_T2','STOPPED_OUT',"
+            "'TIME_STOP') THEN mfe_r END), 0) AS avg_mfe_r, "
+            "COALESCE(AVG(CASE WHEN status IN ('WIN_T1','WIN_T2','STOPPED_OUT',"
+            "'TIME_STOP') THEN mae_r END), 0) AS avg_mae_r "
+            "FROM recommendation_outcomes"
+        )).fetchone()
+    resolved = int(row["resolved"] or 0)
+    wins = int(row["wins"] or 0)
+    net_r = float(row["net_r"] or 0)
+    return {
+        "total": int(row["total"] or 0),
+        "armed": int(row["armed"] or 0),
+        "active": int(row["active"] or 0),
+        "resolved": resolved,
+        "excluded": int(row["excluded"] or 0),
+        "wins": wins,
+        "win_rate_pct": round(wins / resolved * 100, 1) if resolved else 0.0,
+        "net_r": round(net_r, 2),
+        "expectancy_r": round(net_r / resolved, 2) if resolved else 0.0,
+        "avg_mfe_r": round(float(row["avg_mfe_r"] or 0), 2),
+        "avg_mae_r": round(float(row["avg_mae_r"] or 0), 2),
+    }
 
 
 _ENRICHMENT_SEED_PATH = os.path.join(os.path.dirname(__file__), "seed", "bull_ai_enrichment.json")

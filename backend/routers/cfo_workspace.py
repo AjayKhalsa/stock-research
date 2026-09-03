@@ -100,6 +100,7 @@ def morning_brief():
     snapshot = db.latest_analysis_snapshot()
     if snapshot:
         snapshot["external_enrichment"] = db.enrichment_coverage("Bull AI")
+        snapshot["historical_truth"] = db.recommendation_outcome_stats()
         return snapshot
     return {
         "status": "setup_required", "snapshot_id": None, "published_at": None,
@@ -113,6 +114,7 @@ def morning_brief():
                                                  "required_for_mature_confidence": 100},
         "candidates": [], "sectors": [],
         "external_enrichment": db.enrichment_coverage("Bull AI"),
+        "historical_truth": db.recommendation_outcome_stats(),
     }
 
 
@@ -223,6 +225,18 @@ def create_human_review(body: HumanReviewCreate):
 def list_human_reviews(symbol: str, snapshot_id: Optional[str] = None, limit: int = 50):
     _feature_enabled()
     return db.human_reviews(symbol.strip(), snapshot_id, limit)
+
+
+@router.get("/api/recommendation-outcomes/stats")
+def recommendation_outcome_stats():
+    _feature_enabled()
+    return db.recommendation_outcome_stats()
+
+
+@router.get("/api/recommendation-outcomes")
+def recommendation_outcomes(limit: int = 100):
+    _feature_enabled()
+    return db.recommendation_outcomes_recent(limit)
 
 
 @router.get("/api/jobs/daily/status")

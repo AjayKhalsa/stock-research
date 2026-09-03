@@ -25,6 +25,9 @@ const brief = {
   portfolio: { open_positions: 1, heat_pct: 0.75, max_heat_pct: 6, actions: [] },
   changes: { new: ['TCS'], upgraded: [], downgraded: [] },
   results_calendar: [], validation: { status: 'early', closed_paper_trades: 0 },
+  historical_truth: { total: 24, armed: 5, active: 3, resolved: 14,
+    excluded: 2, win_rate_pct: 57.1, expectancy_r: 0.31,
+    avg_mfe_r: 1.42, avg_mae_r: 0.61 },
   sectors: [{ sector: 'IT', rank: 1, score: 75, trend: 'Leading', breadth_pct: 72,
     relative_strength: 70, volume_participation: 64, actionable_count: 1, eligible_count: 10,
     top_candidates: [{ symbol: 'TCS', company: 'Tata Consultancy', action: 'WAIT_FOR_ENTRY', expected_r: 1.1 }] }],
@@ -156,6 +159,16 @@ test('shows armed entries and active trades as distinct open paper tests', async
   expect(screen.getByText('Active')).toBeInTheDocument();
   expect(screen.getByText(/1 waiting · 1 active/i)).toBeInTheDocument();
   expect(screen.getByText(/0.25R/i)).toBeInTheDocument();
+});
+
+test('shows the automatic historical truth ledger in System', async () => {
+  render(<CfoWorkspace />);
+  await screen.findByText(/What looks interesting today/i);
+  fireEvent.click(screen.getByRole('button', { name: /System Data & jobs/i }));
+  expect(await screen.findByText(/Automatic recommendation outcomes/i)).toBeInTheDocument();
+  expect(screen.getByText('24')).toBeInTheDocument();
+  expect(screen.getByText(/5 waiting · 3 active/i)).toBeInTheDocument();
+  expect(screen.getByText(/0.31R/i)).toBeInTheDocument();
 });
 
 test('shows a daily chart section without leaving the dossier', async () => {

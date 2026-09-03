@@ -89,3 +89,10 @@ Ranked dossiers also accept a structured human review—looks right, too
 optimistic, too conservative, or data issue—with an optional note. Reviews are
 append-only and retain the exact snapshot, model version, action, and score;
 they do not alter the live rank.
+
+In parallel, every published `BUY_NOW` or `WAIT_FOR_ENTRY` candidate with valid
+trade geometry enters an automatic recommendation-outcome ledger. Daily
+evaluation reuses retained scan candles where possible, fetches each missing
+symbol only once, and reports resolved/excluded counts, expectancy, MFE, and
+MAE in System. This broader ledger is separate from the user's chosen paper
+tests.

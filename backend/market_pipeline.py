@@ -17,6 +17,7 @@ import db
 import nse_bhavcopy
 import paper_test_service
 import price_service as price
+import recommendation_outcome_service
 import swing_engine
 import symbol_resolver
 
@@ -187,6 +188,9 @@ async def run_daily_pipeline(job_id: str) -> None:
             top_candle_heap: list[tuple[float, str]] = []
             priority_symbols = {w["symbol"] for w in db.watchlist_all()}
             priority_symbols.update(t["symbol"] for t in db.paper_trades_open())
+            priority_symbols.update(
+                outcome["symbol"] for outcome in db.recommendation_outcomes_open()
+            )
             names = {row["symbol"]: row.get("name") or row["symbol"] for row in universe}
             done = 0
             for batch in _chunks([row["symbol"] for row in universe], HISTORY_BATCH):
@@ -324,6 +328,17 @@ async def run_daily_pipeline(job_id: str) -> None:
                 candidate["sector_rank"] = sector_counts[candidate["sector"]]
             sectors = _build_sector_snapshots(candidates)
 
+            db.update_job_run(job_id, stage="recommendation_outcomes", progress=0, total=0)
+            recommendation_evaluation = await recommendation_outcome_service.evaluate_open_outcomes(
+                retained_candles,
+            )
+            recommendation_evaluation_summary = {
+                "evaluated": recommendation_evaluation["evaluated"],
+                "updated": recommendation_evaluation["updated"],
+                "provider_requests": recommendation_evaluation["provider_requests"],
+                "errors": sum(1 for result in recommendation_evaluation["results"]
+                              if result.get("error")),
+            }
             db.update_job_run(job_id, stage="paper_outcomes", progress=0, total=0)
             paper_evaluation = await paper_test_service.evaluate_open_tests()
             active_trades = db.paper_trades_active()
@@ -361,6 +376,10 @@ async def run_daily_pipeline(job_id: str) -> None:
                 "validation": {"status": "early", "closed_paper_trades": paper_stats["resolved_count"],
                                "required_for_mature_confidence": 100},
                 "paper_evaluation": paper_evaluation,
+                "historical_truth": {
+                    **db.recommendation_outcome_stats(),
+                    "last_evaluation": recommendation_evaluation_summary,
+                },
                 "candidates": candidates, "sectors": sectors,
             }
             trading_date = bhavcopy.get("as_of") or (nifty[-1].get("date") if nifty else now.date().isoformat())

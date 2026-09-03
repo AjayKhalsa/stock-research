@@ -138,6 +138,15 @@ snapshot. The server copies the model version, recommendation action, and score
 from the stored recommendation rather than accepting those audit fields from
 the browser, and feedback has no immediate score effect.
 
+Snapshot publication also creates one `recommendation_outcomes` row for every
+`BUY_NOW` or `WAIT_FOR_ENTRY` candidate with valid geometry, in the same
+database transaction as the immutable candidate payload. The next daily runs
+advance those rows through the shared conservative lifecycle. Evaluation is
+grouped by symbol and reuses retained scan history before making a bounded
+fallback request, preventing correlated daily recommendations from multiplying
+provider calls. System exposes resolved/excluded counts, expectancy, MFE and
+MAE independently of the manually selected paper-test ledger.
+
 Bull AI enrichment appears only in the Evidence tab and in snapshot coverage
 metadata. It is a bounded, supplementary research layer: records retain source
 labels and limitations, management statements remain claims rather than facts,
