@@ -26,7 +26,8 @@ const brief = {
   changes: { new: ['TCS'], upgraded: [], downgraded: [] },
   results_calendar: [], validation: { status: 'early', closed_paper_trades: 0 },
   historical_truth: { total: 24, armed: 5, active: 3, resolved: 14,
-    excluded: 2, win_rate_pct: 57.1, expectancy_r: 0.31,
+    excluded: 2, observational: 12, observational_resolved: 4,
+    win_rate_pct: 57.1, expectancy_r: 0.31,
     avg_mfe_r: 1.42, avg_mae_r: 0.61 },
   latest_backtest: { status: 'insufficient_data', overall: { sample: 14,
     gross_expectancy_r: .34, net_expectancy_r: .27, net_total_r: 3.78,
@@ -179,6 +180,8 @@ test('shows the automatic historical truth ledger in System', async () => {
   expect(await screen.findByText(/Automatic recommendation outcomes/i)).toBeInTheDocument();
   expect(screen.getByText('24')).toBeInTheDocument();
   expect(screen.getByText(/5 waiting · 3 active/i)).toBeInTheDocument();
+  expect(screen.getByText('12')).toBeInTheDocument();
+  expect(screen.getByText('4 resolved')).toBeInTheDocument();
   expect(screen.getByText(/0.31R/i)).toBeInTheDocument();
   expect(screen.getByText(/Production, V2, and human judgment/i)).toBeInTheDocument();
   expect(screen.getByText(/86 outcomes remaining/i)).toBeInTheDocument();

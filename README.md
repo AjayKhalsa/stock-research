@@ -23,7 +23,9 @@ npm start
 ```
 
 The included GitHub workflow uses its short-lived job installation token to
-call the protected `POST /api/jobs/daily/run` at 07:00 IST on weekdays. The
+call the protected `POST /api/jobs/daily/run` early on weekdays. It is queued
+at 02:00 IST to absorb GitHub's observed multi-hour scheduler delay and keep
+the completed snapshot available for the morning decision window. The
 backend verifies both repository access and the live workflow run, so no shared
 scheduler secret is required. `CRON_SECRET_KEY` remains available as an optional
 fallback when using another scheduler.
@@ -124,3 +126,10 @@ session's real NSE bhavcopy open, high, low, close, and volume before analysis.
 It will not bridge multiple missing sessions, and it rejects gaps over 40% so a
 split or bonus issue cannot masquerade as a normal price move while adjustment
 data is still catching up.
+
+To make future threshold and gate calibration possible without relaxing the
+live model, each snapshot also forward-tracks a bounded sample of up to 20
+WATCH setups and five rejected setups with valid geometry. These rows are
+labelled `observational`, remain outside actionable win rate/expectancy, and
+count only toward the evidence pool required to build a chronological V2
+challenger.

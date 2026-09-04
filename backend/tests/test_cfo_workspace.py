@@ -571,6 +571,7 @@ class CfoWorkspaceApiTests(unittest.TestCase):
                    if item["snapshot_id"] == snapshot_id)
         self.assertEqual(row["status"], "ARMED")
         self.assertEqual(row["model_version"], "outcome-test-v1")
+        self.assertEqual(row["tracking_role"], "actionable")
 
         evaluated = asyncio.run(
             recommendation_outcome_service.evaluate_open_outcomes({
@@ -592,6 +593,27 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         history = self.client.get("/api/recommendation-outcomes", params={"limit": 10})
         self.assertEqual(history.status_code, 200)
         self.assertTrue(any(item["snapshot_id"] == snapshot_id for item in history.json()))
+
+    def test_watch_outcome_is_observational_and_does_not_change_live_scorecard(self):
+        candidate = {
+            "symbol": "SHADOWTEST", "company": "Shadow Test", "sector": "IT",
+            "global_rank": 8, "sector_rank": 3, "action": "WATCH",
+            "score": 66, "setup_type": "breakout", "trade_plan": {
+                "entry": {"low": 100, "high": 102}, "stop": {"price": 95},
+                "targets": [{"price": 110}, {"price": 118}],
+            },
+        }
+        before = db.recommendation_outcome_stats()
+        snapshot_id = db.publish_analysis_snapshot(
+            {"candidates": [candidate], "sectors": []}, [candidate], [],
+            model_version="shadow-test-v1", trading_date="2026-06-01",
+        )
+        row = next(item for item in db.recommendation_outcomes_open()
+                   if item["snapshot_id"] == snapshot_id)
+        after = db.recommendation_outcome_stats()
+        self.assertEqual(row["tracking_role"], "observational")
+        self.assertEqual(after["total"], before["total"])
+        self.assertEqual(after["observational"], before["observational"] + 1)
 
     def test_human_review_rejects_unknown_recommendation_snapshot(self):
         response = self.client.post("/api/human-reviews", json={

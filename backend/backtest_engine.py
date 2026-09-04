@@ -158,7 +158,13 @@ def run_snapshot_backtest(*, model_version: Optional[str] = None,
               else "insufficient_data")
     report["status"] = status
     report["model_version_filter"] = model_version
-    mature = report["overall"]["sample"] >= MIN_MATURE_SAMPLE
+    outcome_stats = db.recommendation_outcome_stats()
+    calibration_sample = max(
+        report["overall"]["sample"],
+        int(outcome_stats.get("resolved") or 0)
+        + int(outcome_stats.get("observational_resolved") or 0),
+    )
+    mature = calibration_sample >= MIN_MATURE_SAMPLE
     report["shadow_test"] = {
         "current": {
             "model_version": model_version or "all_versions",
@@ -173,8 +179,12 @@ def run_snapshot_backtest(*, model_version: Optional[str] = None,
         "promotion_policy": {
             "automatic_promotion": False,
             "minimum_resolved_outcomes": MIN_MATURE_SAMPLE,
-            "observed_resolved_outcomes": report["overall"]["sample"],
-            "remaining": max(0, MIN_MATURE_SAMPLE - report["overall"]["sample"]),
+            "observed_resolved_outcomes": calibration_sample,
+            "actionable_resolved_outcomes": report["overall"]["sample"],
+            "observational_resolved_outcomes": int(
+                outcome_stats.get("observational_resolved") or 0
+            ),
+            "remaining": max(0, MIN_MATURE_SAMPLE - calibration_sample),
             "next_step": (
                 "calibrate V2 on chronological train data, then compare on a held-out period"
                 if mature else "continue forward collection without changing live weights"

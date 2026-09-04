@@ -279,6 +279,7 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     target_t2     REAL,
     signal_adjustment_factor REAL NOT NULL DEFAULT 1,
     level_adjustment_factor REAL NOT NULL DEFAULT 1,
+    tracking_role TEXT NOT NULL DEFAULT 'actionable',
     status        TEXT NOT NULL DEFAULT 'ARMED',
     outcome       TEXT,
     pnl_r         REAL NOT NULL DEFAULT 0,
@@ -487,6 +488,7 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     target_t2     DOUBLE PRECISION,
     signal_adjustment_factor DOUBLE PRECISION NOT NULL DEFAULT 1,
     level_adjustment_factor DOUBLE PRECISION NOT NULL DEFAULT 1,
+    tracking_role TEXT NOT NULL DEFAULT 'actionable',
     status        TEXT NOT NULL DEFAULT 'ARMED',
     outcome       TEXT,
     pnl_r         DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -593,6 +595,7 @@ def _migrate_unified_research_columns() -> None:
         "target_t2": "DOUBLE PRECISION" if _PG else "REAL",
         "signal_adjustment_factor": "DOUBLE PRECISION NOT NULL DEFAULT 1" if _PG else "REAL NOT NULL DEFAULT 1",
         "level_adjustment_factor": "DOUBLE PRECISION NOT NULL DEFAULT 1" if _PG else "REAL NOT NULL DEFAULT 1",
+        "tracking_role": "TEXT NOT NULL DEFAULT 'actionable'",
         "status": "TEXT NOT NULL DEFAULT 'ARMED'",
         "invalidation": "TEXT",
         "armed_sessions": "INTEGER NOT NULL DEFAULT 0",
@@ -960,9 +963,12 @@ def _as_finite_float(value) -> Optional[float]:
 def _recommendation_outcome_values(snapshot_id: str, item: dict, *,
                                    model_version: str, trading_date: str,
                                    opened_at: float,
-                                   market_regime: Optional[str]) -> Optional[tuple]:
+                                   market_regime: Optional[str],
+                                   allow_observational: bool = False) -> Optional[tuple]:
     """Return a validated automatic forward-test row for actionable states."""
-    if item.get("action") not in {"BUY_NOW", "WAIT_FOR_ENTRY"}:
+    action = item.get("action")
+    actionable = action in {"BUY_NOW", "WAIT_FOR_ENTRY"}
+    if not actionable and not (allow_observational and action in {"WATCH", "AVOID"}):
         return None
     plan = item.get("trade_plan") or {}
     entry = plan.get("entry") or {}
@@ -989,7 +995,8 @@ def _recommendation_outcome_values(snapshot_id: str, item: dict, *,
         item.get("setup_type"), item.get("classification"), item.get("sector"),
         market_regime, item.get("global_rank"), item.get("sector_rank"),
         low, high, (low + high) / 2, stop_price, t1, t2,
-        signal_factor, 1.0, "ARMED", None, 0.0,
+        signal_factor, 1.0, "actionable" if actionable else "observational",
+        "ARMED", None, 0.0,
         plan.get("invalidation"), opened_at,
     )
 
@@ -1006,6 +1013,7 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
     safe_summary["trading_date"] = trading_date
     market_regime = ((summary.get("market_regime") or {}).get("state")
                      if isinstance(summary.get("market_regime"), dict) else None)
+    observational_remaining = {"WATCH": 20, "AVOID": 5}
     with _conn() as c:
         c.execute(
             _sql("INSERT INTO analysis_snapshots(id, trading_date, model_version, status, "
@@ -1027,16 +1035,21 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                 snapshot_id, item, model_version=model_version,
                 trading_date=trading_date, opened_at=now,
                 market_regime=market_regime,
+                allow_observational=(
+                    observational_remaining.get(item.get("action"), 0) > 0
+                ),
             )
             if outcome_values:
+                if item.get("action") in observational_remaining:
+                    observational_remaining[item["action"]] -= 1
                 c.execute(_sql(
                     "INSERT INTO recommendation_outcomes(snapshot_id, symbol, action, "
                     "model_version, signal_date, score, setup_type, classification, "
                     "sector, market_regime, global_rank, sector_rank, entry_low, entry_high, "
                     "entry_price, stop_price, target_t1, target_t2, signal_adjustment_factor, "
-                    "level_adjustment_factor, "
+                    "level_adjustment_factor, tracking_role, "
                     "status, outcome, pnl_r, invalidation, opened_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 ), outcome_values)
         for item in sectors:
             c.execute(
@@ -1185,8 +1198,10 @@ def recommendation_outcomes_recent(limit: int = 100) -> list[dict]:
     return [_row_to_recommendation_outcome(row) for row in rows]
 
 
-def recommendation_outcomes_resolved(model_version: Optional[str] = None) -> list[dict]:
+def recommendation_outcomes_resolved(model_version: Optional[str] = None,
+                                     include_observational: bool = False) -> list[dict]:
     params: tuple = ()
+    role_clause = "" if include_observational else " AND tracking_role = 'actionable'"
     model_clause = ""
     if model_version:
         model_clause = " AND model_version = ?"
@@ -1194,7 +1209,7 @@ def recommendation_outcomes_resolved(model_version: Optional[str] = None) -> lis
     with _conn() as c:
         rows = c.execute(_sql(
             "SELECT * FROM recommendation_outcomes WHERE status IN "
-            "('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP')" + model_clause
+            "('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP')" + role_clause + model_clause
             + " ORDER BY outcome_date, id"
         ), params).fetchall()
     return [_row_to_recommendation_outcome(row) for row in rows]
@@ -1226,19 +1241,22 @@ def recommendation_outcome_patch(outcome_id: int, **changes) -> Optional[dict]:
 def recommendation_outcome_stats() -> dict:
     with _conn() as c:
         row = c.execute(_sql(
-            "SELECT COUNT(*) AS total, "
-            "SUM(CASE WHEN status = 'ARMED' THEN 1 ELSE 0 END) AS armed, "
-            "SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS active, "
+            "SELECT SUM(CASE WHEN tracking_role = 'actionable' THEN 1 ELSE 0 END) AS total, "
+            "SUM(CASE WHEN tracking_role = 'observational' THEN 1 ELSE 0 END) AS observational, "
+            "SUM(CASE WHEN tracking_role = 'actionable' AND status = 'ARMED' THEN 1 ELSE 0 END) AS armed, "
+            "SUM(CASE WHEN tracking_role = 'actionable' AND status = 'ACTIVE' THEN 1 ELSE 0 END) AS active, "
             "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP') "
-            "THEN 1 ELSE 0 END) AS resolved, "
-            "SUM(CASE WHEN status NOT IN ('ARMED','ACTIVE','WIN_T1','WIN_T2',"
+            "AND tracking_role = 'actionable' THEN 1 ELSE 0 END) AS resolved, "
+            "SUM(CASE WHEN tracking_role = 'observational' AND status IN "
+            "('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP') THEN 1 ELSE 0 END) AS observational_resolved, "
+            "SUM(CASE WHEN tracking_role = 'actionable' AND status NOT IN ('ARMED','ACTIVE','WIN_T1','WIN_T2',"
             "'STOPPED_OUT','TIME_STOP') THEN 1 ELSE 0 END) AS excluded, "
-            "SUM(CASE WHEN status IN ('WIN_T1','WIN_T2') OR "
-            "(status = 'TIME_STOP' AND pnl_r > 0) THEN 1 ELSE 0 END) AS wins, "
-            "COALESCE(SUM(pnl_r), 0) AS net_r, "
-            "COALESCE(AVG(CASE WHEN status IN ('WIN_T1','WIN_T2','STOPPED_OUT',"
+            "SUM(CASE WHEN tracking_role = 'actionable' AND (status IN ('WIN_T1','WIN_T2') OR "
+            "(status = 'TIME_STOP' AND pnl_r > 0)) THEN 1 ELSE 0 END) AS wins, "
+            "COALESCE(SUM(CASE WHEN tracking_role = 'actionable' THEN pnl_r ELSE 0 END), 0) AS net_r, "
+            "COALESCE(AVG(CASE WHEN tracking_role = 'actionable' AND status IN ('WIN_T1','WIN_T2','STOPPED_OUT',"
             "'TIME_STOP') THEN mfe_r END), 0) AS avg_mfe_r, "
-            "COALESCE(AVG(CASE WHEN status IN ('WIN_T1','WIN_T2','STOPPED_OUT',"
+            "COALESCE(AVG(CASE WHEN tracking_role = 'actionable' AND status IN ('WIN_T1','WIN_T2','STOPPED_OUT',"
             "'TIME_STOP') THEN mae_r END), 0) AS avg_mae_r "
             "FROM recommendation_outcomes"
         )).fetchone()
@@ -1247,6 +1265,8 @@ def recommendation_outcome_stats() -> dict:
     net_r = float(row["net_r"] or 0)
     return {
         "total": int(row["total"] or 0),
+        "observational": int(row["observational"] or 0),
+        "observational_resolved": int(row["observational_resolved"] or 0),
         "armed": int(row["armed"] or 0),
         "active": int(row["active"] or 0),
         "resolved": resolved,

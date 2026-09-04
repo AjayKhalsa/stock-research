@@ -2,9 +2,11 @@ name: Daily StockLens swing snapshot
 
 on:
   schedule:
-    # 07:00 IST, Monday-Friday. The job uses the latest completed NSE session;
-    # provider failures retain the last valid immutable snapshot.
-    - cron: '30 1 * * 1-5'
+    # Queue at 02:00 IST, Monday-Friday, so GitHub's observed multi-hour
+    # schedule delay still lands before the morning decision window. The job
+    # always anchors to the latest completed NSE session, so an on-time run
+    # and a delayed run analyse the same finished market data.
+    - cron: '30 20 * * 0-4'
   workflow_dispatch:
 
 permissions:

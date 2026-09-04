@@ -152,6 +152,11 @@ requires chronological calibration plus human review. The System UI shows
 production, challenger, and accumulated structured reviews side by side.
 The Candidates UI separates rejected/data-held rows while retaining them for
 audit and supports local symbol, company, and sector search over the snapshot.
+For counterfactual calibration, snapshot publication adds at most 20 WATCH and
+five rejected rows with valid trade geometry to the forward ledger as
+`observational`. They share the conservative lifecycle but are excluded from
+the production recommendation scorecard. This bounds provider/database load
+while collecting examples around thresholds and hard gates for a future V2.
 
 Snapshot publication also creates one `recommendation_outcomes` row for every
 `BUY_NOW` or `WAIT_FOR_ENTRY` candidate with valid geometry, in the same
@@ -390,7 +395,7 @@ All routes are prefixed `/api/`. The personal research reads remain open; daily-
 | Frontend build | Vercel, builds from `main`. `REACT_APP_API_URL` set as a Vercel env var (build-time, requires rebuild to change) |
 | Backend | Render (`render.yaml` blueprint), free web plan, `uvicorn main:app` |
 | Database | `DATABASE_URL` env var on Render → the Supabase session pooler; `DB_POOL_SIZE` defaults to 6 |
-| Secrets | `GEMINI_API_KEY` is set directly in Render. GitHub Actions uses its short-lived job installation token; the backend verifies repository access and the active `main` run. `CRON_SECRET_KEY` remains an optional fallback for another scheduler. |
+| Secrets | `GEMINI_API_KEY` is set directly in Render. GitHub Actions uses its short-lived job installation token; the backend verifies repository access and the active `main` run. `CRON_SECRET_KEY` remains an optional fallback for another scheduler. The workflow queues at 02:00 IST so observed GitHub delays still finish before the morning window; analysis always uses the latest completed NSE session. |
 | CORS | Backend allows any `*.vercel.app` origin plus local dev hosts — no per-deployment CORS config needed |
 
 **To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY` and `DATABASE_URL`; deploy `frontend/` to Vercel with `REACT_APP_API_URL` pointed at the backend. The weekday workflow sends its short-lived GitHub installation token and run ID at 07:00 IST; the backend verifies that the token can access this repository and that the referenced scheduled/manual run is currently active on `main`. Set `CRON_SECRET_KEY` only if an additional non-GitHub scheduler needs access. `db.py` speaks standard Postgres via `psycopg` and uses a bounded connection pool in production. Bull AI is not a required backend secret or runtime dependency: approved evidence is normalized into the enrichment store before publication.
