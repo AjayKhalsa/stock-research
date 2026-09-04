@@ -56,7 +56,8 @@ def _parse_mc_cr(mc_str) -> Optional[float]:
     if not mc_str:
         return None
     try:
-        return float(str(mc_str).replace(",", "").replace("Cr", "").strip())
+        return float(str(mc_str).replace(",", "").replace("₹", "")
+                     .replace("Rs.", "").replace("Cr", "").strip())
     except Exception:
         return None
 

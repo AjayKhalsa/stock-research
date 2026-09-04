@@ -45,6 +45,22 @@ SCORE_WEIGHTS = {
 ACTIONS = {"BUY_NOW", "WAIT_FOR_ENTRY", "WATCH", "AVOID", "DATA_INSUFFICIENT"}
 
 
+def market_cap_bucket(market_cap_cr: Optional[float]) -> str:
+    """Stable size proxy retained at signal time for later validation.
+
+    SEBI's official labels are rank-based and require a complete point-in-time
+    market-cap universe. Until that archive exists, explicit fixed crore bands
+    are more reproducible than applying today's ranks to an old signal.
+    """
+    if market_cap_cr is None or not math.isfinite(market_cap_cr) or market_cap_cr <= 0:
+        return "unknown"
+    if market_cap_cr >= 20_000:
+        return "large_proxy"
+    if market_cap_cr >= 5_000:
+        return "mid_proxy"
+    return "small_proxy"
+
+
 def _number(value: Any) -> Optional[float]:
     try:
         if value in (None, "", "-", "—", "N/A"):
@@ -763,10 +779,13 @@ def analyze_candidate(preliminary: dict, fundamentals: dict, fund_meta: dict,
                   "confidence_label": "data_completeness_not_probability"},
         "ai_committee": {"status": "not_run", "authority": "downgrade_only"},
     }
+    market_cap_cr = quant_engine._parse_mc_cr(fundamentals.get("market_cap"))
     return {
         "symbol": preliminary["symbol"], "company": preliminary["name"],
         "sector": fundamentals.get("sector") or "Unclassified",
         "industry": fundamentals.get("industry"), "action": action,
+        "market_cap_cr": market_cap_cr,
+        "market_cap_bucket": market_cap_bucket(market_cap_cr),
         "classification": classification,
         "score": round(score, 1), "expected_r": None,
         "rank_value": round(score * data_confidence["overall"] / 100, 3),

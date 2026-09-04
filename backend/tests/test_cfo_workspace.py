@@ -44,12 +44,14 @@ class CfoEngineTests(unittest.TestCase):
              "entry_price": 100, "stop_price": 95, "pnl_r": 2,
              "mfe_r": 2.2, "mae_r": .2, "active_sessions": 4,
              "global_rank": 3, "setup_type": "pullback",
-             "market_regime": "risk_on", "action": "BUY_NOW"},
+             "market_regime": "risk_on", "market_cap_bucket": "large_proxy",
+             "sector": "IT", "action": "BUY_NOW"},
             {"id": 2, "status": "STOPPED_OUT", "outcome_date": "2026-05-11",
              "entry_price": 50, "stop_price": 45, "pnl_r": -1,
              "mfe_r": .3, "mae_r": 1, "active_sessions": 2,
              "global_rank": 17, "setup_type": "breakout",
-             "market_regime": "neutral", "action": "WAIT_FOR_ENTRY"},
+             "market_regime": "neutral", "market_cap_bucket": "mid_proxy",
+             "sector": "Industrials", "action": "WAIT_FOR_ENTRY"},
         ]
         with patch("backtest_engine.db.recommendation_outcomes_resolved",
                    return_value=rows):
@@ -62,6 +64,16 @@ class CfoEngineTests(unittest.TestCase):
                          {"breakout", "pullback"})
         self.assertEqual({item["group"] for item in result["by_rank_decile"]},
                          {"1", "2"})
+        self.assertEqual({item["group"] for item in result["by_sector"]},
+                         {"IT", "Industrials"})
+        self.assertEqual({item["group"] for item in result["by_market_cap_bucket"]},
+                         {"large_proxy", "mid_proxy"})
+        self.assertGreater(result["ranking_quality"]["top_minus_bottom_expectancy_r"], 0)
+        self.assertIn("net_median_r", result["overall"])
+        self.assertIn("net_volatility_r", result["overall"])
+        self.assertEqual(result["overall"]["target_hit_rate_pct"], 50.0)
+        self.assertEqual(result["overall"]["stop_hit_rate_pct"], 50.0)
+        self.assertIsNone(result["portfolio_metrics"]["cagr_pct"])
         self.assertEqual(len(result["overall"]["win_rate_95ci_pct"]), 2)
         self.assertGreater(result["overall"]["max_drawdown_r"], 0)
         self.assertEqual(result["shadow_test"]["challenger"]["status"],
@@ -187,6 +199,10 @@ class CfoEngineTests(unittest.TestCase):
             "earnings_momentum", "overhead_supply", "tradeability",
             "move_potential", "sector_regime", "market_regime",
         })
+        self.assertEqual(cfo_engine.market_cap_bucket(50_000), "large_proxy")
+        self.assertEqual(cfo_engine.market_cap_bucket(10_000), "mid_proxy")
+        self.assertEqual(cfo_engine.market_cap_bucket(2_000), "small_proxy")
+        self.assertEqual(cfo_engine.market_cap_bucket(None), "unknown")
 
     def test_earnings_momentum_uses_yoy_qoq_margins_and_acceleration(self):
         fundamentals = {
@@ -572,6 +588,7 @@ class CfoWorkspaceApiTests(unittest.TestCase):
             "symbol": "AUTOTEST", "company": "Automatic Test", "sector": "IT",
             "global_rank": 2, "sector_rank": 2, "action": "WAIT_FOR_ENTRY",
             "classification": "B", "score": 74, "confidence": 80,
+            "market_cap_cr": 25_000, "market_cap_bucket": "large_proxy",
             "setup_type": "pullback", "trade_plan": {
                 "entry": {"low": 100, "high": 102}, "stop": {"price": 95},
                 "targets": [{"label": "T1", "price": 110},
@@ -588,6 +605,8 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(row["status"], "ARMED")
         self.assertEqual(row["model_version"], "outcome-test-v1")
         self.assertEqual(row["tracking_role"], "actionable")
+        self.assertEqual(row["market_cap_cr"], 25_000)
+        self.assertEqual(row["market_cap_bucket"], "large_proxy")
 
         evaluated = asyncio.run(
             recommendation_outcome_service.evaluate_open_outcomes({

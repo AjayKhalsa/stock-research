@@ -257,6 +257,8 @@
 .cfo-big-score span { color: var(--cfo-muted); font-size: 15px; }
 .cfo-metric-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--cfo-line); border: 1px solid var(--cfo-line); border-radius: 9px; overflow: hidden; }
 .cfo-metric-grid .cfo-metric { background: #fff; }
+.cfo-validation-secondary { margin-top: 12px; }
+.cfo-backtest-breakdowns .cfo-definition dt { text-transform: capitalize; }
 .cfo-score-bars { display: grid; gap: 13px; }
 .cfo-score-bars > div { display: grid; grid-template-columns: 125px 1fr 30px; align-items: center; gap: 10px; font-size: 11px; text-transform: capitalize; }
 .cfo-score-bars i { height: 7px; overflow: hidden; background: #e9ebef; border-radius: 99px; }

@@ -268,6 +268,8 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     setup_type    TEXT,
     classification TEXT,
     sector        TEXT,
+    market_cap_cr REAL,
+    market_cap_bucket TEXT,
     market_regime TEXT,
     global_rank   INTEGER,
     sector_rank   INTEGER,
@@ -477,6 +479,8 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     setup_type    TEXT,
     classification TEXT,
     sector        TEXT,
+    market_cap_cr DOUBLE PRECISION,
+    market_cap_bucket TEXT,
     market_regime TEXT,
     global_rank   INTEGER,
     sector_rank   INTEGER,
@@ -586,6 +590,8 @@ def _migrate_unified_research_columns() -> None:
         "setup_type": "TEXT",
         "classification": "TEXT",
         "sector": "TEXT",
+        "market_cap_cr": "DOUBLE PRECISION" if _PG else "REAL",
+        "market_cap_bucket": "TEXT",
         "market_regime": "TEXT",
         "global_rank": "INTEGER",
         "sector_rank": "INTEGER",
@@ -993,6 +999,7 @@ def _recommendation_outcome_values(snapshot_id: str, item: dict, *,
         snapshot_id, str(item.get("symbol") or "").upper(), item["action"],
         model_version, trading_date, _as_finite_float(item.get("score")),
         item.get("setup_type"), item.get("classification"), item.get("sector"),
+        _as_finite_float(item.get("market_cap_cr")), item.get("market_cap_bucket"),
         market_regime, item.get("global_rank"), item.get("sector_rank"),
         low, high, (low + high) / 2, stop_price, t1, t2,
         signal_factor, 1.0, "actionable" if actionable else "observational",
@@ -1063,11 +1070,12 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                 c.execute(_sql(
                     "INSERT INTO recommendation_outcomes(snapshot_id, symbol, action, "
                     "model_version, signal_date, score, setup_type, classification, "
-                    "sector, market_regime, global_rank, sector_rank, entry_low, entry_high, "
+                    "sector, market_cap_cr, market_cap_bucket, market_regime, "
+                    "global_rank, sector_rank, entry_low, entry_high, "
                     "entry_price, stop_price, target_t1, target_t2, signal_adjustment_factor, "
                     "level_adjustment_factor, tracking_role, "
                     "status, outcome, pnl_r, invalidation, opened_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 ), outcome_values)
         for item in sectors:
             c.execute(
@@ -1185,7 +1193,7 @@ _NUMERIC_OUTCOME_FIELDS = (
     "score", "entry_low", "entry_high", "entry_price", "stop_price",
     "target_t1", "target_t2", "pnl_r", "activated_at", "mfe_r", "mae_r",
     "exit_price", "opened_at", "closed_at", "signal_adjustment_factor",
-    "level_adjustment_factor",
+    "level_adjustment_factor", "market_cap_cr",
 )
 
 

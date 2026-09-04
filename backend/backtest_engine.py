@@ -17,6 +17,7 @@ DEFAULT_COSTS = {
     "exit_slippage_bps": 10.0,
     "fees_and_taxes_bps": 15.0,
 }
+BACKTEST_SCHEMA_VERSION = 2
 
 
 def _wilson_interval(wins: int, total: int) -> list[float]:
@@ -67,14 +68,24 @@ def _summary(rows: list[dict]) -> dict:
         return {"sample": 0, "status": "no_data", "wins": 0,
                 "win_rate_pct": 0.0, "win_rate_95ci_pct": [0.0, 0.0],
                 "gross_expectancy_r": 0.0, "net_expectancy_r": 0.0,
+                "gross_median_r": 0.0, "net_median_r": 0.0,
                 "net_total_r": 0.0, "profit_factor": None,
                 "max_drawdown_r": 0.0, "avg_mfe_r": 0.0, "avg_mae_r": 0.0,
+                "net_volatility_r": 0.0, "best_trade_r": 0.0,
+                "worst_trade_r": 0.0, "avg_winner_r": None,
+                "avg_loser_r": None, "target_hit_rate_pct": 0.0,
+                "stop_hit_rate_pct": 0.0, "time_stop_rate_pct": 0.0,
                 "median_holding_sessions": 0.0}
     net = [float(row["net_pnl_r"]) for row in rows]
     gross = [float(row["gross_pnl_r"]) for row in rows]
     wins = sum(value > 0 for value in net)
     gains = sum(value for value in net if value > 0)
     losses = -sum(value for value in net if value < 0)
+    winners = [value for value in net if value > 0]
+    losers = [value for value in net if value < 0]
+    target_hits = sum(str(row.get("status") or "").startswith("WIN_") for row in rows)
+    stop_hits = sum(row.get("status") == "STOPPED_OUT" for row in rows)
+    time_stops = sum(row.get("status") == "TIME_STOP" for row in rows)
     return {
         "sample": count,
         "status": "mature" if count >= MIN_MATURE_SAMPLE
@@ -84,9 +95,19 @@ def _summary(rows: list[dict]) -> dict:
         "win_rate_95ci_pct": _wilson_interval(wins, count),
         "gross_expectancy_r": round(statistics.fmean(gross), 3),
         "net_expectancy_r": round(statistics.fmean(net), 3),
+        "gross_median_r": round(statistics.median(gross), 3),
+        "net_median_r": round(statistics.median(net), 3),
         "net_total_r": round(sum(net), 2),
         "profit_factor": round(gains / losses, 2) if losses else None,
         "max_drawdown_r": _maximum_drawdown(net),
+        "net_volatility_r": round(statistics.stdev(net), 3) if count > 1 else 0.0,
+        "best_trade_r": round(max(net), 3),
+        "worst_trade_r": round(min(net), 3),
+        "avg_winner_r": round(statistics.fmean(winners), 3) if winners else None,
+        "avg_loser_r": round(statistics.fmean(losers), 3) if losers else None,
+        "target_hit_rate_pct": round(target_hits / count * 100, 1),
+        "stop_hit_rate_pct": round(stop_hits / count * 100, 1),
+        "time_stop_rate_pct": round(time_stops / count * 100, 1),
         "avg_mfe_r": round(statistics.fmean(float(row.get("mfe_r") or 0)
                                              for row in rows), 2),
         "avg_mae_r": round(statistics.fmean(float(row.get("mae_r") or 0)
@@ -105,6 +126,34 @@ def _grouped(rows: list[dict], field: str, fallback: str = "unknown") -> list[di
         groups[label].append(row)
     return [{"group": label, **_summary(group_rows)}
             for label, group_rows in sorted(groups.items())]
+
+
+def _ranking_quality(rows: list[dict]) -> dict:
+    ranked = [row for row in rows if row.get("rank_decile") is not None]
+    deciles = _grouped(ranked, "rank_decile", "unranked")
+    ordered = sorted(deciles, key=lambda row: int(row["group"]))
+    if len(ordered) < 2:
+        return {
+            "status": "insufficient_deciles", "sample": len(ranked),
+            "top_decile": ordered[0] if ordered else None,
+            "bottom_decile": None, "top_minus_bottom_expectancy_r": None,
+            "monotonic_adjacent_pairs_pct": None,
+        }
+    monotonic = sum(
+        right["net_expectancy_r"] <= left["net_expectancy_r"]
+        for left, right in zip(ordered, ordered[1:])
+    )
+    return {
+        "status": "mature" if len(ranked) >= MIN_MATURE_SAMPLE else "early",
+        "sample": len(ranked), "top_decile": ordered[0],
+        "bottom_decile": ordered[-1],
+        "top_minus_bottom_expectancy_r": round(
+            ordered[0]["net_expectancy_r"] - ordered[-1]["net_expectancy_r"], 3,
+        ),
+        "monotonic_adjacent_pairs_pct": round(
+            monotonic / (len(ordered) - 1) * 100, 1,
+        ),
+    }
 
 
 def run_snapshot_backtest(*, model_version: Optional[str] = None,
@@ -127,6 +176,7 @@ def run_snapshot_backtest(*, model_version: Optional[str] = None,
         for row in rows
     )
     report = {
+        "schema_version": BACKTEST_SCHEMA_VERSION,
         "method": "out_of_sample_snapshot_replay",
         "point_in_time": True,
         "source_signature": hashlib.sha256(signature_material.encode()).hexdigest(),
@@ -134,8 +184,15 @@ def run_snapshot_backtest(*, model_version: Optional[str] = None,
         "overall": _summary(rows),
         "by_setup": _grouped(rows, "setup_type"),
         "by_market_regime": _grouped(rows, "market_regime"),
+        "by_market_cap_bucket": _grouped(rows, "market_cap_bucket"),
+        "by_sector": _grouped(rows, "sector", "Unclassified"),
         "by_rank_decile": _grouped(rows, "rank_decile", "unranked"),
         "by_action": _grouped(rows, "action"),
+        "ranking_quality": _ranking_quality(rows),
+        "portfolio_metrics": {
+            "cagr_pct": None,
+            "status": "not_meaningful_without_capital_allocation_and_cash_timing",
+        },
         "cost_model": {**cost_model, "round_trip_bps": round(sum(cost_model.values()), 2)},
         "controls": {
             "recommendations": "immutable snapshot payloads only",
@@ -145,11 +202,13 @@ def run_snapshot_backtest(*, model_version: Optional[str] = None,
             "corporate_actions": "levels rescaled to the current adjusted-price basis",
             "execution": "entry-high fill; entry-bar conflicts excluded; later conflicts stop-first",
             "selection": "all BUY_NOW and WAIT_FOR_ENTRY rows with valid geometry",
+            "market_cap_buckets": "signal-time proxies: large >= ₹20k cr; mid >= ₹5k cr; small below ₹5k cr",
         },
         "limitations": [
             "The ledger begins when immutable daily snapshots were enabled; no current fundamentals are backfilled into earlier dates.",
             "The full historical NSE constituent master was not archived, so delisted and non-selected names cannot be reconstructed.",
             "Daily OHLC cannot reveal intraday order, so ambiguous entry bars are excluded.",
+            "Limit-circuit availability is not archived yet; fixed costs cannot model every real fill.",
             "This is research validation, not broker execution or a promise of future returns.",
         ],
     }
@@ -195,7 +254,8 @@ def run_snapshot_backtest(*, model_version: Optional[str] = None,
         stored_version = model_version or "ALL"
         latest = db.latest_backtest_run(stored_version)
         if (latest and latest.get("source_signature") == report["source_signature"]
-                and latest.get("cost_model") == report["cost_model"]):
+                and latest.get("cost_model") == report["cost_model"]
+                and latest.get("schema_version") == BACKTEST_SCHEMA_VERSION):
             return {**latest, "reused": True}
         return db.backtest_run_add(stored_version, status, report)
     return report

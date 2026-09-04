@@ -100,9 +100,13 @@ MAE in System. This broader ledger is separate from the user's chosen paper
 tests.
 
 The System page also runs a point-in-time snapshot replay over resolved ledger
-rows. It reports gross and cost-adjusted expectancy, Wilson win-rate ranges,
-profit factor, drawdown, holding time, MFE/MAE, and breakdowns by setup, market
-regime, original rank decile, and action. Stored signal adjustment factors keep
+rows. It reports gross and cost-adjusted expectancy, median trade, volatility,
+Wilson win-rate ranges, profit factor, drawdown, best/worst and average
+winner/loser, target/stop rates, holding time, MFE/MAE, and breakdowns by setup,
+market regime, sector, signal-time market-cap proxy, original rank decile, and
+action. Ranking quality explicitly compares top and bottom deciles. CAGR remains
+unreported until capital allocation and cash timing make it meaningful. Stored
+signal adjustment factors keep
 entry, stop, and target levels comparable across later splits and dividends.
 The report does not backfill current fundamentals or pretend that the complete
 historical NSE constituent master was archived; it remains explicitly early

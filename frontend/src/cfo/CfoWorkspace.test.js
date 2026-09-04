@@ -31,7 +31,14 @@ const brief = {
     avg_mfe_r: 1.42, avg_mae_r: 0.61 },
   latest_backtest: { status: 'insufficient_data', overall: { sample: 14,
     gross_expectancy_r: .34, net_expectancy_r: .27, net_total_r: 3.78,
+    net_median_r: .18, net_volatility_r: 1.12, profit_factor: 1.44,
+    avg_winner_r: 1.21, avg_loser_r: -.81, target_hit_rate_pct: 50,
+    stop_hit_rate_pct: 35.7, median_holding_sessions: 8,
     max_drawdown_r: 2.1, win_rate_pct: 57.1, win_rate_95ci_pct: [32.6, 78.6] },
+    by_setup: [{ group: 'pullback', sample: 8, net_expectancy_r: .36 }],
+    by_market_regime: [{ group: 'risk_on', sample: 9, net_expectancy_r: .42 }],
+    by_sector: [{ group: 'IT', sample: 5, net_expectancy_r: .31 }],
+    by_market_cap_bucket: [{ group: 'large_proxy', sample: 7, net_expectancy_r: .24 }],
     cost_model: { round_trip_bps: 35 }, shadow_test: {
       current: { model_version: 'swing-v1.5.0', role: 'production_champion', sample: 14 },
       challenger: { model_version: null, role: 'v2_challenger', status: 'awaiting_evidence' },
@@ -188,6 +195,10 @@ test('shows the automatic historical truth ledger in System', async () => {
   expect(screen.getByText(/Production, V2, and human judgment/i)).toBeInTheDocument();
   expect(screen.getByText(/86 outcomes remaining/i)).toBeInTheDocument();
   expect(screen.getByText(/3 reviews/i)).toBeInTheDocument();
+  expect(screen.getByText(/Median trade/i)).toBeInTheDocument();
+  expect(screen.getByText(/Target hit/i)).toBeInTheDocument();
+  expect(screen.getByText(/Market-cap results/i)).toBeInTheDocument();
+  expect(screen.getByText(/large proxy/i)).toBeInTheDocument();
 });
 
 test('searches the daily ranking and keeps rejected stocks auditable', async () => {
