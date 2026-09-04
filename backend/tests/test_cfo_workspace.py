@@ -20,6 +20,7 @@ import data_cache  # noqa: E402
 import db  # noqa: E402
 import price_service  # noqa: E402
 import market_pipeline  # noqa: E402
+import nse_bhavcopy  # noqa: E402
 import recommendation_outcome_service  # noqa: E402
 import trade_lifecycle  # noqa: E402
 import screener_scraper  # noqa: E402
@@ -355,6 +356,36 @@ class CfoEngineTests(unittest.TestCase):
             [history[0]],
         )
         self.assertEqual(market_pipeline._completed_history(history, None), history)
+
+    def test_official_bhavcopy_bar_fills_one_session_provider_lag(self):
+        csv_body = (
+            "SYMBOL,SERIES,OPEN_PRICE,HIGH_PRICE,LOW_PRICE,CLOSE_PRICE,TTL_TRD_QNTY\n"
+            "TCS,EQ,101,104,100,103,250000\n"
+        ).encode()
+        parsed = nse_bhavcopy._parse_market(csv_body)
+        self.assertEqual(parsed["closes"]["TCS"], 103)
+        self.assertEqual(parsed["bars"]["TCS"]["volume"], 250000)
+        history = [{"date": "2026-09-03", "close": 100}]
+        aligned = market_pipeline._align_completed_history(
+            history, "2026-09-04", parsed["bars"]["TCS"],
+        )
+        self.assertEqual(aligned[-1]["date"], "2026-09-04")
+        self.assertEqual(aligned[-1]["source"], "NSE bhavcopy")
+
+    def test_official_bar_does_not_bridge_missing_sessions_or_split_gap(self):
+        history = [{"date": "2026-09-01", "close": 100}]
+        bar = {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}
+        self.assertEqual(
+            market_pipeline._align_completed_history(history, "2026-09-04", bar),
+            history,
+        )
+        split_bar = {**bar, "close": 50}
+        self.assertEqual(
+            market_pipeline._align_completed_history(
+                [{"date": "2026-09-03", "close": 100}], "2026-09-04", split_bar,
+            ),
+            [{"date": "2026-09-03", "close": 100}],
+        )
 
     def test_market_regime_includes_breadth_and_risk_score(self):
         regime = market_pipeline._market_regime(

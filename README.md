@@ -118,3 +118,9 @@ in-progress daily bar to the latest completed NSE bhavcopy session before any
 features or price reconciliation are calculated. This keeps the snapshot
 point-in-time and prevents a one-session mismatch from holding back the entire
 ranking.
+
+When Yahoo is exactly one completed session late, the scanner appends that
+session's real NSE bhavcopy open, high, low, close, and volume before analysis.
+It will not bridge multiple missing sessions, and it rejects gaps over 40% so a
+split or bonus issue cannot masquerade as a normal price move while adjustment
+data is still catching up.

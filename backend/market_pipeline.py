@@ -43,6 +43,33 @@ def _completed_history(candles: list[dict], official_as_of: str | None) -> list[
     return [row for row in candles if str(row.get("date") or "")[:10] <= cutoff]
 
 
+def _align_completed_history(candles: list[dict], official_as_of: str | None,
+                             official_bar: dict | None) -> list[dict]:
+    """Append one genuine NSE EOD bar when Yahoo is exactly one session late."""
+    completed = _completed_history(candles, official_as_of)
+    if not completed or not official_as_of or not official_bar:
+        return completed
+    latest = str(completed[-1].get("date") or "")[:10]
+    cutoff = str(official_as_of)[:10]
+    if latest >= cutoff:
+        return completed
+    try:
+        cursor = date.fromisoformat(latest) + timedelta(days=1)
+        while cursor.weekday() >= 5:
+            cursor += timedelta(days=1)
+        if cursor.isoformat() != cutoff:
+            return completed
+        previous = float(completed[-1].get("close") or 0)
+        current = float(official_bar.get("close") or 0)
+    except (TypeError, ValueError):
+        return completed
+    # A very large gap is likely an unreflected split/bonus adjustment. Keep
+    # that symbol blocked until the adjusted provider catches up.
+    if previous <= 0 or current <= 0 or abs(current / previous - 1) > 0.40:
+        return completed
+    return [*completed, {**official_bar, "date": cutoff, "source": "NSE bhavcopy"}]
+
+
 def _is_mainboard_cash_equity(row: dict) -> bool:
     """Defensive ETF/other-series filter on top of NSE's equity master."""
     symbol = str(row.get("symbol") or "").upper()
@@ -187,6 +214,7 @@ async def run_daily_pipeline(job_id: str) -> None:
             )
             official_as_of = bhavcopy.get("as_of")
             nifty = _completed_history(nifty, official_as_of)
+            official_bars = bhavcopy.get("bars") or {}
             universe = [row for row in universe if _is_mainboard_cash_equity(row)]
             if not universe:
                 raise RuntimeError("Official NSE equity universe is unavailable")
@@ -209,8 +237,9 @@ async def run_daily_pipeline(job_id: str) -> None:
                     [f"NSE:{s}" for s in batch], days=520, cache_results=False,
                 )
                 for symbol in batch:
-                    candles = _completed_history(
+                    candles = _align_completed_history(
                         histories.get(f"NSE:{symbol}") or [], official_as_of,
+                        official_bars.get(symbol),
                     )
                     if len(candles) >= 252:
                         usable_histories += 1
