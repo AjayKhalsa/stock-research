@@ -1015,6 +1015,17 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                      if isinstance(summary.get("market_regime"), dict) else None)
     observational_remaining = {"WATCH": 20, "AVOID": 5}
     with _conn() as c:
+        existing_observations = c.execute(_sql(
+            "SELECT action, COUNT(*) AS count FROM recommendation_outcomes "
+            "WHERE model_version = ? AND signal_date = ? "
+            "AND tracking_role = 'observational' GROUP BY action"
+        ), (model_version, trading_date)).fetchall()
+        for row in existing_observations:
+            action = row["action"]
+            if action in observational_remaining:
+                observational_remaining[action] = max(
+                    0, observational_remaining[action] - int(row["count"] or 0)
+                )
         c.execute(
             _sql("INSERT INTO analysis_snapshots(id, trading_date, model_version, status, "
                  "payload, created_at) VALUES (?,?,?,?,?,?)"),
@@ -1040,6 +1051,13 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                 ),
             )
             if outcome_values:
+                existing_outcome = c.execute(_sql(
+                    "SELECT id FROM recommendation_outcomes "
+                    "WHERE model_version = ? AND signal_date = ? AND symbol = ? LIMIT 1"
+                ), (model_version, trading_date,
+                    str(item.get("symbol") or "").upper())).fetchone()
+                if existing_outcome:
+                    continue
                 if item.get("action") in observational_remaining:
                     observational_remaining[item["action"]] -= 1
                 c.execute(_sql(

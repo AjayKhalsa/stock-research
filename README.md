@@ -133,3 +133,6 @@ WATCH setups and five rejected setups with valid geometry. These rows are
 labelled `observational`, remain outside actionable win rate/expectancy, and
 count only toward the evidence pool required to build a chronological V2
 challenger.
+Repeated scans for the same trading date are idempotent at the
+model/date/symbol level, so retries and manual verification runs cannot inflate
+either the actionable scorecard or the V2 calibration sample.

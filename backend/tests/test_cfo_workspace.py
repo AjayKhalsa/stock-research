@@ -615,6 +615,16 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(after["total"], before["total"])
         self.assertEqual(after["observational"], before["observational"] + 1)
 
+        second_snapshot = db.publish_analysis_snapshot(
+            {"candidates": [candidate], "sectors": []}, [candidate], [],
+            model_version="shadow-test-v1", trading_date="2026-06-01",
+        )
+        matching = [item for item in db.recommendation_outcomes_recent(500)
+                    if item["symbol"] == "SHADOWTEST"
+                    and item["model_version"] == "shadow-test-v1"]
+        self.assertNotEqual(second_snapshot, snapshot_id)
+        self.assertEqual(len(matching), 1)
+
     def test_human_review_rejects_unknown_recommendation_snapshot(self):
         response = self.client.post("/api/human-reviews", json={
             "snapshot_id": "missing-snapshot", "symbol": "TCS",
