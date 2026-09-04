@@ -345,6 +345,17 @@ class CfoEngineTests(unittest.TestCase):
         self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_RATIO, 0.50)
         self.assertEqual(market_pipeline.PUBLISHED_CANDIDATES, 100)
 
+    def test_daily_pipeline_excludes_in_progress_bar_after_official_close(self):
+        history = [
+            {"date": "2026-09-03", "close": 100},
+            {"date": "2026-09-04", "close": 105},
+        ]
+        self.assertEqual(
+            market_pipeline._completed_history(history, "2026-09-03"),
+            [history[0]],
+        )
+        self.assertEqual(market_pipeline._completed_history(history, None), history)
+
     def test_market_regime_includes_breadth_and_risk_score(self):
         regime = market_pipeline._market_regime(
             candles(), [{"factors": {"trend_score": 2}} for _ in range(8)]

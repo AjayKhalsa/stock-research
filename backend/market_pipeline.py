@@ -35,6 +35,14 @@ _RUN_LOCK = asyncio.Lock()
 _ACTIVE_TASK: asyncio.Task | None = None
 
 
+def _completed_history(candles: list[dict], official_as_of: str | None) -> list[dict]:
+    """Exclude an in-progress Yahoo daily bar when bhavcopy is a day behind."""
+    if not official_as_of:
+        return candles
+    cutoff = str(official_as_of)[:10]
+    return [row for row in candles if str(row.get("date") or "")[:10] <= cutoff]
+
+
 def _is_mainboard_cash_equity(row: dict) -> bool:
     """Defensive ETF/other-series filter on top of NSE's equity master."""
     symbol = str(row.get("symbol") or "").upper()
@@ -177,6 +185,8 @@ async def run_daily_pipeline(job_id: str) -> None:
                 price.get_index_historical("^NSEI", days=500),
                 nse_bhavcopy.fetch_latest_bhavcopy(),
             )
+            official_as_of = bhavcopy.get("as_of")
+            nifty = _completed_history(nifty, official_as_of)
             universe = [row for row in universe if _is_mainboard_cash_equity(row)]
             if not universe:
                 raise RuntimeError("Official NSE equity universe is unavailable")
@@ -199,7 +209,9 @@ async def run_daily_pipeline(job_id: str) -> None:
                     [f"NSE:{s}" for s in batch], days=520, cache_results=False,
                 )
                 for symbol in batch:
-                    candles = histories.get(f"NSE:{symbol}") or []
+                    candles = _completed_history(
+                        histories.get(f"NSE:{symbol}") or [], official_as_of,
+                    )
                     if len(candles) >= 252:
                         usable_histories += 1
                     row = cfo_engine.preliminary_analysis(symbol, names[symbol], candles, nifty)

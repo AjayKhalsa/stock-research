@@ -112,3 +112,9 @@ the challenger remains locked until 100 resolved forward outcomes and can never
 promote itself. The Candidates page supports in-snapshot symbol/company/sector
 search and keeps safety-gated or data-held stocks in a separate rejected audit
 section instead of silently dropping them.
+
+If a delayed daily job starts after the market opens, the scanner trims Yahoo's
+in-progress daily bar to the latest completed NSE bhavcopy session before any
+features or price reconciliation are calculated. This keeps the snapshot
+point-in-time and prevents a one-session mismatch from holding back the entire
+ranking.
