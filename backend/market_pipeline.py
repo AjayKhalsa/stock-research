@@ -225,9 +225,10 @@ async def run_daily_pipeline(job_id: str) -> None:
             usable_histories = 0
             retained_candles: dict[str, list[dict]] = {}
             top_candle_heap: list[tuple[float, str]] = []
-            priority_symbols = {w["symbol"] for w in db.watchlist_all()}
-            priority_symbols.update(t["symbol"] for t in db.paper_trades_open())
-            priority_symbols.update(
+            enrichment_priority_symbols = {w["symbol"] for w in db.watchlist_all()}
+            enrichment_priority_symbols.update(t["symbol"] for t in db.paper_trades_open())
+            retention_symbols = set(enrichment_priority_symbols)
+            retention_symbols.update(
                 outcome["symbol"] for outcome in db.recommendation_outcomes_open()
             )
             names = {row["symbol"]: row.get("name") or row["symbol"] for row in universe}
@@ -248,14 +249,14 @@ async def run_daily_pipeline(job_id: str) -> None:
                         row.pop("candles", None)
                         preliminary.append(row)
                         heap_key = (float(row.get("preliminary_score") or 0), symbol)
-                        if symbol in priority_symbols:
+                        if symbol in retention_symbols:
                             retained_candles[symbol] = candles
                         if len(top_candle_heap) < DEEP_CANDIDATES:
                             heapq.heappush(top_candle_heap, heap_key)
                             retained_candles[symbol] = candles
                         elif heap_key > top_candle_heap[0]:
                             _score, displaced = heapq.heapreplace(top_candle_heap, heap_key)
-                            if displaced not in priority_symbols:
+                            if displaced not in retention_symbols:
                                 retained_candles.pop(displaced, None)
                             retained_candles[symbol] = candles
                 del histories
@@ -280,7 +281,9 @@ async def run_daily_pipeline(job_id: str) -> None:
             market_regime = _market_regime(nifty, preliminary)
             deep = preliminary[:DEEP_CANDIDATES]
             seen = {item["symbol"] for item in deep}
-            deep.extend(item for item in preliminary if item["symbol"] in priority_symbols and item["symbol"] not in seen)
+            deep.extend(item for item in preliminary
+                        if item["symbol"] in enrichment_priority_symbols
+                        and item["symbol"] not in seen)
             # Candidate dossiers must remain useful while Yahoo is delayed or
             # unreachable, so retain daily price/volume bars for the enriched
             # bench rather than fetching them only when a user opens a stock.

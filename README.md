@@ -136,3 +136,7 @@ challenger.
 Repeated scans for the same trading date are idempotent at the
 model/date/symbol level, so retries and manual verification runs cannot inflate
 either the actionable scorecard or the V2 calibration sample.
+Open outcome symbols retain price candles for lifecycle evaluation, but only
+the user's watchlist and open paper positions can expand the 150-stock
+fundamental-enrichment bench. This prevents the bounded shadow ledger from
+quietly multiplying provider work as samples accumulate.
