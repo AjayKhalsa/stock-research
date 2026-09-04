@@ -159,6 +159,9 @@
 .cfo-filterbar button { padding: 0 13px; flex: 0 0 auto; color: #556074; background: #fff; border: 1px solid var(--cfo-line); border-radius: 9px; cursor: pointer; font-size: 11px; font-weight: 650; }
 .cfo-filterbar button.active { color: #fff; background: var(--cfo-indigo); border-color: var(--cfo-indigo); }
 .cfo-filterbar button span { margin-left: 6px; opacity: .72; }
+.cfo-candidate-search { display: grid; gap: 6px; max-width: 420px; margin-top: 18px; color: var(--cfo-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.cfo-candidate-search input { min-height: 42px; padding: 0 13px; color: var(--cfo-ink); background: #fff; border: 1px solid var(--cfo-line); border-radius: 9px; font: 500 13px var(--font-body); text-transform: none; letter-spacing: normal; }
+.cfo-rejected { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--cfo-line); }
 .cfo-bench-head, .cfo-candidate-main { display: grid; grid-template-columns: 48px minmax(180px, 1.5fr) 130px 120px 92px 105px 80px 95px 24px; align-items: center; gap: 10px; }
 .cfo-bench-head { padding: 10px 15px; color: var(--cfo-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .cfo-bench { max-height: calc(100vh - 265px); overflow: auto; border: 1px solid var(--cfo-line); border-radius: 10px; background: #fff; }
@@ -215,6 +218,11 @@
 .cfo-setup-scorecards li { padding: 7px 0; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; border-top: 1px solid #e5e8ed; }
 .cfo-setup-scorecards li b, .cfo-setup-scorecards li span { font-size: 10px; }
 .cfo-setup-scorecards li small { grid-column: 1 / -1; color: var(--cfo-muted); }
+.cfo-shadow-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.cfo-shadow-grid article { min-height: 145px; padding: 16px; background: #f8f9fb; border: 1px solid var(--cfo-line); border-radius: 9px; }
+.cfo-shadow-grid h3 { margin: 14px 0 5px; font-size: 14px; }
+.cfo-shadow-grid article > strong { display: block; color: var(--cfo-ink); font: 720 17px var(--font-mono); }
+.cfo-shadow-grid p { margin: 8px 0 0; color: var(--cfo-muted); font-size: 12px; line-height: 1.5; }
 .cfo-position-calc { margin-top: 16px; }
 .cfo-position-inputs { margin: 14px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .cfo-position-inputs label { display: grid; gap: 6px; color: var(--cfo-muted); font-size: 11px; }
@@ -421,6 +429,7 @@
   .cfo-settings { grid-template-columns: 1fr; }
   .cfo-evidence-cards, .cfo-evidence-lists { grid-template-columns: 1fr; }
   .cfo-setup-scorecards { grid-template-columns: 1fr; }
+  .cfo-shadow-grid { grid-template-columns: 1fr; }
   .cfo-position-inputs { grid-template-columns: 1fr; }
   .cfo-settings .cfo-section-head, .cfo-settings .cfo-primary { grid-column: auto; }
   .cfo-provider-grid { grid-template-columns: 1fr; }

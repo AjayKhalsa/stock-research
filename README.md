@@ -105,3 +105,10 @@ entry, stop, and target levels comparable across later splits and dividends.
 The report does not backfill current fundamentals or pretend that the complete
 historical NSE constituent master was archived; it remains explicitly early
 below 30 outcomes and becomes mature only at 100.
+
+V2 is explicitly evidence-gated. System compares the production algorithm,
+the not-yet-calibrated challenger, and structured human reviews side by side;
+the challenger remains locked until 100 resolved forward outcomes and can never
+promote itself. The Candidates page supports in-snapshot symbol/company/sector
+search and keeps safety-gated or data-held stocks in a separate rejected audit
+section instead of silently dropping them.

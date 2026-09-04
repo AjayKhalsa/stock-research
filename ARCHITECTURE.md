@@ -146,6 +146,12 @@ fees and taxes; Wilson intervals, drawdown and setup/regime/rank-decile/action
 breakdowns are stored as versioned backtest runs. Earlier complete NSE
 constituent masters were not archived, so the report freezes published
 selections without claiming a survivorship-free historical-universe backfill.
+The same report publishes a shadow-test gate: production remains champion,
+V2 stays unconfigured below 100 resolved outcomes, and promotion always
+requires chronological calibration plus human review. The System UI shows
+production, challenger, and accumulated structured reviews side by side.
+The Candidates UI separates rejected/data-held rows while retaining them for
+audit and supports local symbol, company, and sector search over the snapshot.
 
 Snapshot publication also creates one `recommendation_outcomes` row for every
 `BUY_NOW` or `WAIT_FOR_ENTRY` candidate with valid geometry, in the same

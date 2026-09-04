@@ -63,6 +63,9 @@ class CfoEngineTests(unittest.TestCase):
                          {"1", "2"})
         self.assertEqual(len(result["overall"]["win_rate_95ci_pct"]), 2)
         self.assertGreater(result["overall"]["max_drawdown_r"], 0)
+        self.assertEqual(result["shadow_test"]["challenger"]["status"],
+                         "awaiting_evidence")
+        self.assertEqual(result["shadow_test"]["promotion_policy"]["remaining"], 98)
 
     def test_point_in_time_backtest_rejects_unknown_or_extreme_costs(self):
         with self.assertRaises(ValueError):

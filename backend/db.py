@@ -1140,6 +1140,16 @@ def human_reviews(symbol: str, snapshot_id: Optional[str] = None,
     return output
 
 
+def human_review_stats() -> dict:
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT assessment, COUNT(*) AS count FROM human_reviews "
+            "GROUP BY assessment ORDER BY assessment"
+        )).fetchall()
+    by_assessment = {row["assessment"]: int(row["count"] or 0) for row in rows}
+    return {"total": sum(by_assessment.values()), "by_assessment": by_assessment}
+
+
 _NUMERIC_OUTCOME_FIELDS = (
     "score", "entry_low", "entry_high", "entry_price", "stop_price",
     "target_t1", "target_t2", "pnl_r", "activated_at", "mfe_r", "mae_r",

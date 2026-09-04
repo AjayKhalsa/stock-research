@@ -108,7 +108,11 @@ def morning_brief():
     if snapshot:
         snapshot["external_enrichment"] = db.enrichment_coverage("Bull AI")
         snapshot["historical_truth"] = db.recommendation_outcome_stats()
-        snapshot["latest_backtest"] = db.latest_backtest_run()
+        snapshot["latest_backtest"] = (
+            db.latest_backtest_run()
+            or backtest_engine.run_snapshot_backtest(persist=False)
+        )
+        snapshot["human_review_summary"] = db.human_review_stats()
         return snapshot
     return {
         "status": "setup_required", "snapshot_id": None, "published_at": None,
@@ -123,7 +127,9 @@ def morning_brief():
         "candidates": [], "sectors": [],
         "external_enrichment": db.enrichment_coverage("Bull AI"),
         "historical_truth": db.recommendation_outcome_stats(),
-        "latest_backtest": db.latest_backtest_run(),
+        "latest_backtest": (db.latest_backtest_run()
+                            or backtest_engine.run_snapshot_backtest(persist=False)),
+        "human_review_summary": db.human_review_stats(),
     }
 
 

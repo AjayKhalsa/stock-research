@@ -28,6 +28,17 @@ const brief = {
   historical_truth: { total: 24, armed: 5, active: 3, resolved: 14,
     excluded: 2, win_rate_pct: 57.1, expectancy_r: 0.31,
     avg_mfe_r: 1.42, avg_mae_r: 0.61 },
+  latest_backtest: { status: 'insufficient_data', overall: { sample: 14,
+    gross_expectancy_r: .34, net_expectancy_r: .27, net_total_r: 3.78,
+    max_drawdown_r: 2.1, win_rate_pct: 57.1, win_rate_95ci_pct: [32.6, 78.6] },
+    cost_model: { round_trip_bps: 35 }, shadow_test: {
+      current: { model_version: 'swing-v1.5.0', role: 'production_champion', sample: 14 },
+      challenger: { model_version: null, role: 'v2_challenger', status: 'awaiting_evidence' },
+      promotion_policy: { automatic_promotion: false, minimum_resolved_outcomes: 100,
+        observed_resolved_outcomes: 14, remaining: 86,
+        next_step: 'continue forward collection without changing live weights' },
+    } },
+  human_review_summary: { total: 3, by_assessment: { AGREE: 2, TOO_OPTIMISTIC: 1 } },
   sectors: [{ sector: 'IT', rank: 1, score: 75, trend: 'Leading', breadth_pct: 72,
     relative_strength: 70, volume_participation: 64, actionable_count: 1, eligible_count: 10,
     top_candidates: [{ symbol: 'TCS', company: 'Tata Consultancy', action: 'WAIT_FOR_ENTRY', expected_r: 1.1 }] }],
@@ -169,6 +180,29 @@ test('shows the automatic historical truth ledger in System', async () => {
   expect(screen.getByText('24')).toBeInTheDocument();
   expect(screen.getByText(/5 waiting · 3 active/i)).toBeInTheDocument();
   expect(screen.getByText(/0.31R/i)).toBeInTheDocument();
+  expect(screen.getByText(/Production, V2, and human judgment/i)).toBeInTheDocument();
+  expect(screen.getByText(/86 outcomes remaining/i)).toBeInTheDocument();
+  expect(screen.getByText(/3 reviews/i)).toBeInTheDocument();
+});
+
+test('searches the daily ranking and keeps rejected stocks auditable', async () => {
+  api.getMorningBrief.mockResolvedValueOnce({ ...brief, candidates: [
+    ...brief.candidates,
+    { symbol: 'RISKY', company: 'Risky Industries', sector: 'Industrials',
+      global_rank: 99, sector_rank: 8, action: 'AVOID', score: 64,
+      setup_type: 'breakout', hard_blocks: ['Required safety check failed'],
+      components: { business_quality: 50 }, trade_plan: {} },
+  ] });
+  render(<CfoWorkspace />);
+  await screen.findByText(/What looks interesting today/i);
+  fireEvent.click(screen.getByRole('button', { name: /Candidates Top 100/i }));
+  expect(await screen.findByText(/Rejected and data-held stocks/i)).toBeInTheDocument();
+  expect(screen.getByText('RISKY')).toBeInTheDocument();
+  fireEvent.change(screen.getByPlaceholderText(/Symbol, company, or sector/i), {
+    target: { value: 'Tata' },
+  });
+  expect(screen.queryByText('RISKY')).not.toBeInTheDocument();
+  expect(screen.getByText('TCS')).toBeInTheDocument();
 });
 
 test('shows a daily chart section without leaving the dossier', async () => {

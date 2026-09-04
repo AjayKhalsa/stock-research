@@ -158,6 +158,29 @@ def run_snapshot_backtest(*, model_version: Optional[str] = None,
               else "insufficient_data")
     report["status"] = status
     report["model_version_filter"] = model_version
+    mature = report["overall"]["sample"] >= MIN_MATURE_SAMPLE
+    report["shadow_test"] = {
+        "current": {
+            "model_version": model_version or "all_versions",
+            "role": "production_champion",
+            "sample": report["overall"]["sample"],
+        },
+        "challenger": {
+            "model_version": None,
+            "role": "v2_challenger",
+            "status": "eligible_for_calibration" if mature else "awaiting_evidence",
+        },
+        "promotion_policy": {
+            "automatic_promotion": False,
+            "minimum_resolved_outcomes": MIN_MATURE_SAMPLE,
+            "observed_resolved_outcomes": report["overall"]["sample"],
+            "remaining": max(0, MIN_MATURE_SAMPLE - report["overall"]["sample"]),
+            "next_step": (
+                "calibrate V2 on chronological train data, then compare on a held-out period"
+                if mature else "continue forward collection without changing live weights"
+            ),
+        },
+    }
     if persist and rows:
         stored_version = model_version or "ALL"
         latest = db.latest_backtest_run(stored_version)
