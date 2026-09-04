@@ -136,6 +136,16 @@ challenger.
 Repeated scans for the same trading date are idempotent at the
 model/date/symbol level, so retries and manual verification runs cannot inflate
 either the actionable scorecard or the V2 calibration sample.
+
+Once 100 resolved forward outcomes exist, a bounded deterministic grid searches
+small changes to score weights, penalties, and entry thresholds on the older
+70% of observations, then evaluates the chosen challenger on the newest 30%.
+The replay preserves data, reward/risk, verdict, and hard safety gates and uses
+35 bps round-trip costs. A challenger is only surfaced when it has at least ten
+holdout selections, positive net expectancy, and beats the unchanged baseline;
+even then it remains a named shadow version and requires human promotion review.
+Hard gates are audited counterfactually but never relaxed automatically.
+
 Open outcome symbols retain price candles for lifecycle evaluation, but only
 the user's watchlist and open paper positions can expand the 150-stock
 fundamental-enrichment bench. This prevents the bounded shadow ledger from

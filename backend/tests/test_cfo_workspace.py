@@ -468,6 +468,22 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         })
         self.assertEqual(invalid.status_code, 422)
 
+    def test_shadow_model_endpoint_exposes_evidence_gate(self):
+        report = {
+            "status": "awaiting_evidence", "production_model": "test-v1",
+            "usable_sample": 25, "remaining": 75,
+            "automatic_promotion": False, "challenger": None,
+        }
+        with patch("routers.cfo_workspace.db.get_setting", return_value=None), \
+             patch("routers.cfo_workspace.db.latest_analysis_snapshot",
+                   return_value={"model_version": "test-v1"}), \
+             patch("routers.cfo_workspace.calibration_engine.build_v2_shadow",
+                   return_value=report) as build:
+            response = self.client.get("/api/shadow-model")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), report)
+        build.assert_called_once_with(model_version="test-v1", persist=False)
+
     def test_health_exposes_deployed_model_version(self):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)

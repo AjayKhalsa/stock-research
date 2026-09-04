@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 import config
 import backtest_engine
+import calibration_engine
 import cfo_engine
 import data_cache
 import db
@@ -112,6 +113,12 @@ def morning_brief():
             db.latest_backtest_run()
             or backtest_engine.run_snapshot_backtest(persist=False)
         )
+        snapshot["shadow_model"] = (
+            db.get_setting("v2_shadow_calibration")
+            or calibration_engine.build_v2_shadow(
+                model_version=snapshot.get("model_version"), persist=False,
+            )
+        )
         snapshot["human_review_summary"] = db.human_review_stats()
         return snapshot
     return {
@@ -129,6 +136,8 @@ def morning_brief():
         "historical_truth": db.recommendation_outcome_stats(),
         "latest_backtest": (db.latest_backtest_run()
                             or backtest_engine.run_snapshot_backtest(persist=False)),
+        "shadow_model": (db.get_setting("v2_shadow_calibration")
+                         or calibration_engine.build_v2_shadow(persist=False)),
         "human_review_summary": db.human_review_stats(),
     }
 
@@ -274,6 +283,20 @@ def run_backtest(body: BacktestCosts, model_version: Optional[str] = None):
     return backtest_engine.run_snapshot_backtest(
         model_version=model_version,
         costs=body.model_dump(),
+    )
+
+
+@router.get("/api/shadow-model")
+def shadow_model(model_version: Optional[str] = None):
+    _feature_enabled()
+    if model_version is None:
+        stored = db.get_setting("v2_shadow_calibration")
+        if stored:
+            return stored
+        snapshot = db.latest_analysis_snapshot() or {}
+        model_version = snapshot.get("model_version")
+    return calibration_engine.build_v2_shadow(
+        model_version=model_version, persist=False,
     )
 
 

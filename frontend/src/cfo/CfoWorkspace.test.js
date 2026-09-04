@@ -39,6 +39,8 @@ const brief = {
         observed_resolved_outcomes: 14, remaining: 86,
         next_step: 'continue forward collection without changing live weights' },
     } },
+  shadow_model: { status: 'awaiting_evidence', production_model: 'swing-v1.5.0',
+    usable_sample: 14, remaining: 86, automatic_promotion: false, challenger: null },
   human_review_summary: { total: 3, by_assessment: { AGREE: 2, TOO_OPTIMISTIC: 1 } },
   sectors: [{ sector: 'IT', rank: 1, score: 75, trend: 'Leading', breadth_pct: 72,
     relative_strength: 70, volume_participation: 64, actionable_count: 1, eligible_count: 10,

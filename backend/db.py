@@ -1233,6 +1233,33 @@ def recommendation_outcomes_resolved(model_version: Optional[str] = None,
     return [_row_to_recommendation_outcome(row) for row in rows]
 
 
+def recommendation_outcomes_for_calibration(
+    model_version: Optional[str] = None,
+) -> list[dict]:
+    params: tuple = ()
+    model_clause = ""
+    if model_version:
+        model_clause = " AND outcomes.model_version = ?"
+        params = (model_version,)
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT outcomes.*, candidates.payload AS candidate_payload "
+            "FROM recommendation_outcomes outcomes "
+            "JOIN candidate_analyses candidates "
+            "ON candidates.snapshot_id = outcomes.snapshot_id "
+            "AND candidates.symbol = outcomes.symbol "
+            "WHERE outcomes.status IN "
+            "('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP')" + model_clause
+            + " ORDER BY outcomes.outcome_date, outcomes.id"
+        ), params).fetchall()
+    output = []
+    for row in rows:
+        item = _row_to_recommendation_outcome(row)
+        item["candidate"] = _loads_payload(item.pop("candidate_payload", None), {})
+        output.append(item)
+    return output
+
+
 def recommendation_outcome_patch(outcome_id: int, **changes) -> Optional[dict]:
     allowed = {
         "status", "outcome", "pnl_r", "armed_sessions", "active_sessions",
