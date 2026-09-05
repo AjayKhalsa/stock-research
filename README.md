@@ -92,6 +92,16 @@ optimistic, too conservative, or data issue—with an optional note. Reviews are
 append-only and retain the exact snapshot, model version, action, and score;
 they do not alter the live rank.
 
+Reviews can also carry bounded measurable reason tags such as heavy supply,
+non-linearity, extension, weak earnings, or poor reward/risk. Once linked
+outcomes resolve, System compares model-accepted/human-accepted,
+model-accepted/human-rejected, model-rejected/human-accepted, and both-rejected
+cohorts after 35 bps costs. Human opinions remain measurement-only and are never
+used as training labels. A separate error audit lists false positives, observed
+false negatives, highest-ranked losers, and lowest-ranked winners; genuinely
+missed names outside the frozen Top 100 stay marked unavailable rather than
+being inferred from today's survivors.
+
 In parallel, every published `BUY_NOW` or `WAIT_FOR_ENTRY` candidate with valid
 trade geometry enters an automatic recommendation-outcome ledger. Daily
 evaluation reuses retained scan candles where possible, fetches each missing

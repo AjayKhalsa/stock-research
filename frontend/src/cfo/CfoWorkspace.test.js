@@ -49,6 +49,14 @@ const brief = {
   shadow_model: { status: 'awaiting_evidence', production_model: 'swing-v1.5.0',
     usable_sample: 14, remaining: 86, automatic_promotion: false, challenger: null },
   human_review_summary: { total: 3, by_assessment: { AGREE: 2, TOO_OPTIMISTIC: 1 } },
+  human_model_experiment: { linked_outcomes: 2, cohorts: {
+    model_accepted_human_accepted: { sample: 1, net_expectancy_r: .8 },
+    model_accepted_human_rejected: { sample: 1, net_expectancy_r: -.4 },
+    model_rejected_human_accepted: { sample: 0, net_expectancy_r: null },
+    both_rejected: { sample: 0, net_expectancy_r: null },
+  } },
+  model_errors: { resolved_sample: 14, false_positives: { count: 4 },
+    false_negatives: { count: 2 }, missed_opportunities: { status: 'unavailable' } },
   sectors: [{ sector: 'IT', rank: 1, score: 75, trend: 'Leading', breadth_pct: 72,
     relative_strength: 70, volume_participation: 64, actionable_count: 1, eligible_count: 10,
     top_candidates: [{ symbol: 'TCS', company: 'Tata Consultancy', action: 'WAIT_FOR_ENTRY', expected_r: 1.1 }] }],
@@ -152,13 +160,14 @@ test('stores human judgment against the exact recommendation snapshot', async ()
   fireEvent.click(screen.getByText('Tata Consultancy').closest('button'));
   await screen.findByText(/What did the model get right or wrong/i);
   fireEvent.click(screen.getByRole('button', { name: /Too optimistic/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Heavy supply/i }));
   fireEvent.change(screen.getByLabelText(/Review note/i), {
     target: { value: 'Supply is heavier' },
   });
   fireEvent.click(screen.getByRole('button', { name: /Save review/i }));
   await waitFor(() => expect(api.createHumanReview).toHaveBeenCalledWith({
     snapshot_id: 'snapshot-test-1', symbol: 'TCS',
-    assessment: 'TOO_OPTIMISTIC', notes: 'Supply is heavier',
+    assessment: 'TOO_OPTIMISTIC', tags: ['HEAVY_SUPPLY'], notes: 'Supply is heavier',
   }));
   expect(await screen.findByText(/Review saved against this exact recommendation snapshot/i)).toBeInTheDocument();
 });
@@ -195,6 +204,8 @@ test('shows the automatic historical truth ledger in System', async () => {
   expect(screen.getByText(/Production, V2, and human judgment/i)).toBeInTheDocument();
   expect(screen.getByText(/86 outcomes remaining/i)).toBeInTheDocument();
   expect(screen.getByText(/3 reviews/i)).toBeInTheDocument();
+  expect(screen.getByText(/Outcome-linked experiment/i)).toBeInTheDocument();
+  expect(screen.getByText(/False positives and false negatives/i)).toBeInTheDocument();
   expect(screen.getByText(/Median trade/i)).toBeInTheDocument();
   expect(screen.getByText(/Target hit/i)).toBeInTheDocument();
   expect(screen.getByText(/Market-cap results/i)).toBeInTheDocument();

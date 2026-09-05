@@ -16,6 +16,7 @@ import calibration_engine
 import cfo_engine
 import data_cache
 import db
+import evaluation_engine
 import market_pipeline
 import nse_bhavcopy
 import price_service
@@ -40,6 +41,11 @@ class HumanReviewCreate(BaseModel):
     snapshot_id: str = Field(min_length=8, max_length=100)
     symbol: str = Field(min_length=1, max_length=20)
     assessment: Literal["AGREE", "TOO_OPTIMISTIC", "TOO_CONSERVATIVE", "DATA_ISSUE"]
+    tags: list[Literal[
+        "HEAVY_SUPPLY", "NON_LINEAR", "SLOW_MOVER", "CLEAN_STRUCTURE",
+        "EXTENDED", "STRONG_VOLUME", "WEAK_EARNINGS", "GOOD_CATALYST",
+        "BAD_RISK_REWARD",
+    ]] = Field(default_factory=list, max_length=9)
     notes: str = Field(default="", max_length=2000)
 
 
@@ -120,6 +126,8 @@ def morning_brief():
             )
         )
         snapshot["human_review_summary"] = db.human_review_stats()
+        snapshot["human_model_experiment"] = evaluation_engine.human_model_experiment()
+        snapshot["model_errors"] = evaluation_engine.model_error_dashboard()
         return snapshot
     return {
         "status": "setup_required", "snapshot_id": None, "published_at": None,
@@ -139,6 +147,8 @@ def morning_brief():
         "shadow_model": (db.get_setting("v2_shadow_calibration")
                          or calibration_engine.build_v2_shadow(persist=False)),
         "human_review_summary": db.human_review_stats(),
+        "human_model_experiment": evaluation_engine.human_model_experiment(),
+        "model_errors": evaluation_engine.model_error_dashboard(),
     }
 
 
@@ -235,7 +245,7 @@ def create_human_review(body: HumanReviewCreate):
     _feature_enabled()
     review = db.human_review_add(
         body.snapshot_id.strip(), body.symbol.strip(), body.assessment,
-        body.notes.strip(),
+        body.notes.strip(), body.tags,
     )
     if not review:
         raise HTTPException(
@@ -245,10 +255,22 @@ def create_human_review(body: HumanReviewCreate):
     return review
 
 
+@router.get("/api/human-reviews/experiments")
+def human_review_experiments():
+    _feature_enabled()
+    return evaluation_engine.human_model_experiment()
+
+
 @router.get("/api/human-reviews/{symbol}")
 def list_human_reviews(symbol: str, snapshot_id: Optional[str] = None, limit: int = 50):
     _feature_enabled()
     return db.human_reviews(symbol.strip(), snapshot_id, limit)
+
+
+@router.get("/api/model-errors")
+def model_errors():
+    _feature_enabled()
+    return evaluation_engine.model_error_dashboard()
 
 
 @router.get("/api/recommendation-outcomes/stats")

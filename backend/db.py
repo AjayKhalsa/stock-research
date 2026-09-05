@@ -306,6 +306,7 @@ CREATE TABLE IF NOT EXISTS human_reviews (
     recommendation_action TEXT NOT NULL,
     score_at_review       REAL,
     assessment            TEXT NOT NULL,
+    tags                  TEXT NOT NULL DEFAULT '[]',
     notes                 TEXT,
     created_at            REAL NOT NULL
 );
@@ -517,6 +518,7 @@ CREATE TABLE IF NOT EXISTS human_reviews (
     recommendation_action TEXT NOT NULL,
     score_at_review       DOUBLE PRECISION,
     assessment            TEXT NOT NULL,
+    tags                  TEXT NOT NULL DEFAULT '[]',
     notes                 TEXT,
     created_at            DOUBLE PRECISION NOT NULL
 );
@@ -613,6 +615,9 @@ def _migrate_unified_research_columns() -> None:
         "exit_price": "DOUBLE PRECISION" if _PG else "REAL",
         "outcome_date": "TEXT",
     }
+    human_review_columns = {
+        "tags": "TEXT NOT NULL DEFAULT '[]'",
+    }
     if _PG:
         with _conn() as c:
             with c.cursor() as cur:
@@ -622,13 +627,16 @@ def _migrate_unified_research_columns() -> None:
                     cur.execute(f"ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS {name} {sql_type}")
                 for name, sql_type in outcome_columns.items():
                     cur.execute(f"ALTER TABLE recommendation_outcomes ADD COLUMN IF NOT EXISTS {name} {sql_type}")
+                for name, sql_type in human_review_columns.items():
+                    cur.execute(f"ALTER TABLE human_reviews ADD COLUMN IF NOT EXISTS {name} {sql_type}")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_recommendation_outcomes_status "
                             "ON recommendation_outcomes(status, symbol)")
         return
     with _conn() as c:
         for table, columns in (("watchlist", watchlist_columns),
                                ("paper_trades", paper_columns),
-                               ("recommendation_outcomes", outcome_columns)):
+                               ("recommendation_outcomes", outcome_columns),
+                               ("human_reviews", human_review_columns)):
             existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
             for name, sql_type in columns.items():
                 if name not in existing:
@@ -1131,9 +1139,10 @@ def candidate_analysis(symbol: str, snapshot_id: Optional[str] = None) -> Option
 
 
 def human_review_add(snapshot_id: str, symbol: str, assessment: str,
-                     notes: str = "") -> Optional[dict]:
+                     notes: str = "", tags: Optional[list[str]] = None) -> Optional[dict]:
     """Append an immutable review tied to the exact recommendation row."""
     now = time.time()
+    normalized_tags = list(dict.fromkeys(tags or []))
     with _conn() as c:
         recommendation = c.execute(_sql(
             "SELECT ca.action, ca.score, snapshots.model_version "
@@ -1145,14 +1154,15 @@ def human_review_add(snapshot_id: str, symbol: str, assessment: str,
             return None
         row = c.execute(_sql(
             "INSERT INTO human_reviews(snapshot_id, symbol, model_version, "
-            "recommendation_action, score_at_review, assessment, notes, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?) RETURNING *"
+            "recommendation_action, score_at_review, assessment, tags, notes, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?) RETURNING *"
         ), (snapshot_id, symbol.upper(), recommendation["model_version"],
             recommendation["action"], recommendation["score"], assessment,
-            notes, now)).fetchone()
+            json.dumps(normalized_tags), notes, now)).fetchone()
     result = dict(row)
     if result.get("score_at_review") is not None:
         result["score_at_review"] = float(result["score_at_review"])
+    result["tags"] = _loads_payload(result.get("tags"), [])
     return result
 
 
@@ -1175,6 +1185,7 @@ def human_reviews(symbol: str, snapshot_id: Optional[str] = None,
         item = dict(row)
         if item.get("score_at_review") is not None:
             item["score_at_review"] = float(item["score_at_review"])
+        item["tags"] = _loads_payload(item.get("tags"), [])
         output.append(item)
     return output
 
@@ -1185,8 +1196,40 @@ def human_review_stats() -> dict:
             "SELECT assessment, COUNT(*) AS count FROM human_reviews "
             "GROUP BY assessment ORDER BY assessment"
         )).fetchall()
+        tag_rows = c.execute(_sql("SELECT tags FROM human_reviews")).fetchall()
     by_assessment = {row["assessment"]: int(row["count"] or 0) for row in rows}
-    return {"total": sum(by_assessment.values()), "by_assessment": by_assessment}
+    by_tag: dict[str, int] = {}
+    for row in tag_rows:
+        for tag in _loads_payload(row["tags"], []):
+            by_tag[tag] = by_tag.get(tag, 0) + 1
+    return {"total": sum(by_assessment.values()), "by_assessment": by_assessment,
+            "by_tag": dict(sorted(by_tag.items()))}
+
+
+def human_reviews_with_resolved_outcomes() -> list[dict]:
+    """Return review/outcome pairs for measurement, never for model training."""
+    with _conn() as c:
+        rows = c.execute(_sql(
+            "SELECT reviews.*, outcomes.status AS outcome_status, outcomes.pnl_r, "
+            "outcomes.mfe_r, outcomes.mae_r, outcomes.entry_price, outcomes.stop_price, "
+            "outcomes.global_rank, outcomes.tracking_role, outcomes.outcome_date "
+            "FROM human_reviews reviews JOIN recommendation_outcomes outcomes "
+            "ON outcomes.snapshot_id = reviews.snapshot_id "
+            "AND outcomes.symbol = reviews.symbol "
+            "WHERE outcomes.status IN "
+            "('WIN_T1','WIN_T2','STOPPED_OUT','TIME_STOP') "
+            "ORDER BY reviews.created_at DESC, reviews.id DESC"
+        )).fetchall()
+    output = []
+    for row in rows:
+        item = dict(row)
+        for field in ("score_at_review", "pnl_r", "mfe_r", "mae_r",
+                      "entry_price", "stop_price"):
+            if item.get(field) is not None:
+                item[field] = float(item[field])
+        item["tags"] = _loads_payload(item.get("tags"), [])
+        output.append(item)
+    return output
 
 
 _NUMERIC_OUTCOME_FIELDS = (

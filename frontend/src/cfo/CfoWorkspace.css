@@ -232,6 +232,8 @@
 .cfo-review-choices { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
 .cfo-review-choices button { min-height: 38px; padding: 0 13px; color: #46516a; background: #f7f8fa; border: 1px solid #dfe3e8; border-radius: 8px; cursor: pointer; font-weight: 650; }
 .cfo-review-choices button.active { color: #fff; background: var(--cfo-indigo); border-color: var(--cfo-indigo); }
+.cfo-review-tags { margin-top: 7px; }
+.cfo-review-tags button { min-height: 34px; font-size: 11px; }
 .cfo-human-review > label { margin-top: 14px; display: grid; gap: 6px; color: var(--cfo-muted); font-size: 11px; }
 .cfo-human-review textarea { min-height: 84px; padding: 10px 11px; resize: vertical; color: #20283a; background: #f8f9fa; border: 1px solid #dfe3e8; border-radius: 8px; font: inherit; }
 .cfo-human-review .cfo-primary:disabled { opacity: .5; cursor: not-allowed; }

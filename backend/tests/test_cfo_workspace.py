@@ -556,12 +556,14 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         review = self.client.post("/api/human-reviews", json={
             "snapshot_id": snapshot_id, "symbol": "TCS",
             "assessment": "TOO_OPTIMISTIC",
+            "tags": ["HEAVY_SUPPLY", "NON_LINEAR"],
             "notes": "Supply above the entry looks heavier than the score suggests",
         })
         self.assertEqual(review.status_code, 200)
         self.assertEqual(review.json()["model_version"], "test-v1")
         self.assertEqual(review.json()["recommendation_action"], "WATCH")
         self.assertEqual(review.json()["score_at_review"], 70.0)
+        self.assertEqual(review.json()["tags"], ["HEAVY_SUPPLY", "NON_LINEAR"])
         morning = self.client.get("/api/morning-brief")
         self.assertEqual(morning.status_code, 200)
         self.assertEqual(morning.json()["snapshot_id"], snapshot_id)
@@ -575,6 +577,8 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertIn("trust", detail.json())
         self.assertIn("external_research", detail.json())
         self.assertEqual(detail.json()["human_reviews"][0]["assessment"], "TOO_OPTIMISTIC")
+        self.assertEqual(detail.json()["human_reviews"][0]["tags"],
+                         ["HEAVY_SUPPLY", "NON_LINEAR"])
         self.assertGreaterEqual(morning.json()["external_enrichment"]["covered"], 3)
         self.assertEqual(self.client.get("/api/sectors/IT").status_code, 200)
         history = self.client.get(
@@ -666,6 +670,20 @@ class CfoWorkspaceApiTests(unittest.TestCase):
             "assessment": "AGREE", "notes": "",
         })
         self.assertEqual(response.status_code, 404)
+
+    def test_human_experiment_and_model_error_endpoints_are_not_symbol_routes(self):
+        experiment = {"status": "early", "linked_outcomes": 0, "cohorts": {}}
+        errors = {"status": "early", "resolved_sample": 0}
+        with patch("routers.cfo_workspace.evaluation_engine.human_model_experiment",
+                   return_value=experiment), \
+             patch("routers.cfo_workspace.evaluation_engine.model_error_dashboard",
+                   return_value=errors):
+            experiment_response = self.client.get("/api/human-reviews/experiments")
+            errors_response = self.client.get("/api/model-errors")
+        self.assertEqual(experiment_response.status_code, 200)
+        self.assertEqual(experiment_response.json(), experiment)
+        self.assertEqual(errors_response.status_code, 200)
+        self.assertEqual(errors_response.json(), errors)
 
     def test_any_eligible_nse_stock_can_be_analysed_on_demand(self):
         history = candles()

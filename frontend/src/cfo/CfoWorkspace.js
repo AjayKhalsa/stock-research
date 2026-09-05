@@ -245,15 +245,23 @@ const REVIEW_CHOICES = [
   ['TOO_CONSERVATIVE', 'Too conservative'],
   ['DATA_ISSUE', 'Data issue'],
 ];
+const REVIEW_TAGS = [
+  ['HEAVY_SUPPLY', 'Heavy supply'], ['NON_LINEAR', 'Non-linear'],
+  ['SLOW_MOVER', 'Slow mover'], ['CLEAN_STRUCTURE', 'Clean structure'],
+  ['EXTENDED', 'Extended'], ['STRONG_VOLUME', 'Strong volume'],
+  ['WEAK_EARNINGS', 'Weak earnings'], ['GOOD_CATALYST', 'Good catalyst'],
+  ['BAD_RISK_REWARD', 'Bad reward / risk'],
+];
 
 function HumanReviewPanel({ data }) {
   const [assessment, setAssessment] = useState('');
+  const [tags, setTags] = useState([]);
   const [notes, setNotes] = useState('');
   const [reviews, setReviews] = useState(data?.human_reviews || []);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   useEffect(() => {
-    setAssessment(''); setNotes(''); setMessage('');
+    setAssessment(''); setTags([]); setNotes(''); setMessage('');
     setReviews(data?.human_reviews || []);
   }, [data?.symbol, data?.snapshot_id, data?.human_reviews]);
   if (!data?.snapshot_id) return null;
@@ -263,11 +271,11 @@ function HumanReviewPanel({ data }) {
     setSaving(true); setMessage('');
     try {
       const saved = await createHumanReview({
-        snapshot_id: data.snapshot_id, symbol: data.symbol, assessment, notes,
+        snapshot_id: data.snapshot_id, symbol: data.symbol, assessment, tags, notes,
       });
       setReviews(current => [saved, ...current]);
       setMessage('Review saved against this exact recommendation snapshot.');
-      setAssessment(''); setNotes('');
+      setAssessment(''); setTags([]); setNotes('');
     } catch (error) {
       setMessage(error?.response?.data?.detail || 'Could not save this review.');
     } finally { setSaving(false); }
@@ -276,10 +284,11 @@ function HumanReviewPanel({ data }) {
   return <form className="cfo-panel cfo-human-review" onSubmit={saveReview}>
     <SectionHeader eyebrow="Human review" title="What did the model get right or wrong?" detail="Feedback is stored with this exact snapshot, score, action, and model version. It never changes today’s ranking." />
     <div className="cfo-review-choices">{REVIEW_CHOICES.map(([value, label]) => <button key={value} type="button" className={assessment === value ? 'active' : ''} onClick={() => setAssessment(value)}>{label}</button>)}</div>
+    <label>Measurable reasons</label><div className="cfo-review-choices cfo-review-tags">{REVIEW_TAGS.map(([value, label]) => <button key={value} type="button" className={tags.includes(value) ? 'active' : ''} onClick={() => setTags(current => current.includes(value) ? current.filter(tag => tag !== value) : [...current, value])}>{label}</button>)}</div>
     <label>Optional note<textarea aria-label="Review note" maxLength="2000" value={notes} onChange={event => setNotes(event.target.value)} placeholder="What evidence or behavior should be checked later?" /></label>
     <button className="cfo-primary" type="submit" disabled={!assessment || saving}>{saving ? 'Saving…' : 'Save review'}</button>
     {message && <p className={message.startsWith('Review saved') ? 'cfo-success' : 'cfo-error'}>{message}</p>}
-    {latest && <div className="cfo-review-latest"><StatusPill value="neutral">Previous review</StatusPill><strong>{REVIEW_CHOICES.find(choice => choice[0] === latest.assessment)?.[1] || latest.assessment}</strong><small>{latest.notes || 'No note added'} · model {latest.model_version}</small></div>}
+    {latest && <div className="cfo-review-latest"><StatusPill value="neutral">Previous review</StatusPill><strong>{REVIEW_CHOICES.find(choice => choice[0] === latest.assessment)?.[1] || latest.assessment}</strong><small>{(latest.tags || []).map(tag => REVIEW_TAGS.find(choice => choice[0] === tag)?.[1] || tag).join(' · ') || latest.notes || 'No reason tag added'} · model {latest.model_version}</small></div>}
   </form>;
 }
 
@@ -339,6 +348,9 @@ function System({ job, brief }) {
   const challenger = calibration.challenger || {};
   const outcomesRemaining = calibration.remaining ?? promotion.remaining ?? 100;
   const reviews = brief.human_review_summary || {};
+  const experiment = brief.human_model_experiment || {};
+  const cohorts = experiment.cohorts || {};
+  const errors = brief.model_errors || {};
   return <div className="cfo-page"><SectionHeader eyebrow="System" title="Data, automation and audit" detail="The workspace prepares itself. Job controls stay here, away from daily decisions." />
     <section className="cfo-two-col"><div className="cfo-panel"><SectionHeader eyebrow="Daily pipeline" title="07:00 IST snapshot" /><div className="cfo-job"><StatusPill value={job?.status}>{job?.status || 'Never run'}</StatusPill><h3>{job?.stage?.replaceAll('_', ' ') || 'Waiting'}</h3><p>{job?.progress || 0} of {job?.total || 0} · {pct}%</p><div><i style={{ width: `${pct}%` }} /></div>{job?.error && <small className="cfo-error">{job.error}</small>}</div><p className="cfo-muted">Runs from the protected scheduler. A failed run never replaces the last valid snapshot.</p></div><div className="cfo-panel"><SectionHeader eyebrow="Current snapshot" title="Coverage" /><div className="cfo-metric-grid"><Metric label="Official universe" value={brief.universe?.official_equities || 0} /><Metric label="Eligible" value={brief.universe?.eligible || 0} /><Metric label="Deep enriched" value={brief.universe?.deeply_enriched || 0} /><Metric label="Published" value={brief.universe?.published || 0} /></div></div></section>
     <section className="cfo-panel"><SectionHeader eyebrow="Provider policy" title="Free-data-first, evidence-aware" /><div className="cfo-provider-grid"><div><StatusPill value="healthy">Official</StatusPill><h3>NSE equity master</h3><p>Daily eligible universe and listed-security identity.</p></div><div><StatusPill value={brief.data_health?.official_price_as_of ? 'healthy' : 'attention'}>{brief.data_health?.official_price_as_of ? 'Reconciled' : 'Pending'}</StatusPill><h3>NSE bhavcopy</h3><p>Official latest-session close and the 1% conflict gate.</p></div><div><StatusPill value="neutral">Adjusted</StatusPill><h3>Yahoo Finance</h3><p>Split/dividend-adjusted history for indicators and structure.</p></div><div><StatusPill value="neutral">Cached 7 days</StatusPill><h3>Financial evidence</h3><p>Reported statements with source, age and completeness retained.</p></div><div><StatusPill value={brief.external_enrichment?.covered ? 'healthy' : 'neutral'}>{brief.external_enrichment?.covered || 0} covered</StatusPill><h3>Bull AI evidence</h3><p>Bounded filings, guidance, peers, counterparties and transactions. Evidence never boosts a score automatically.</p></div></div></section>
@@ -346,6 +358,7 @@ function System({ job, brief }) {
     <section className="cfo-panel"><SectionHeader eyebrow="Point-in-time validation" title="Cost-adjusted snapshot replay" detail="Only recommendations frozen before their outcome are included. The result is early until at least 30 trades and mature at 100." /><div className="cfo-summary-strip"><Metric label="Status" value={(backtest.status || 'no_data').replaceAll('_', ' ')} note={`${validation.sample || 0} resolved trades`} /><Metric label="Net expectancy" value={`${fmt(validation.net_expectancy_r, 3)}R`} note={`${fmt(validation.gross_expectancy_r, 3)}R before costs`} /><Metric label="Net result" value={`${fmt(validation.net_total_r, 2)}R`} /><Metric label="Max drawdown" value={`${fmt(validation.max_drawdown_r, 2)}R`} /><Metric label="Win rate" value={`${fmt(validation.win_rate_pct)}%`} note={validation.win_rate_95ci_pct ? `95% range ${validation.win_rate_95ci_pct[0]}–${validation.win_rate_95ci_pct[1]}%` : '95% range unavailable'} /><Metric label="Round-trip costs" value={`${fmt(backtest.cost_model?.round_trip_bps, 0)} bps`} /></div><div className="cfo-summary-strip cfo-validation-secondary"><Metric label="Median trade" value={`${fmt(validation.net_median_r, 3)}R`} /><Metric label="Volatility" value={`${fmt(validation.net_volatility_r, 3)}R`} /><Metric label="Profit factor" value={fmt(validation.profit_factor, 2)} /><Metric label="Average winner" value={`${fmt(validation.avg_winner_r, 3)}R`} note={`Average loser ${fmt(validation.avg_loser_r, 3)}R`} /><Metric label="Target hit" value={`${fmt(validation.target_hit_rate_pct)}%`} note={`Stop hit ${fmt(validation.stop_hit_rate_pct)}%`} /><Metric label="Holding time" value={`${fmt(validation.median_holding_sessions, 0)} sessions`} /></div><p className="cfo-footnote">Forward snapshot replay · conservative daily-bar fills · corporate-action-adjusted levels. CAGR stays unavailable until real capital allocation and cash timing exist. Historical constituent masters before this ledger began cannot be reconstructed.</p></section>
     <section className="cfo-two-col cfo-backtest-breakdowns"><BacktestBreakdown eyebrow="Validation slice" title="Setup results" rows={backtest.by_setup} /><BacktestBreakdown eyebrow="Validation slice" title="Market-regime results" rows={backtest.by_market_regime} /><BacktestBreakdown eyebrow="Validation slice" title="Sector results" rows={backtest.by_sector} /><BacktestBreakdown eyebrow="Signal-time size proxy" title="Market-cap results" rows={backtest.by_market_cap_bucket} /></section>
     <section className="cfo-panel"><SectionHeader eyebrow="Shadow testing" title="Production, V2, and human judgment" detail="A challenger is calibrated only after enough clean outcomes exist, and it cannot replace production automatically." /><div className="cfo-shadow-grid"><article><StatusPill value="healthy">Production</StatusPill><h3>Current algorithm</h3><strong>{brief.model_version || legacyShadow.current?.model_version || 'Current rules'}</strong><p>{validation.sample || 0} resolved outcomes · live decisions remain unchanged.</p></article><article><StatusPill value={calibration.status === 'shadow_candidate_ready' ? 'attention' : 'neutral'}>{(calibration.status || legacyShadow.challenger?.status || 'awaiting_evidence').replaceAll('_', ' ')}</StatusPill><h3>V2 challenger</h3><strong>{challenger.model_version || `${outcomesRemaining} outcomes remaining`}</strong><p>{challenger.holdout ? `${challenger.holdout.sample} holdout selections · ${fmt(challenger.holdout.net_expectancy_r, 3)}R net expectancy. Human promotion review is still required.` : promotion.next_step || 'Continue forward collection without changing live weights.'}</p></article><article><StatusPill value="neutral">Human review</StatusPill><h3>Structured judgment</h3><strong>{reviews.total || 0} reviews</strong><p>Agreement and disagreement stay linked to the exact model snapshot.</p></article></div></section>
+    <section className="cfo-two-col"><div className="cfo-panel"><SectionHeader eyebrow="Human versus model" title="Outcome-linked experiment" detail="The latest human judgment per snapshot is measured after costs. Opinions never become training labels." /><dl className="cfo-definition"><div><dt>Both accepted</dt><dd>{cohorts.model_accepted_human_accepted?.sample || 0} outcomes · {fmt(cohorts.model_accepted_human_accepted?.net_expectancy_r, 3)}R</dd></div><div><dt>Human rejected</dt><dd>{cohorts.model_accepted_human_rejected?.sample || 0} outcomes · {fmt(cohorts.model_accepted_human_rejected?.net_expectancy_r, 3)}R</dd></div><div><dt>Human rescued</dt><dd>{cohorts.model_rejected_human_accepted?.sample || 0} outcomes · {fmt(cohorts.model_rejected_human_accepted?.net_expectancy_r, 3)}R</dd></div><div><dt>Both rejected</dt><dd>{cohorts.both_rejected?.sample || 0} outcomes · {fmt(cohorts.both_rejected?.net_expectancy_r, 3)}R</dd></div></dl></div><div className="cfo-panel"><SectionHeader eyebrow="Model errors" title="False positives and false negatives" detail="Errors use net R after 35 bps. Never-surfaced stocks remain explicitly unavailable until the full universe is outcome-tracked." /><div className="cfo-metric-grid"><Metric label="Resolved audit sample" value={errors.resolved_sample || 0} /><Metric label="False positives" value={errors.false_positives?.count || 0} /><Metric label="False negatives" value={errors.false_negatives?.count || 0} /><Metric label="Missed opportunities" value="Unavailable" note="outside-Top-100 outcomes are not archived" /></div></div></section>
   </div>;
 }
 
