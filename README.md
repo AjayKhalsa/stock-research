@@ -65,6 +65,12 @@ financial/event provenance. Failures and provenance warnings are shown in the
 System page and exposed at `GET /api/data-archive/audit`; audit reads never
 modify the archive.
 
+Daily jobs retain a bounded operating ledger at `GET /api/jobs/daily/history`.
+Completed rows include duration, universe/history coverage, financial gaps,
+published and analyzed action counts, committee/provider failures, archive
+attempts, and data-quality totals. Failed rows retain the failed stage and
+elapsed time while the last valid research snapshot remains untouched.
+
 ## Bull AI evidence
 
 The strongest morning candidates can include a bounded Bull AI research layer:

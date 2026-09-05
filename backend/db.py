@@ -1217,6 +1217,26 @@ def latest_job_run(job_type: str = "daily_cfo") -> Optional[dict]:
     return _row_to_job(row)
 
 
+def job_run_history(job_type: str = "daily_cfo", limit: int = 30) -> list[dict]:
+    bounded = max(1, min(int(limit), 100))
+    with _conn() as c:
+        rows = c.execute(
+            _sql("SELECT * FROM job_runs WHERE job_type = ? "
+                 "ORDER BY started_at DESC LIMIT ?"),
+            (job_type, bounded),
+        ).fetchall()
+    now = time.time()
+    result = []
+    for row in rows:
+        item = _row_to_job(row)
+        if not item:
+            continue
+        ended = item.get("finished_at") or now
+        item["duration_seconds"] = round(max(0, ended - item["started_at"]), 2)
+        result.append(item)
+    return result
+
+
 def _as_finite_float(value) -> Optional[float]:
     try:
         result = float(value)

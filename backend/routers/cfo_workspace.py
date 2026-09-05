@@ -129,6 +129,7 @@ def morning_brief():
         snapshot["human_model_experiment"] = evaluation_engine.human_model_experiment()
         snapshot["model_errors"] = evaluation_engine.model_error_dashboard()
         snapshot["data_archive_status"] = db.data_archive_status()
+        snapshot["scan_history"] = db.job_run_history(limit=7)
         return snapshot
     return {
         "status": "setup_required", "snapshot_id": None, "published_at": None,
@@ -151,6 +152,7 @@ def morning_brief():
         "human_model_experiment": evaluation_engine.human_model_experiment(),
         "model_errors": evaluation_engine.model_error_dashboard(),
         "data_archive_status": db.data_archive_status(),
+        "scan_history": db.job_run_history(limit=7),
     }
 
 
@@ -340,6 +342,12 @@ def shadow_model(model_version: Optional[str] = None):
 def daily_status():
     _feature_enabled()
     return db.latest_job_run() or {"status": "never_run", "stage": "waiting", "progress": 0, "total": 0}
+
+
+@router.get("/api/jobs/daily/history")
+def daily_history(limit: int = 30):
+    _feature_enabled()
+    return {"runs": db.job_run_history(limit=limit)}
 
 
 @router.post("/api/jobs/daily/run", status_code=202)

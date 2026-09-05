@@ -472,6 +472,16 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         response = self.client.post("/api/jobs/daily/run")
         self.assertEqual(response.status_code, 401)
 
+    def test_daily_job_history_exposes_bounded_observability(self):
+        job = db.create_job_run()
+        db.update_job_run(job["id"], status="completed", stage="published",
+                          payload={"stocks_scanned": 2288, "committee_failures": 1})
+        response = self.client.get("/api/jobs/daily/history?limit=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["runs"]), 1)
+        self.assertEqual(response.json()["runs"][0]["payload"]["stocks_scanned"], 2288)
+        self.assertGreaterEqual(response.json()["runs"][0]["duration_seconds"], 0)
+
     def test_backtest_endpoints_expose_point_in_time_report_and_validate_costs(self):
         report = backtest_engine.run_snapshot_backtest(persist=False)
         with patch("routers.cfo_workspace.db.latest_backtest_run", return_value=None), \

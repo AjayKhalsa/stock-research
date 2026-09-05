@@ -205,6 +205,8 @@ def _trading_sessions_until(raw_date: str | None, as_of: str | None) -> int | No
 
 async def run_daily_pipeline(job_id: str) -> None:
     async with _RUN_LOCK:
+        run_record = db.get_job_run(job_id) or {}
+        pipeline_started_at = float(run_record.get("started_at") or time.time())
         previous = db.latest_analysis_snapshot()
         try:
             db.update_job_run(job_id, stage="universe", progress=0, total=0)
@@ -420,6 +422,17 @@ async def run_daily_pipeline(job_id: str) -> None:
             _enforce_shortlist_caps(candidates)
             action_order = {"BUY_NOW": 5, "WAIT_FOR_ENTRY": 4, "WATCH": 3, "DATA_INSUFFICIENT": 2, "AVOID": 1}
             candidates.sort(key=lambda row: (action_order.get(row["action"], 0), row["rank_value"], row["score"]), reverse=True)
+            analyzed_action_counts = {
+                action: sum(candidate["action"] == action for candidate in candidates)
+                for action in action_order
+            }
+            partial_financials = sum(
+                candidate["data_completeness"] != "full" for candidate in candidates
+            )
+            committee_failures = sum(
+                ((candidate.get("evidence") or {}).get("ai_committee") or {}).get("status")
+                == "unavailable" for candidate in candidates
+            )
             candidates = candidates[:PUBLISHED_CANDIDATES]
             sector_counts: dict[str, int] = defaultdict(int)
             for rank, candidate in enumerate(candidates, 1):
@@ -513,11 +526,37 @@ async def run_daily_pipeline(job_id: str) -> None:
                                                        model_version=cfo_engine.MODEL_VERSION,
                                                        trading_date=trading_date)
             db.screen_save("CFO Morning Top 100", [c["symbol"] for c in candidates], candidates, time.time())
+            published_action_counts = {
+                action: sum(candidate["action"] == action for candidate in candidates)
+                for action in action_order
+            }
             db.update_job_run(job_id, status="completed", stage="published", progress=len(candidates), total=len(candidates),
-                              payload={"snapshot_id": snapshot_id, "published": len(candidates), "eligible": len(preliminary)})
+                              payload={
+                                  "snapshot_id": snapshot_id,
+                                  "trading_date": trading_date,
+                                  "duration_seconds": round(time.time() - pipeline_started_at, 2),
+                                  "stocks_scanned": len(universe),
+                                  "usable_histories": usable_histories,
+                                  "missing_market_histories": len(universe) - usable_histories,
+                                  "eligible": len(preliminary),
+                                  "deeply_enriched": len(enriched),
+                                  "partial_financials": partial_financials,
+                                  "published": len(candidates),
+                                  "analyzed_action_counts": analyzed_action_counts,
+                                  "published_action_counts": published_action_counts,
+                                  "committee_failures": committee_failures,
+                                  "outcome_provider_failures": recommendation_evaluation_summary["errors"],
+                                  "archive_attempts": summary["data_archive"],
+                                  "data_quality": archive_audit["metrics"],
+                              })
         except Exception as exc:  # failed runs never touch the last valid snapshot
+            current = db.get_job_run(job_id) or {}
             db.update_job_run(job_id, status="failed", stage="failed",
-                              error=f"{type(exc).__name__}: {exc}")
+                              error=f"{type(exc).__name__}: {exc}", payload={
+                                  **(current.get("payload") or {}),
+                                  "failed_stage": current.get("stage"),
+                                  "duration_seconds": round(time.time() - pipeline_started_at, 2),
+                              })
             print(f"[market_pipeline] daily pipeline failed: {type(exc).__name__}: {exc}")
 
 

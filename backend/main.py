@@ -24,7 +24,7 @@ async def lifespan(_app: FastAPI):
     db.close()
 
 
-app = FastAPI(title="Stock Research API", version="2.17.0", lifespan=lifespan)
+app = FastAPI(title="Stock Research API", version="2.18.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
