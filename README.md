@@ -42,6 +42,22 @@ StockLens does not recommend share counts or capital allocations. Candidate
 dossiers show trade structure, risk-to-stop and explicit trust controls; the
 Portfolio page manages exposure policy only.
 
+The daily pipeline maintains an append-only research archive. NSE's equity
+master is keyed by ISIN where available, official bhavcopy
+OHLCV/delivery/turnover is stored as raw revisions for the full cash-equity
+universe, and Yahoo-adjusted history is stored separately for the bounded
+enriched bench. Changed provider values create a new content-hashed revision
+instead of overwriting an old one. Adjustment-factor boundaries are retained
+as detected corporate-action evidence without guessing whether an event was a
+split, bonus, or dividend.
+
+Preliminary feature snapshots cover the scanned universe and full feature
+snapshots cover the enriched bench. Financial statement periods, ratios, and
+company events are archived with their first observation time, origin, optional
+filing date, and source document when available. Missing filing dates remain
+missing; point-in-time consumers can safely fall back to the observation time
+instead of assuming the data was known earlier.
+
 ## Bull AI evidence
 
 The strongest morning candidates can include a bounded Bull AI research layer:

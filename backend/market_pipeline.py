@@ -219,10 +219,25 @@ async def run_daily_pipeline(job_id: str) -> None:
             universe = [row for row in universe if _is_mainboard_cash_equity(row)]
             if not universe:
                 raise RuntimeError("Official NSE equity universe is unavailable")
+            isin_by_symbol = {
+                row["symbol"]: row.get("isin") for row in universe if row.get("isin")
+            }
+            db.update_job_run(job_id, stage="immutable_market_archive", progress=0,
+                              total=len(universe))
+            security_archive = await asyncio.to_thread(
+                db.archive_security_master, universe,
+            )
+            raw_archive = {"attempted": 0, "trading_date": official_as_of}
+            if official_as_of and official_bars:
+                raw_archive = await asyncio.to_thread(
+                    db.archive_raw_market_day, universe, official_bars,
+                    trading_date=official_as_of, source_url=bhavcopy.get("url"),
+                )
             db.update_job_run(job_id, stage="technical_scan", total=len(universe),
                               payload={"universe": len(universe), "bhavcopy_as_of": bhavcopy.get("as_of")})
 
             preliminary: list[dict] = []
+            universe_features: list[dict] = []
             usable_histories = 0
             retained_candles: dict[str, list[dict]] = {}
             top_candle_heap: list[tuple[float, str]] = []
@@ -246,8 +261,9 @@ async def run_daily_pipeline(job_id: str) -> None:
                     if len(candles) >= 252:
                         usable_histories += 1
                     row = cfo_engine.preliminary_analysis(symbol, names[symbol], candles, nifty)
+                    row.pop("candles", None)
+                    universe_features.append(row)
                     if row.get("eligible"):
-                        row.pop("candles", None)
                         preliminary.append(row)
                         heap_key = (float(row.get("preliminary_score") or 0), symbol)
                         if symbol in retention_symbols:
@@ -278,6 +294,17 @@ async def run_daily_pipeline(job_id: str) -> None:
                     f"(minimum {PUBLISHED_CANDIDATES})"
                 )
 
+            feature_date = official_as_of or (
+                nifty[-1].get("date") if nifty else datetime.now(IST).date().isoformat()
+            )
+            db.update_job_run(job_id, stage="immutable_feature_archive", progress=0,
+                              total=len(universe_features))
+            preliminary_archive_count = await asyncio.to_thread(
+                db.archive_feature_snapshots, universe_features,
+                feature_date=feature_date, feature_version="preliminary-v1",
+                feature_scope="universe", isin_by_symbol=isin_by_symbol,
+            )
+
             preliminary.sort(key=lambda item: item.get("preliminary_score", 0), reverse=True)
             market_regime = _market_regime(nifty, preliminary)
             deep = preliminary[:DEEP_CANDIDATES]
@@ -291,6 +318,11 @@ async def run_daily_pipeline(job_id: str) -> None:
             for item in deep:
                 item["candles"] = retained_candles.get(item["symbol"]) or []
                 price.persist_history(f"NSE:{item['symbol']}", 520, item.get("candles") or [])
+            adjusted_archive = await asyncio.to_thread(
+                db.archive_adjusted_histories,
+                {item["symbol"]: item.get("candles") or [] for item in deep},
+                isin_by_symbol=isin_by_symbol,
+            )
             db.update_job_run(job_id, stage="fundamental_enrichment", progress=0, total=len(deep),
                               payload={"eligible": len(preliminary), "deep_candidates": len(deep)})
 
@@ -309,6 +341,17 @@ async def run_daily_pipeline(job_id: str) -> None:
                 enriched.append(await task)
                 if index == len(tasks) or index % 10 == 0:
                     db.update_job_run(job_id, stage="fundamental_enrichment", progress=index, total=len(tasks))
+
+            db.update_job_run(job_id, stage="immutable_financial_archive", progress=0,
+                              total=len(enriched))
+            financial_archive = await asyncio.to_thread(
+                db.archive_financial_payloads,
+                [{
+                    "symbol": item["symbol"], "isin": isin_by_symbol.get(item["symbol"]),
+                    "payload": fundamentals, "origin": meta.get("origin"),
+                    "observed_at": meta.get("fetched_at"),
+                } for item, fundamentals, meta in enriched],
+            )
 
             regimes = _sector_scores(enriched)
             official = bhavcopy.get("closes") or {}
@@ -333,6 +376,13 @@ async def run_daily_pipeline(job_id: str) -> None:
                                            "entry_blocked": blocked_for_results})
                 candidates.append(candidate)
                 fundamentals_by_symbol[item["symbol"]] = fundamentals
+
+            await asyncio.to_thread(db.enrich_security_master, candidates)
+            full_archive_count = await asyncio.to_thread(
+                db.archive_feature_snapshots, candidates,
+                feature_date=feature_date, feature_version=cfo_engine.MODEL_VERSION,
+                feature_scope="full", isin_by_symbol=isin_by_symbol,
+            )
 
             # Review only the highest-consequence calls to stay inside free API
             # quotas. The full stock Research view can run the committee for
@@ -424,6 +474,15 @@ async def run_daily_pipeline(job_id: str) -> None:
                 "data_health": {"status": "attention" if data_exceptions else "healthy",
                                 "exceptions": data_exceptions, "official_price_as_of": bhavcopy.get("as_of"),
                                 "fundamentals_policy": "after results or every 7 days"},
+                "data_archive": {
+                    "security_master": security_archive,
+                    "raw_market": raw_archive,
+                    "adjusted_market": adjusted_archive,
+                    "preliminary_features": preliminary_archive_count,
+                    "full_features": full_archive_count,
+                    "financials_and_events": financial_archive,
+                    "immutable_revisions": True,
+                },
                 "portfolio": {"open_positions": len(active_trades), "heat_pct": round(estimated_heat, 2),
                               "heat_method": "allocated_risk_estimate",
                               "max_heat_pct": settings["max_portfolio_heat_pct"], "actions": []},

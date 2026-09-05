@@ -29,6 +29,7 @@ existing data/watchlist.json and data/alerts.json are migrated in on first run.
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import sqlite3
@@ -298,6 +299,120 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     closed_at     REAL
 );
 
+CREATE TABLE IF NOT EXISTS securities (
+    security_id   TEXT PRIMARY KEY,
+    nse_symbol    TEXT,
+    bse_code      TEXT,
+    isin          TEXT,
+    company_name  TEXT NOT NULL,
+    sector        TEXT,
+    industry      TEXT,
+    market_cap_cr REAL,
+    listing_date  TEXT,
+    fno_flag      INTEGER,
+    active_flag   INTEGER NOT NULL DEFAULT 1,
+    first_seen_at REAL NOT NULL,
+    last_seen_at  REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_securities_isin
+    ON securities(isin) WHERE isin IS NOT NULL AND isin <> '';
+CREATE INDEX IF NOT EXISTS idx_securities_nse_symbol ON securities(nse_symbol);
+
+CREATE TABLE IF NOT EXISTS market_prices_raw (
+    security_id     TEXT NOT NULL,
+    trading_date    TEXT NOT NULL,
+    provider        TEXT NOT NULL,
+    revision_hash   TEXT NOT NULL,
+    open_price      REAL,
+    high_price      REAL,
+    low_price       REAL,
+    close_price     REAL,
+    volume          REAL,
+    delivery_volume REAL,
+    turnover        REAL,
+    source_url      TEXT,
+    observed_at     REAL NOT NULL,
+    PRIMARY KEY(security_id, trading_date, provider, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_market_prices_raw_date
+    ON market_prices_raw(trading_date, security_id);
+
+CREATE TABLE IF NOT EXISTS market_prices_adjusted (
+    security_id      TEXT NOT NULL,
+    trading_date     TEXT NOT NULL,
+    provider         TEXT NOT NULL,
+    revision_hash    TEXT NOT NULL,
+    open_price       REAL,
+    high_price       REAL,
+    low_price        REAL,
+    adjusted_close   REAL,
+    raw_close        REAL,
+    adjustment_factor REAL,
+    volume           REAL,
+    observed_at      REAL NOT NULL,
+    PRIMARY KEY(security_id, trading_date, provider, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_market_prices_adjusted_date
+    ON market_prices_adjusted(trading_date, security_id);
+
+CREATE TABLE IF NOT EXISTS corporate_actions (
+    id               TEXT PRIMARY KEY,
+    security_id      TEXT NOT NULL,
+    effective_date   TEXT NOT NULL,
+    action_type      TEXT NOT NULL,
+    adjustment_ratio REAL,
+    source           TEXT NOT NULL,
+    evidence_hash    TEXT NOT NULL,
+    detected_at      REAL NOT NULL,
+    UNIQUE(security_id, effective_date, source, evidence_hash)
+);
+
+CREATE TABLE IF NOT EXISTS financial_reports (
+    id              TEXT PRIMARY KEY,
+    security_id     TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    statement_type  TEXT NOT NULL,
+    period_label    TEXT NOT NULL,
+    filing_date     TEXT,
+    observed_at     REAL NOT NULL,
+    source          TEXT,
+    source_document TEXT,
+    payload_hash    TEXT NOT NULL,
+    payload         TEXT NOT NULL,
+    UNIQUE(security_id, statement_type, period_label, payload_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_financial_reports_point_in_time
+    ON financial_reports(security_id, observed_at, statement_type);
+
+CREATE TABLE IF NOT EXISTS company_events (
+    id            TEXT PRIMARY KEY,
+    security_id   TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    event_date    TEXT,
+    filing_date   TEXT,
+    severity      TEXT,
+    description   TEXT,
+    source        TEXT,
+    source_url    TEXT,
+    evidence_hash TEXT NOT NULL,
+    observed_at   REAL NOT NULL,
+    UNIQUE(security_id, evidence_hash)
+);
+
+CREATE TABLE IF NOT EXISTS stock_feature_snapshots (
+    security_id    TEXT NOT NULL,
+    feature_date   TEXT NOT NULL,
+    feature_version TEXT NOT NULL,
+    feature_scope  TEXT NOT NULL,
+    revision_hash  TEXT NOT NULL,
+    payload        TEXT NOT NULL,
+    observed_at    REAL NOT NULL,
+    PRIMARY KEY(security_id, feature_date, feature_version, feature_scope, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_feature_snapshots_date
+    ON stock_feature_snapshots(feature_date, feature_version, feature_scope);
+
 CREATE TABLE IF NOT EXISTS human_reviews (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id           TEXT NOT NULL,
@@ -509,6 +624,120 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     opened_at     DOUBLE PRECISION NOT NULL,
     closed_at     DOUBLE PRECISION
 );
+
+CREATE TABLE IF NOT EXISTS securities (
+    security_id   TEXT PRIMARY KEY,
+    nse_symbol    TEXT,
+    bse_code      TEXT,
+    isin          TEXT,
+    company_name  TEXT NOT NULL,
+    sector        TEXT,
+    industry      TEXT,
+    market_cap_cr DOUBLE PRECISION,
+    listing_date  TEXT,
+    fno_flag      INTEGER,
+    active_flag   INTEGER NOT NULL DEFAULT 1,
+    first_seen_at DOUBLE PRECISION NOT NULL,
+    last_seen_at  DOUBLE PRECISION NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_securities_isin
+    ON securities(isin) WHERE isin IS NOT NULL AND isin <> '';
+CREATE INDEX IF NOT EXISTS idx_securities_nse_symbol ON securities(nse_symbol);
+
+CREATE TABLE IF NOT EXISTS market_prices_raw (
+    security_id     TEXT NOT NULL,
+    trading_date    TEXT NOT NULL,
+    provider        TEXT NOT NULL,
+    revision_hash   TEXT NOT NULL,
+    open_price      DOUBLE PRECISION,
+    high_price      DOUBLE PRECISION,
+    low_price       DOUBLE PRECISION,
+    close_price     DOUBLE PRECISION,
+    volume          DOUBLE PRECISION,
+    delivery_volume DOUBLE PRECISION,
+    turnover        DOUBLE PRECISION,
+    source_url      TEXT,
+    observed_at     DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY(security_id, trading_date, provider, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_market_prices_raw_date
+    ON market_prices_raw(trading_date, security_id);
+
+CREATE TABLE IF NOT EXISTS market_prices_adjusted (
+    security_id      TEXT NOT NULL,
+    trading_date     TEXT NOT NULL,
+    provider         TEXT NOT NULL,
+    revision_hash    TEXT NOT NULL,
+    open_price       DOUBLE PRECISION,
+    high_price       DOUBLE PRECISION,
+    low_price        DOUBLE PRECISION,
+    adjusted_close   DOUBLE PRECISION,
+    raw_close        DOUBLE PRECISION,
+    adjustment_factor DOUBLE PRECISION,
+    volume           DOUBLE PRECISION,
+    observed_at      DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY(security_id, trading_date, provider, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_market_prices_adjusted_date
+    ON market_prices_adjusted(trading_date, security_id);
+
+CREATE TABLE IF NOT EXISTS corporate_actions (
+    id               TEXT PRIMARY KEY,
+    security_id      TEXT NOT NULL,
+    effective_date   TEXT NOT NULL,
+    action_type      TEXT NOT NULL,
+    adjustment_ratio DOUBLE PRECISION,
+    source           TEXT NOT NULL,
+    evidence_hash    TEXT NOT NULL,
+    detected_at      DOUBLE PRECISION NOT NULL,
+    UNIQUE(security_id, effective_date, source, evidence_hash)
+);
+
+CREATE TABLE IF NOT EXISTS financial_reports (
+    id              TEXT PRIMARY KEY,
+    security_id     TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    statement_type  TEXT NOT NULL,
+    period_label    TEXT NOT NULL,
+    filing_date     TEXT,
+    observed_at     DOUBLE PRECISION NOT NULL,
+    source          TEXT,
+    source_document TEXT,
+    payload_hash    TEXT NOT NULL,
+    payload         TEXT NOT NULL,
+    UNIQUE(security_id, statement_type, period_label, payload_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_financial_reports_point_in_time
+    ON financial_reports(security_id, observed_at, statement_type);
+
+CREATE TABLE IF NOT EXISTS company_events (
+    id            TEXT PRIMARY KEY,
+    security_id   TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    event_date    TEXT,
+    filing_date   TEXT,
+    severity      TEXT,
+    description   TEXT,
+    source        TEXT,
+    source_url    TEXT,
+    evidence_hash TEXT NOT NULL,
+    observed_at   DOUBLE PRECISION NOT NULL,
+    UNIQUE(security_id, evidence_hash)
+);
+
+CREATE TABLE IF NOT EXISTS stock_feature_snapshots (
+    security_id    TEXT NOT NULL,
+    feature_date   TEXT NOT NULL,
+    feature_version TEXT NOT NULL,
+    feature_scope  TEXT NOT NULL,
+    revision_hash  TEXT NOT NULL,
+    payload        TEXT NOT NULL,
+    observed_at    DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY(security_id, feature_date, feature_version, feature_scope, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_feature_snapshots_date
+    ON stock_feature_snapshots(feature_date, feature_version, feature_scope);
 
 CREATE TABLE IF NOT EXISTS human_reviews (
     id                    BIGSERIAL PRIMARY KEY,
@@ -1571,6 +1800,322 @@ def _json_nan_safe(obj):
     if isinstance(obj, (list, tuple)):
         return [_json_nan_safe(v) for v in obj]
     return obj
+
+
+# ── immutable research archive ───────────────────────────────────────────────
+
+def _stable_payload(value: Any) -> tuple[str, str]:
+    encoded = json.dumps(
+        _json_nan_safe(value), sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _security_id(symbol: str, isin: Optional[str] = None) -> str:
+    clean_isin = str(isin or "").strip().upper()
+    return f"IN:{clean_isin}" if clean_isin else f"NSE:{str(symbol).strip().upper()}"
+
+
+def _executemany(connection, query: str, values: list[tuple]) -> None:
+    if not values:
+        return
+    cursor = connection.cursor()
+    try:
+        cursor.executemany(_sql(query), values)
+    finally:
+        cursor.close()
+
+
+def archive_security_master(rows: list[dict], observed_at: Optional[float] = None) -> dict:
+    """Upsert current identity while retaining a stable ISIN-based key."""
+    now = float(observed_at or time.time())
+    values = []
+    for row in rows:
+        symbol = str(row.get("symbol") or row.get("nse_symbol") or "").strip().upper()
+        name = str(row.get("name") or row.get("company_name") or symbol).strip()
+        if not symbol or not name:
+            continue
+        isin = str(row.get("isin") or "").strip().upper() or None
+        values.append((
+            _security_id(symbol, isin), symbol, row.get("bse_code"), isin, name,
+            row.get("sector"), row.get("industry"),
+            _as_finite_float(row.get("market_cap_cr")), row.get("listing_date"),
+            1 if row.get("fno_flag") else 0, 1, now, now,
+        ))
+    query = (
+        "INSERT INTO securities(security_id,nse_symbol,bse_code,isin,company_name,"
+        "sector,industry,market_cap_cr,listing_date,fno_flag,active_flag,first_seen_at,last_seen_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(security_id) DO UPDATE SET "
+        "nse_symbol=excluded.nse_symbol, bse_code=COALESCE(excluded.bse_code,securities.bse_code), "
+        "company_name=excluded.company_name, sector=COALESCE(excluded.sector,securities.sector), "
+        "industry=COALESCE(excluded.industry,securities.industry), "
+        "market_cap_cr=COALESCE(excluded.market_cap_cr,securities.market_cap_cr), "
+        "listing_date=COALESCE(excluded.listing_date,securities.listing_date), "
+        "fno_flag=excluded.fno_flag, active_flag=1, last_seen_at=excluded.last_seen_at"
+    )
+    with _conn() as connection:
+        _executemany(connection, query, values)
+    return {"attempted": len(values), "observed_at": now}
+
+
+def enrich_security_master(candidates: list[dict]) -> int:
+    values = [(
+        candidate.get("sector"), candidate.get("industry"),
+        _as_finite_float(candidate.get("market_cap_cr")),
+        str(candidate.get("symbol") or "").upper(),
+    ) for candidate in candidates if candidate.get("symbol")]
+    with _conn() as connection:
+        _executemany(
+            connection,
+            "UPDATE securities SET sector=COALESCE(?,sector), industry=COALESCE(?,industry), "
+            "market_cap_cr=COALESCE(?,market_cap_cr) WHERE nse_symbol=?",
+            values,
+        )
+    return len(values)
+
+
+def archive_raw_market_day(universe: list[dict], bars: dict[str, dict], *,
+                           trading_date: str, source_url: Optional[str] = None,
+                           observed_at: Optional[float] = None) -> dict:
+    now = float(observed_at or time.time())
+    identity = {str(row.get("symbol") or "").upper(): row for row in universe}
+    values = []
+    for symbol, bar in bars.items():
+        security = identity.get(str(symbol).upper())
+        if not security:
+            continue
+        payload = {
+            key: bar.get(key) for key in (
+                "open", "high", "low", "close", "volume",
+                "delivery_volume", "turnover",
+            )
+        }
+        _encoded, revision = _stable_payload(payload)
+        values.append((
+            _security_id(symbol, security.get("isin")), str(trading_date)[:10],
+            "NSE bhavcopy", revision, _as_finite_float(bar.get("open")),
+            _as_finite_float(bar.get("high")), _as_finite_float(bar.get("low")),
+            _as_finite_float(bar.get("close")), _as_finite_float(bar.get("volume")),
+            _as_finite_float(bar.get("delivery_volume")),
+            _as_finite_float(bar.get("turnover")), source_url, now,
+        ))
+    with _conn() as connection:
+        _executemany(
+            connection,
+            "INSERT INTO market_prices_raw(security_id,trading_date,provider,revision_hash,"
+            "open_price,high_price,low_price,close_price,volume,delivery_volume,turnover,"
+            "source_url,observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            values,
+        )
+    return {"attempted": len(values), "trading_date": str(trading_date)[:10]}
+
+
+def archive_adjusted_histories(histories: dict[str, list[dict]], *,
+                               observed_at: Optional[float] = None,
+                               isin_by_symbol: Optional[dict[str, str]] = None) -> dict:
+    """Append new Yahoo revisions; unchanged candles are deduplicated by hash."""
+    now = float(observed_at or time.time())
+    isin_by_symbol = isin_by_symbol or {}
+    price_values: list[tuple] = []
+    action_values: list[tuple] = []
+    for raw_symbol, candles in histories.items():
+        symbol = str(raw_symbol).replace("NSE:", "").replace(".NS", "").upper()
+        security_id = _security_id(symbol, isin_by_symbol.get(symbol))
+        yahoo_rows = [row for row in candles if row.get("source") != "NSE bhavcopy"]
+        yahoo_rows.sort(key=lambda row: str(row.get("date") or ""))
+        previous_factor = None
+        for bar in yahoo_rows:
+            trading_date = str(bar.get("date") or "")[:10]
+            if not trading_date:
+                continue
+            payload = {key: bar.get(key) for key in (
+                "open", "high", "low", "close", "raw_close",
+                "adjustment_factor", "volume",
+            )}
+            _encoded, revision = _stable_payload(payload)
+            factor = _as_finite_float(bar.get("adjustment_factor"))
+            price_values.append((
+                security_id, trading_date, "Yahoo adjusted daily", revision,
+                _as_finite_float(bar.get("open")), _as_finite_float(bar.get("high")),
+                _as_finite_float(bar.get("low")), _as_finite_float(bar.get("close")),
+                _as_finite_float(bar.get("raw_close")), factor,
+                _as_finite_float(bar.get("volume")), now,
+            ))
+            if (previous_factor and factor and previous_factor > 0
+                    and abs(factor / previous_factor - 1) > 1e-7):
+                evidence = {
+                    "previous_factor": previous_factor, "factor": factor,
+                    "effective_date": trading_date,
+                }
+                _action_json, evidence_hash = _stable_payload(evidence)
+                action_values.append((
+                    hashlib.sha256(f"{security_id}|{trading_date}|{evidence_hash}".encode()).hexdigest(),
+                    security_id, trading_date, "adjustment_factor_change",
+                    factor / previous_factor, "Yahoo adjusted daily", evidence_hash, now,
+                ))
+            if factor and factor > 0:
+                previous_factor = factor
+    with _conn() as connection:
+        _executemany(
+            connection,
+            "INSERT INTO market_prices_adjusted(security_id,trading_date,provider,revision_hash,"
+            "open_price,high_price,low_price,adjusted_close,raw_close,adjustment_factor,volume,observed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            price_values,
+        )
+        _executemany(
+            connection,
+            "INSERT INTO corporate_actions(id,security_id,effective_date,action_type,"
+            "adjustment_ratio,source,evidence_hash,detected_at) VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT DO NOTHING",
+            action_values,
+        )
+    return {"price_rows_attempted": len(price_values),
+            "actions_detected": len(action_values)}
+
+
+def archive_feature_snapshots(items: list[dict], *, feature_date: str,
+                              feature_version: str, feature_scope: str,
+                              observed_at: Optional[float] = None,
+                              isin_by_symbol: Optional[dict[str, str]] = None) -> int:
+    now = float(observed_at or time.time())
+    isin_by_symbol = isin_by_symbol or {}
+    values = []
+    for item in items:
+        symbol = str(item.get("symbol") or "").upper()
+        if not symbol:
+            continue
+        encoded, revision = _stable_payload(item)
+        values.append((
+            _security_id(symbol, isin_by_symbol.get(symbol)), str(feature_date)[:10],
+            feature_version, feature_scope, revision, encoded, now,
+        ))
+    with _conn() as connection:
+        _executemany(
+            connection,
+            "INSERT INTO stock_feature_snapshots(security_id,feature_date,feature_version,"
+            "feature_scope,revision_hash,payload,observed_at) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT DO NOTHING",
+            values,
+        )
+    return len(values)
+
+
+def archive_financial_payloads(items: list[dict]) -> dict:
+    """Normalize observed financial statements/events without inventing filing dates."""
+    report_values: list[tuple] = []
+    event_values: list[tuple] = []
+    statement_keys = {
+        "quarterly_results": "quarterly_income",
+        "annual_pl": "annual_income",
+        "annual_bs": "annual_balance_sheet",
+        "annual_cf": "annual_cash_flow",
+    }
+    ratio_keys = (
+        "roe", "roce", "debt_to_equity", "interest_coverage", "market_cap",
+        "promoter_pledge",
+    )
+    for item in items:
+        symbol = str(item.get("symbol") or "").upper()
+        payload = item.get("payload") or {}
+        if not symbol or not payload:
+            continue
+        security_id = _security_id(symbol, item.get("isin"))
+        observed_at = float(item.get("observed_at") or time.time())
+        origin = item.get("origin") or payload.get("fundamentals_source")
+        for key, statement_type in statement_keys.items():
+            for index, period in enumerate(payload.get(key) or []):
+                if not isinstance(period, dict):
+                    continue
+                period_label = str(
+                    period.get("quarter") or period.get("year")
+                    or period.get("period") or f"row-{index}"
+                )
+                encoded, payload_hash = _stable_payload(period)
+                filing_date = period.get("filing_date") or period.get("published_at")
+                source_document = period.get("source_document") or period.get("source_url")
+                report_id = hashlib.sha256(
+                    f"{security_id}|{statement_type}|{period_label}|{payload_hash}".encode()
+                ).hexdigest()
+                report_values.append((
+                    report_id, security_id, symbol, statement_type, period_label,
+                    str(filing_date) if filing_date else None, observed_at, origin,
+                    str(source_document) if source_document else None, payload_hash, encoded,
+                ))
+        ratios = {key: payload.get(key) for key in ratio_keys if payload.get(key) is not None}
+        if ratios:
+            encoded, payload_hash = _stable_payload(ratios)
+            report_values.append((
+                hashlib.sha256(f"{security_id}|ratios|{payload_hash}".encode()).hexdigest(),
+                security_id, symbol, "ratios", "current_as_observed", None,
+                observed_at, origin, None, payload_hash, encoded,
+            ))
+        source_events = payload.get("events") or []
+        events = [source_events] if isinstance(source_events, dict) else list(source_events)
+        if payload.get("earnings_date"):
+            events.append({
+                "event_type": "earnings", "event_date": payload["earnings_date"],
+                "severity": "scheduled", "description": "Scheduled financial results",
+                "source": origin,
+            })
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            normalized = {
+                "event_type": event.get("event_type") or event.get("type") or "company_event",
+                "event_date": event.get("event_date") or event.get("date"),
+                "filing_date": event.get("filing_date"),
+                "severity": event.get("severity"),
+                "description": event.get("description") or event.get("summary"),
+                "source": event.get("source") or origin,
+                "source_url": event.get("source_url") or event.get("url"),
+            }
+            _event_json, evidence_hash = _stable_payload(normalized)
+            event_values.append((
+                hashlib.sha256(f"{security_id}|{evidence_hash}".encode()).hexdigest(),
+                security_id, symbol, normalized["event_type"], normalized["event_date"],
+                normalized["filing_date"], normalized["severity"],
+                normalized["description"], normalized["source"], normalized["source_url"],
+                evidence_hash, observed_at,
+            ))
+    with _conn() as connection:
+        _executemany(
+            connection,
+            "INSERT INTO financial_reports(id,security_id,symbol,statement_type,period_label,"
+            "filing_date,observed_at,source,source_document,payload_hash,payload) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            report_values,
+        )
+        _executemany(
+            connection,
+            "INSERT INTO company_events(id,security_id,symbol,event_type,event_date,filing_date,"
+            "severity,description,source,source_url,evidence_hash,observed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            event_values,
+        )
+    return {"reports_attempted": len(report_values), "events_attempted": len(event_values)}
+
+
+def data_archive_status() -> dict:
+    tables = (
+        "securities", "market_prices_raw", "market_prices_adjusted",
+        "corporate_actions", "financial_reports", "company_events",
+        "stock_feature_snapshots",
+    )
+    with _conn() as connection:
+        counts = {
+            table: int(connection.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()["count"])
+            for table in tables
+        }
+        latest_raw = connection.execute(
+            "SELECT MAX(trading_date) AS value FROM market_prices_raw"
+        ).fetchone()["value"]
+        latest_features = connection.execute(
+            "SELECT MAX(feature_date) AS value FROM stock_feature_snapshots"
+        ).fetchone()["value"]
+    return {"counts": counts, "latest_raw_date": latest_raw,
+            "latest_feature_date": latest_features, "immutable_revisions": True}
 
 
 def _row_to_screen(r, with_tickers: bool = True) -> dict:

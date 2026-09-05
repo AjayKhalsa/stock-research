@@ -67,6 +67,13 @@ def _parse_market(content: bytes, content_type: str = "") -> dict:
         high = _number(_pick(row, "HIGH_PRICE", "HIGH", "HghPric"))
         low = _number(_pick(row, "LOW_PRICE", "LOW", "LwPric"))
         volume = _number(_pick(row, "TTL_TRD_QNTY", "TOTTRDQTY", "TtlTradgVol"))
+        delivery_volume = _number(_pick(
+            row, "DELIV_QTY", "DELIVERY_QTY", "DlvryQty",
+        ))
+        turnover = _number(_pick(row, "TtlTrfVal", "TOTAL_TRADED_VALUE"))
+        if turnover is None:
+            turnover_lakh = _number(_pick(row, "TURNOVER_LACS", "TURNOVER_LAKHS"))
+            turnover = turnover_lakh * 100_000 if turnover_lakh is not None else None
         if (None not in (open_price, high, low, volume)
                 and min(open_price, high, low) > 0 and volume >= 0):
             bars[symbol] = {
@@ -74,6 +81,8 @@ def _parse_market(content: bytes, content_type: str = "") -> dict:
                 "low": round(low, 2), "close": round(close, 2),
                 "raw_close": round(close, 2), "adjustment_factor": 1.0,
                 "volume": int(volume),
+                "delivery_volume": int(delivery_volume) if delivery_volume is not None else None,
+                "turnover": round(turnover, 2) if turnover is not None else None,
             }
     return {"closes": closes, "bars": bars}
 

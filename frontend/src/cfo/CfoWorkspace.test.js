@@ -57,6 +57,10 @@ const brief = {
   } },
   model_errors: { resolved_sample: 14, false_positives: { count: 4 },
     false_negatives: { count: 2 }, missed_opportunities: { status: 'unavailable' } },
+  data_archive_status: { immutable_revisions: true, latest_raw_date: '2026-08-28',
+    latest_feature_date: '2026-08-28', counts: { securities: 2200,
+      market_prices_raw: 2200, market_prices_adjusted: 78000,
+      financial_reports: 900, company_events: 40, stock_feature_snapshots: 2350 } },
   sectors: [{ sector: 'IT', rank: 1, score: 75, trend: 'Leading', breadth_pct: 72,
     relative_strength: 70, volume_participation: 64, actionable_count: 1, eligible_count: 10,
     top_candidates: [{ symbol: 'TCS', company: 'Tata Consultancy', action: 'WAIT_FOR_ENTRY', expected_r: 1.1 }] }],
@@ -206,6 +210,8 @@ test('shows the automatic historical truth ledger in System', async () => {
   expect(screen.getByText(/3 reviews/i)).toBeInTheDocument();
   expect(screen.getByText(/Outcome-linked experiment/i)).toBeInTheDocument();
   expect(screen.getByText(/False positives and false negatives/i)).toBeInTheDocument();
+  expect(screen.getByText(/Point-in-time data foundation/i)).toBeInTheDocument();
+  expect(screen.getByText('78000')).toBeInTheDocument();
   expect(screen.getByText(/Median trade/i)).toBeInTheDocument();
   expect(screen.getByText(/Target hit/i)).toBeInTheDocument();
   expect(screen.getByText(/Market-cap results/i)).toBeInTheDocument();

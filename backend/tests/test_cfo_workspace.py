@@ -375,12 +375,15 @@ class CfoEngineTests(unittest.TestCase):
 
     def test_official_bhavcopy_bar_fills_one_session_provider_lag(self):
         csv_body = (
-            "SYMBOL,SERIES,OPEN_PRICE,HIGH_PRICE,LOW_PRICE,CLOSE_PRICE,TTL_TRD_QNTY\n"
-            "TCS,EQ,101,104,100,103,250000\n"
+            "SYMBOL,SERIES,OPEN_PRICE,HIGH_PRICE,LOW_PRICE,CLOSE_PRICE,TTL_TRD_QNTY,"
+            "DELIV_QTY,TURNOVER_LACS\n"
+            "TCS,EQ,101,104,100,103,250000,125000,260.5\n"
         ).encode()
         parsed = nse_bhavcopy._parse_market(csv_body)
         self.assertEqual(parsed["closes"]["TCS"], 103)
         self.assertEqual(parsed["bars"]["TCS"]["volume"], 250000)
+        self.assertEqual(parsed["bars"]["TCS"]["delivery_volume"], 125000)
+        self.assertEqual(parsed["bars"]["TCS"]["turnover"], 26_050_000)
         history = [{"date": "2026-09-03", "close": 100}]
         aligned = market_pipeline._align_completed_history(
             history, "2026-09-04", parsed["bars"]["TCS"],
@@ -684,6 +687,12 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(experiment_response.json(), experiment)
         self.assertEqual(errors_response.status_code, 200)
         self.assertEqual(errors_response.json(), errors)
+
+    def test_data_archive_status_endpoint_exposes_immutable_storage(self):
+        response = self.client.get("/api/data-archive/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["immutable_revisions"])
+        self.assertIn("market_prices_raw", response.json()["counts"])
 
     def test_any_eligible_nse_stock_can_be_analysed_on_demand(self):
         history = candles()

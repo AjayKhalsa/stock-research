@@ -128,6 +128,7 @@ def morning_brief():
         snapshot["human_review_summary"] = db.human_review_stats()
         snapshot["human_model_experiment"] = evaluation_engine.human_model_experiment()
         snapshot["model_errors"] = evaluation_engine.model_error_dashboard()
+        snapshot["data_archive_status"] = db.data_archive_status()
         return snapshot
     return {
         "status": "setup_required", "snapshot_id": None, "published_at": None,
@@ -149,6 +150,7 @@ def morning_brief():
         "human_review_summary": db.human_review_stats(),
         "human_model_experiment": evaluation_engine.human_model_experiment(),
         "model_errors": evaluation_engine.model_error_dashboard(),
+        "data_archive_status": db.data_archive_status(),
     }
 
 
@@ -271,6 +273,12 @@ def list_human_reviews(symbol: str, snapshot_id: Optional[str] = None, limit: in
 def model_errors():
     _feature_enabled()
     return evaluation_engine.model_error_dashboard()
+
+
+@router.get("/api/data-archive/status")
+def data_archive_status():
+    _feature_enabled()
+    return db.data_archive_status()
 
 
 @router.get("/api/recommendation-outcomes/stats")
