@@ -281,6 +281,12 @@ def data_archive_status():
     return db.data_archive_status()
 
 
+@router.get("/api/data-archive/audit")
+def data_archive_audit():
+    _feature_enabled()
+    return db.run_data_archive_audit(persist=False)
+
+
 @router.get("/api/recommendation-outcomes/stats")
 def recommendation_outcome_stats():
     _feature_enabled()

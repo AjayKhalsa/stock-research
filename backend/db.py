@@ -413,6 +413,17 @@ CREATE TABLE IF NOT EXISTS stock_feature_snapshots (
 CREATE INDEX IF NOT EXISTS idx_feature_snapshots_date
     ON stock_feature_snapshots(feature_date, feature_version, feature_scope);
 
+CREATE TABLE IF NOT EXISTS data_quality_audits (
+    id          TEXT PRIMARY KEY,
+    as_of_date  TEXT,
+    status      TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    checks      TEXT NOT NULL,
+    metrics     TEXT NOT NULL,
+    audited_at  REAL NOT NULL,
+    UNIQUE(as_of_date, fingerprint)
+);
+
 CREATE TABLE IF NOT EXISTS human_reviews (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id           TEXT NOT NULL,
@@ -738,6 +749,17 @@ CREATE TABLE IF NOT EXISTS stock_feature_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_feature_snapshots_date
     ON stock_feature_snapshots(feature_date, feature_version, feature_scope);
+
+CREATE TABLE IF NOT EXISTS data_quality_audits (
+    id          TEXT PRIMARY KEY,
+    as_of_date  TEXT,
+    status      TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    checks      TEXT NOT NULL,
+    metrics     TEXT NOT NULL,
+    audited_at  DOUBLE PRECISION NOT NULL,
+    UNIQUE(as_of_date, fingerprint)
+);
 
 CREATE TABLE IF NOT EXISTS human_reviews (
     id                    BIGSERIAL PRIMARY KEY,
@@ -2114,8 +2136,164 @@ def data_archive_status() -> dict:
         latest_features = connection.execute(
             "SELECT MAX(feature_date) AS value FROM stock_feature_snapshots"
         ).fetchone()["value"]
+        audit_row = connection.execute(
+            "SELECT as_of_date,status,checks,metrics,audited_at FROM data_quality_audits "
+            "ORDER BY audited_at DESC LIMIT 1"
+        ).fetchone()
+    latest_audit = None
+    if audit_row:
+        latest_audit = {
+            "as_of_date": audit_row["as_of_date"], "status": audit_row["status"],
+            "checks": json.loads(audit_row["checks"]),
+            "metrics": json.loads(audit_row["metrics"]),
+            "audited_at": audit_row["audited_at"],
+        }
     return {"counts": counts, "latest_raw_date": latest_raw,
-            "latest_feature_date": latest_features, "immutable_revisions": True}
+            "latest_feature_date": latest_features, "immutable_revisions": True,
+            "latest_audit": latest_audit}
+
+
+def run_data_archive_audit(*, expected_date: Optional[str] = None,
+                           persist: bool = False) -> dict:
+    """Run bounded SQL integrity and coverage checks over the durable archive."""
+    expected = str(expected_date)[:10] if expected_date else None
+
+    def check(name: str, status: str, value: Any, message: str) -> dict:
+        return {"name": name, "status": status, "value": value, "message": message}
+
+    with _conn() as connection:
+        def count(query: str) -> int:
+            return int(connection.execute(query).fetchone()["count"])
+
+        securities = count("SELECT COUNT(*) AS count FROM securities WHERE active_flag=1")
+        missing_isin = count(
+            "SELECT COUNT(*) AS count FROM securities WHERE active_flag=1 "
+            "AND (isin IS NULL OR isin='')"
+        )
+        duplicate_symbols = count(
+            "SELECT COUNT(*) AS count FROM (SELECT nse_symbol FROM securities "
+            "WHERE active_flag=1 GROUP BY nse_symbol HAVING COUNT(*)>1) duplicates"
+        )
+        latest_raw = connection.execute(
+            "SELECT MAX(trading_date) AS value FROM market_prices_raw"
+        ).fetchone()["value"]
+        latest_features = connection.execute(
+            "SELECT MAX(feature_date) AS value FROM stock_feature_snapshots"
+        ).fetchone()["value"]
+        raw_latest = count(
+            f"SELECT COUNT(DISTINCT security_id) AS count FROM market_prices_raw "
+            f"WHERE trading_date='{latest_raw}'"
+        ) if latest_raw else 0
+        feature_universe = count(
+            f"SELECT COUNT(DISTINCT security_id) AS count FROM stock_feature_snapshots "
+            f"WHERE feature_date='{latest_features}' AND feature_scope='universe'"
+        ) if latest_features else 0
+        feature_full = count(
+            f"SELECT COUNT(DISTINCT security_id) AS count FROM stock_feature_snapshots "
+            f"WHERE feature_date='{latest_features}' AND feature_scope='full'"
+        ) if latest_features else 0
+        raw_invalid = count(
+            "SELECT COUNT(*) AS count FROM market_prices_raw WHERE "
+            "open_price<=0 OR high_price<=0 OR low_price<=0 OR close_price<=0 OR "
+            "high_price<low_price OR high_price<open_price OR high_price<close_price OR "
+            "low_price>open_price OR low_price>close_price"
+        )
+        adjusted_invalid = count(
+            "SELECT COUNT(*) AS count FROM market_prices_adjusted WHERE "
+            "open_price<=0 OR high_price<=0 OR low_price<=0 OR adjusted_close<=0 OR "
+            "high_price<low_price OR high_price<open_price OR high_price<adjusted_close OR "
+            "low_price>open_price OR low_price>adjusted_close"
+        )
+        zero_volume_latest = count(
+            f"SELECT COUNT(*) AS count FROM market_prices_raw WHERE trading_date='{latest_raw}' "
+            "AND (volume IS NULL OR volume<=0)"
+        ) if latest_raw else 0
+        adjusted_rows = count("SELECT COUNT(*) AS count FROM market_prices_adjusted")
+        reports = count("SELECT COUNT(*) AS count FROM financial_reports")
+        reports_without_filing_date = count(
+            "SELECT COUNT(*) AS count FROM financial_reports WHERE filing_date IS NULL"
+        )
+        reports_without_source_document = count(
+            "SELECT COUNT(*) AS count FROM financial_reports WHERE source_document IS NULL"
+        )
+        events = count("SELECT COUNT(*) AS count FROM company_events")
+        events_without_source = count(
+            "SELECT COUNT(*) AS count FROM company_events WHERE source IS NULL OR source=''"
+        )
+        orphan_rows = sum(count(query) for query in (
+            "SELECT COUNT(*) AS count FROM market_prices_raw p LEFT JOIN securities s "
+            "ON s.security_id=p.security_id WHERE s.security_id IS NULL",
+            "SELECT COUNT(*) AS count FROM market_prices_adjusted p LEFT JOIN securities s "
+            "ON s.security_id=p.security_id WHERE s.security_id IS NULL",
+            "SELECT COUNT(*) AS count FROM stock_feature_snapshots f LEFT JOIN securities s "
+            "ON s.security_id=f.security_id WHERE s.security_id IS NULL",
+            "SELECT COUNT(*) AS count FROM financial_reports f LEFT JOIN securities s "
+            "ON s.security_id=f.security_id WHERE s.security_id IS NULL",
+        ))
+
+    raw_coverage = round(raw_latest * 100 / securities, 2) if securities else 0.0
+    feature_coverage = round(feature_universe * 100 / securities, 2) if securities else 0.0
+    checks = [
+        check("security_master", "pass" if securities else "fail", securities,
+              f"{securities} active canonical securities"),
+        check("security_identifiers", "pass" if not missing_isin else "warn", missing_isin,
+              f"{missing_isin} active securities lack ISIN identity"),
+        check("duplicate_symbols", "pass" if not duplicate_symbols else "fail", duplicate_symbols,
+              f"{duplicate_symbols} active NSE symbols map to multiple canonical records"),
+        check("raw_session_date", "pass" if latest_raw and (not expected or latest_raw == expected) else "fail",
+              latest_raw, f"latest official raw session is {latest_raw or 'missing'}"),
+        check("raw_coverage", "pass" if raw_coverage >= 95 else "fail", raw_coverage,
+              f"official raw coverage is {raw_coverage}% of the active universe"),
+        check("raw_ohlc_integrity", "pass" if not raw_invalid else "fail", raw_invalid,
+              f"{raw_invalid} raw rows have non-positive or inconsistent OHLC"),
+        check("raw_volume", "pass" if zero_volume_latest <= max(1, int(raw_latest * .01)) else "warn",
+              zero_volume_latest, f"{zero_volume_latest} latest-session rows have missing/zero volume"),
+        check("adjusted_history", "pass" if adjusted_rows else "fail", adjusted_rows,
+              f"{adjusted_rows} adjusted price revisions are archived"),
+        check("adjusted_ohlc_integrity", "pass" if not adjusted_invalid else "fail", adjusted_invalid,
+              f"{adjusted_invalid} adjusted rows have non-positive or inconsistent OHLC"),
+        check("feature_coverage", "pass" if feature_coverage >= 95 else "fail", feature_coverage,
+              f"universe feature coverage is {feature_coverage}%"),
+        check("full_features", "pass" if feature_full else "warn", feature_full,
+              f"{feature_full} stocks have full feature snapshots on the latest feature date"),
+        check("archive_references", "pass" if not orphan_rows else "fail", orphan_rows,
+              f"{orphan_rows} archived records lack a security-master parent"),
+        check("financial_filing_dates", "pass" if not reports_without_filing_date else "warn",
+              reports_without_filing_date,
+              f"{reports_without_filing_date}/{reports} financial records lack a provider filing date"),
+        check("financial_documents", "pass" if not reports_without_source_document else "warn",
+              reports_without_source_document,
+              f"{reports_without_source_document}/{reports} financial records lack a source document"),
+        check("event_sources", "pass" if not events_without_source else "warn", events_without_source,
+              f"{events_without_source}/{events} events lack a named source"),
+    ]
+    failures = sum(item["status"] == "fail" for item in checks)
+    warnings = sum(item["status"] == "warn" for item in checks)
+    status = "failed" if failures else "attention" if warnings else "healthy"
+    metrics = {
+        "active_securities": securities, "latest_raw_date": latest_raw,
+        "latest_feature_date": latest_features, "raw_coverage_pct": raw_coverage,
+        "feature_coverage_pct": feature_coverage, "full_feature_count": feature_full,
+        "financial_report_count": reports, "event_count": events,
+        "failures": failures, "warnings": warnings,
+    }
+    result = {"status": status, "as_of_date": expected or latest_raw,
+              "checks": checks, "metrics": metrics}
+    if persist:
+        checks_json, _checks_hash = _stable_payload(checks)
+        metrics_json, fingerprint = _stable_payload(metrics)
+        audited_at = time.time()
+        audit_id = hashlib.sha256(
+            f"{result['as_of_date']}|{fingerprint}".encode()
+        ).hexdigest()
+        with _conn() as connection:
+            connection.execute(_sql(
+                "INSERT INTO data_quality_audits(id,as_of_date,status,fingerprint,checks,metrics,audited_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING"
+            ), (audit_id, result["as_of_date"], status, fingerprint,
+                checks_json, metrics_json, audited_at))
+        result["audited_at"] = audited_at
+    return result
 
 
 def _row_to_screen(r, with_tickers: bool = True) -> dict:

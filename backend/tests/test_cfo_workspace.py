@@ -694,6 +694,11 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertTrue(response.json()["immutable_revisions"])
         self.assertIn("market_prices_raw", response.json()["counts"])
 
+        audit = self.client.get("/api/data-archive/audit")
+        self.assertEqual(audit.status_code, 200)
+        self.assertIn(audit.json()["status"], {"healthy", "attention", "failed"})
+        self.assertIn("raw_coverage_pct", audit.json()["metrics"])
+
     def test_any_eligible_nse_stock_can_be_analysed_on_demand(self):
         history = candles()
         fundamentals = {

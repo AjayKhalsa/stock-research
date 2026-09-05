@@ -58,6 +58,13 @@ filing date, and source document when available. Missing filing dates remain
 missing; point-in-time consumers can safely fall back to the observation time
 instead of assuming the data was known earlier.
 
+Each completed scan also persists a bounded archive-quality audit. It checks
+canonical identifiers, duplicate symbols, official-session and universe
+coverage, OHLC/volume integrity, orphan records, feature coverage, and
+financial/event provenance. Failures and provenance warnings are shown in the
+System page and exposed at `GET /api/data-archive/audit`; audit reads never
+modify the archive.
+
 ## Bull AI evidence
 
 The strongest morning candidates can include a bounded Bull AI research layer:

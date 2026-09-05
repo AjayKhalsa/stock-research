@@ -383,6 +383,10 @@ async def run_daily_pipeline(job_id: str) -> None:
                 feature_date=feature_date, feature_version=cfo_engine.MODEL_VERSION,
                 feature_scope="full", isin_by_symbol=isin_by_symbol,
             )
+            db.update_job_run(job_id, stage="data_quality_audit", progress=0, total=0)
+            archive_audit = await asyncio.to_thread(
+                db.run_data_archive_audit, expected_date=feature_date, persist=True,
+            )
 
             # Review only the highest-consequence calls to stay inside free API
             # quotas. The full stock Research view can run the committee for
@@ -465,6 +469,10 @@ async def run_daily_pipeline(job_id: str) -> None:
             missing_fund = sum(c["data_completeness"] != "full" for c in candidates)
             if missing_fund:
                 data_exceptions.append(f"{missing_fund} ranked candidates have partial or missing financial evidence")
+            data_exceptions.extend(
+                item["message"] for item in archive_audit["checks"]
+                if item["status"] != "pass"
+            )
             summary = {
                 "published_at": now.isoformat(), "snapshot_time_ist": now.strftime("%d %b %Y, %H:%M IST"),
                 "market_regime": market_regime, "universe": {
@@ -482,6 +490,7 @@ async def run_daily_pipeline(job_id: str) -> None:
                     "full_features": full_archive_count,
                     "financials_and_events": financial_archive,
                     "immutable_revisions": True,
+                    "quality_audit": archive_audit,
                 },
                 "portfolio": {"open_positions": len(active_trades), "heat_pct": round(estimated_heat, 2),
                               "heat_method": "allocated_risk_estimate",

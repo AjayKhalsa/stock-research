@@ -60,7 +60,12 @@ const brief = {
   data_archive_status: { immutable_revisions: true, latest_raw_date: '2026-08-28',
     latest_feature_date: '2026-08-28', counts: { securities: 2200,
       market_prices_raw: 2200, market_prices_adjusted: 78000,
-      financial_reports: 900, company_events: 40, stock_feature_snapshots: 2350 } },
+      financial_reports: 900, company_events: 40, stock_feature_snapshots: 2350 },
+    latest_audit: { status: 'attention', as_of_date: '2026-08-28',
+      metrics: { failures: 0, warnings: 2, raw_coverage_pct: 100,
+        feature_coverage_pct: 100 },
+      checks: [{ name: 'financial_filing_dates', status: 'warn',
+        message: '20/900 financial records lack a provider filing date' }] } },
   sectors: [{ sector: 'IT', rank: 1, score: 75, trend: 'Leading', breadth_pct: 72,
     relative_strength: 70, volume_participation: 64, actionable_count: 1, eligible_count: 10,
     top_candidates: [{ symbol: 'TCS', company: 'Tata Consultancy', action: 'WAIT_FOR_ENTRY', expected_r: 1.1 }] }],
@@ -212,6 +217,8 @@ test('shows the automatic historical truth ledger in System', async () => {
   expect(screen.getByText(/False positives and false negatives/i)).toBeInTheDocument();
   expect(screen.getByText(/Point-in-time data foundation/i)).toBeInTheDocument();
   expect(screen.getByText('78000')).toBeInTheDocument();
+  expect(screen.getByText(/Automated archive audit/i)).toBeInTheDocument();
+  expect(screen.getByText(/0 failures · 2 warnings/i)).toBeInTheDocument();
   expect(screen.getByText(/Median trade/i)).toBeInTheDocument();
   expect(screen.getByText(/Target hit/i)).toBeInTheDocument();
   expect(screen.getByText(/Market-cap results/i)).toBeInTheDocument();

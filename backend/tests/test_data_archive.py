@@ -61,6 +61,11 @@ class ImmutableArchiveTests(unittest.TestCase):
         db.archive_feature_snapshots([feature], **feature_kwargs)
         db.archive_feature_snapshots([feature], **feature_kwargs)
         db.archive_feature_snapshots([{**feature, "score": 71}], **feature_kwargs)
+        db.archive_feature_snapshots(
+            [feature], feature_date="2026-09-04", feature_version="preliminary-v1",
+            feature_scope="universe", observed_at=400,
+            isin_by_symbol={self.SYMBOL: self.ISIN},
+        )
 
         financial = [{
             "symbol": self.SYMBOL, "isin": self.ISIN, "observed_at": 500,
@@ -78,16 +83,20 @@ class ImmutableArchiveTests(unittest.TestCase):
         db.archive_financial_payloads(financial)
         db.archive_financial_payloads(financial)
 
+        audit = db.run_data_archive_audit(expected_date="2026-09-04", persist=True)
         after = db.data_archive_status()
         counts = after["counts"]
         self.assertEqual(counts["securities"] - before["securities"], 1)
         self.assertEqual(counts["market_prices_raw"] - before["market_prices_raw"], 2)
         self.assertEqual(counts["market_prices_adjusted"] - before["market_prices_adjusted"], 2)
         self.assertEqual(counts["corporate_actions"] - before["corporate_actions"], 1)
-        self.assertEqual(counts["stock_feature_snapshots"] - before["stock_feature_snapshots"], 2)
+        self.assertEqual(counts["stock_feature_snapshots"] - before["stock_feature_snapshots"], 3)
         self.assertEqual(counts["financial_reports"] - before["financial_reports"], 3)
         self.assertEqual(counts["company_events"] - before["company_events"], 2)
         self.assertTrue(after["immutable_revisions"])
+        self.assertEqual(audit["metrics"]["failures"], 0)
+        self.assertEqual(audit["status"], "attention")
+        self.assertEqual(after["latest_audit"]["as_of_date"], "2026-09-04")
 
 
 if __name__ == "__main__":
