@@ -135,7 +135,8 @@ def morning_brief():
         "status": "setup_required", "snapshot_id": None, "published_at": None,
         "snapshot_time_ist": "Waiting for the first validated daily run",
         "market_regime": {"state": "unknown", "posture": "No valid snapshot yet"},
-        "universe": {"official_equities": 0, "eligible": 0, "deeply_enriched": 0, "published": 0},
+        "universe": {"official_equities": 0, "eligible": 0, "ranked": 0,
+                     "deeply_enriched": 0, "published": 0},
         "data_health": {"status": "attention", "exceptions": ["First CFO snapshot has not been published"]},
         "portfolio": {"open_positions": 0, "heat_pct": 0, "max_heat_pct": db.portfolio_settings()["max_portfolio_heat_pct"], "actions": []},
         "changes": {"new": [], "upgraded": [], "downgraded": []},
@@ -156,6 +157,25 @@ def morning_brief():
     }
 
 
+@router.get("/api/rankings")
+def stock_rankings(limit: int = 100, offset: int = 0, query: str = "",
+                   sector: str = "", analysis_depth: str = ""):
+    _feature_enabled()
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+    if offset < 0:
+        raise HTTPException(status_code=422, detail="offset must be zero or greater")
+    if analysis_depth not in {"", "full", "screen"}:
+        raise HTTPException(
+            status_code=422,
+            detail="analysis_depth must be full, screen, or omitted",
+        )
+    return db.stock_rankings_page(
+        limit=limit, offset=offset, query=query, sector=sector,
+        analysis_depth=analysis_depth,
+    )
+
+
 @router.get("/api/sectors/{sector}")
 def sector_detail(sector: str):
     _feature_enabled()
@@ -174,12 +194,15 @@ async def candidate_detail(symbol: str):
     symbol = symbol.upper().strip()
     latest_snapshot = db.latest_analysis_snapshot() or {}
     snapshot_id = latest_snapshot.get("snapshot_id")
+    ranking = db.stock_ranking(symbol, snapshot_id)
     item = db.candidate_analysis(symbol, snapshot_id)
+    saved_analysis = item is not None
     if not item:
         resolved = await symbol_resolver.resolve_one(symbol)
         if not resolved.get("symbol"):
             raise HTTPException(status_code=404, detail="NSE stock was not found")
         symbol = resolved["symbol"]
+        ranking = ranking or db.stock_ranking(symbol, snapshot_id)
         candles, nifty, fund_result, bhavcopy = await asyncio.gather(
             price_service.get_historical(f"NSE:{symbol}", days=520),
             price_service.get_index_historical("^NSEI", days=500),
@@ -210,22 +233,43 @@ async def candidate_detail(symbol: str):
         )
         item["global_rank"] = None
         item["sector_rank"] = None
-        item["universe_membership"] = {
-            "ranked": False,
-            "label": "On-demand analysis — not in today's Top 100",
-        }
+        if ranking:
+            item["screen_rank"] = ranking.get("screen_rank")
+            item["decision_rank"] = ranking.get("decision_rank")
+            item["universe_membership"] = {
+                "ranked": True,
+                "analysis_depth_at_snapshot": ranking.get("analysis_depth"),
+                "label": (
+                    f"Screen rank #{ranking.get('screen_rank')} in today's qualified universe; "
+                    "full dossier calculated on demand"
+                ),
+            }
+        else:
+            item["universe_membership"] = {
+                "ranked": False,
+                "label": "On-demand analysis — outside today's qualified ranking",
+            }
         item["evidence"]["model"]["validation_status"] = db.get_setting(
             "cfo_historical_validation_status", "pending",
         )
         if earnings_sessions is not None:
             item["results_date"] = fundamentals.get("earnings_date")
     else:
+        screen_rank = (ranking or {}).get("screen_rank") or item.get("screen_rank")
+        decision_rank = (ranking or {}).get("decision_rank") or item.get("decision_rank")
+        item["screen_rank"] = screen_rank
+        item["decision_rank"] = decision_rank
         item["universe_membership"] = {
             "ranked": True,
-            "label": f"Ranked #{item.get('global_rank')} in today's Top 100",
+            "analysis_depth_at_snapshot": "full",
+            "label": (
+                f"Screen rank #{screen_rank} in the qualified universe"
+                + (f" · decision rank #{decision_rank} among fully analyzed stocks"
+                   if decision_rank else "")
+            ),
         }
         candles = await price_service.get_historical(f"NSE:{symbol}", days=520)
-    item["snapshot_id"] = snapshot_id if item["universe_membership"]["ranked"] else None
+    item["snapshot_id"] = snapshot_id if saved_analysis else None
     item["human_reviews"] = db.human_reviews(symbol, item["snapshot_id"]) if item["snapshot_id"] else []
     item["daily_history"] = candles[-252:]
     item["external_research"] = db.candidate_enrichments(symbol)

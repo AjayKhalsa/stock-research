@@ -8,6 +8,7 @@ jest.mock('../api', () => ({
   getPaperTradeSnapshot: jest.fn(),
   getPortfolioSettings: jest.fn(),
   getWatchlist: jest.fn(),
+  getStockRankings: jest.fn(),
   getSectorSnapshot: jest.fn(),
   getCandidateAnalysis: jest.fn(),
   updatePortfolioSettings: jest.fn(),
@@ -89,6 +90,22 @@ beforeEach(() => {
   api.getPortfolioSettings.mockResolvedValue({ risk_per_trade_pct: .75,
     max_portfolio_heat_pct: 6, max_open_positions: 8 });
   api.getWatchlist.mockResolvedValue([]);
+  api.getStockRankings.mockResolvedValue({
+    snapshot_id: 'snapshot-test-1', trading_date: '2026-08-28',
+    model_version: 'swing-v1.5.1', total: 700, filtered_total: 700,
+    offset: 0, limit: 100, coverage: 'complete_qualified_universe',
+    sectors: ['IT', 'Industrials'],
+    rows: [
+      { symbol: 'TCS', company: 'Tata Consultancy', sector: 'IT', screen_rank: 1,
+        screen_score: 81.4, decision_rank: 2, decision_score: 70.2,
+        analysis_depth: 'full', evidence_state: 'full', action: 'WAIT_FOR_ENTRY',
+        ranking_note: 'Full technical, financial, event, and trade-geometry analysis' },
+      { symbol: 'RELIANCE', company: 'Reliance Industries', sector: 'Unclassified',
+        screen_rank: 2, screen_score: 80.1, decision_rank: null,
+        analysis_depth: 'screen', evidence_state: 'screen_only', action: 'RESEARCH_ONLY',
+        ranking_note: 'Qualified on price history and liquidity; open the dossier to run fresh financial and event analysis' },
+    ],
+  });
   api.createPaperTrade.mockResolvedValue({ id: 1, status: 'ARMED' });
   api.createHumanReview.mockResolvedValue({ id: 7, assessment: 'TOO_OPTIMISTIC',
     notes: 'Supply is heavier', model_version: 'cfo-v1' });
@@ -234,24 +251,19 @@ test('shows the automatic historical truth ledger in System', async () => {
   expect(screen.getByText(/large proxy/i)).toBeInTheDocument();
 });
 
-test('searches the daily ranking and keeps rejected stocks auditable', async () => {
-  api.getMorningBrief.mockResolvedValueOnce({ ...brief, candidates: [
-    ...brief.candidates,
-    { symbol: 'RISKY', company: 'Risky Industries', sector: 'Industrials',
-      global_rank: 99, sector_rank: 8, action: 'AVOID', score: 64,
-      setup_type: 'breakout', hard_blocks: ['Required safety check failed'],
-      components: { business_quality: 50 }, trade_plan: {} },
-  ] });
+test('loads and searches the complete qualified-universe ranking', async () => {
   render(<CfoWorkspace />);
   await screen.findByText(/What looks interesting today/i);
-  fireEvent.click(screen.getByRole('button', { name: /Candidates Top 100/i }));
-  expect(await screen.findByText(/Rejected and data-held stocks/i)).toBeInTheDocument();
-  expect(screen.getByText('RISKY')).toBeInTheDocument();
-  fireEvent.change(screen.getByPlaceholderText(/Symbol, company, or sector/i), {
-    target: { value: 'Tata' },
+  fireEvent.click(screen.getByRole('button', { name: /Rankings All qualified/i }));
+  expect(await screen.findByText(/Every qualified NSE stock/i)).toBeInTheDocument();
+  expect(await screen.findByText('RELIANCE')).toBeInTheDocument();
+  expect(screen.getByText(/Screen only/i)).toBeInTheDocument();
+  fireEvent.change(screen.getByPlaceholderText(/Symbol or company/i), {
+    target: { value: 'Reliance' },
   });
-  expect(screen.queryByText('RISKY')).not.toBeInTheDocument();
-  expect(screen.getByText('TCS')).toBeInTheDocument();
+  await waitFor(() => expect(api.getStockRankings).toHaveBeenLastCalledWith(
+    expect.objectContaining({ query: 'Reliance', limit: 100, offset: 0 }),
+  ));
 });
 
 test('shows a daily chart section without leaving the dossier', async () => {
@@ -291,7 +303,7 @@ test('search opens any NSE stock in the modern analysis view', async () => {
   api.getCandidateAnalysis.mockResolvedValueOnce({
     ...brief.candidates[0], symbol: 'CAMS', company: 'Computer Age Management Services',
     global_rank: null, sector_rank: null,
-    universe_membership: { ranked: false, label: "On-demand analysis — not in today's Top 100" },
+    universe_membership: { ranked: false, label: "On-demand analysis — outside today's qualified ranking" },
     cfo: { score: 76, gate: 'pass', metrics: {} }, daily_history: [],
     evidence: { price: { status: 'matched' }, fundamentals: {}, model: {}, ai_committee: {} },
     trust: { price: 'pass', financials: 'pass', cfo_gate: 'pass', results: 'caution', historical_validation: 'early', external_evidence: 'not_covered' },

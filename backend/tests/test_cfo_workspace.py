@@ -712,6 +712,65 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200)
         self.assertEqual(history.json()[0]["snapshot_id"], snapshot_id)
 
+    def test_rankings_publish_every_qualified_stock_with_honest_depth(self):
+        candidate = {
+            "symbol": "FULLTEST", "company": "Full Test Ltd", "sector": "IT",
+            "global_rank": 1, "screen_rank": 2, "decision_rank": 1,
+            "action": "WATCH", "score": 74, "rank_value": 68,
+            "confidence": 82, "data_completeness": "full", "trade_plan": {},
+        }
+        rankings = [
+            {"symbol": "SCREENTOP", "company": "Screen Top Ltd",
+             "sector": "Unclassified", "screen_rank": 1, "screen_score": 88,
+             "decision_rank": None, "decision_score": None,
+             "analysis_depth": "screen", "evidence_state": "screen_only",
+             "action": "RESEARCH_ONLY", "setup_type": None,
+             "ranking_note": "Qualified technical screen"},
+            {"symbol": "FULLTEST", "company": "Full Test Ltd", "sector": "IT",
+             "screen_rank": 2, "screen_score": 84, "decision_rank": 1,
+             "decision_score": 68, "analysis_depth": "full",
+             "evidence_state": "full", "action": "WATCH",
+             "setup_type": "pullback", "ranking_note": "Full analysis"},
+            {"symbol": "BANKTEST", "company": "Bank Test Ltd", "sector": "Financials",
+             "screen_rank": 3, "screen_score": 81, "decision_rank": None,
+             "decision_score": None, "analysis_depth": "screen",
+             "evidence_state": "screen_only", "action": "RESEARCH_ONLY",
+             "setup_type": None, "ranking_note": "Qualified technical screen"},
+        ]
+        snapshot_id = db.publish_analysis_snapshot(
+            {"candidates": [candidate], "sectors": []}, [candidate], [],
+            rankings=rankings, model_version="rankings-test-v1",
+            trading_date="2026-09-07", schema_version="rankings-v1",
+        )
+        first_page = self.client.get("/api/rankings", params={"limit": 2})
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(first_page.json()["snapshot_id"], snapshot_id)
+        self.assertEqual(first_page.json()["coverage"], "complete_qualified_universe")
+        self.assertEqual(first_page.json()["total"], 3)
+        self.assertEqual(first_page.json()["filtered_total"], 3)
+        self.assertEqual([row["screen_rank"] for row in first_page.json()["rows"]], [1, 2])
+        searched = self.client.get("/api/rankings", params={"query": "bank"})
+        self.assertEqual(searched.json()["filtered_total"], 1)
+        self.assertEqual(searched.json()["rows"][0]["symbol"], "BANKTEST")
+        screen_only = self.client.get(
+            "/api/rankings", params={"analysis_depth": "screen"},
+        )
+        self.assertEqual(screen_only.json()["filtered_total"], 2)
+        self.assertEqual(db.stock_ranking("FULLTEST", snapshot_id)["decision_rank"], 1)
+
+        same_snapshot = db.publish_analysis_snapshot(
+            {"candidates": [candidate], "sectors": []}, [candidate], [],
+            rankings=rankings, model_version="rankings-test-v1",
+            trading_date="2026-09-07", schema_version="rankings-v1",
+        )
+        legacy_format_snapshot = db.publish_analysis_snapshot(
+            {"candidates": [candidate], "sectors": []}, [candidate], [],
+            model_version="rankings-test-v1", trading_date="2026-09-07",
+            schema_version="legacy-v1",
+        )
+        self.assertEqual(same_snapshot, snapshot_id)
+        self.assertNotEqual(legacy_format_snapshot, snapshot_id)
+
     def test_actionable_snapshot_creates_and_resolves_automatic_outcome(self):
         candidate = {
             "symbol": "AUTOTEST", "company": "Automatic Test", "sector": "IT",

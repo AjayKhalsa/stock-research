@@ -11,7 +11,7 @@ StockLens can reliably rank the complete qualified NSE universe and separately p
 - Numerical indicators, scores, gates and trade geometry remain deterministic. AI may structure sourced qualitative evidence, explain and downgrade, but never invent calculations or upgrade a gated trade.
 - This effort explicitly carries confirmed decisions into implementation, verification and deployment because the user asked that the existing plan be pursued phase by phase to completion. Wayfinding still resolves only one non-research decision ticket per session.
 - Use the `wayfinder` skill for this effort. Install no additional skills for it.
-- The current worktree contains an uncommitted API 2.19 financial-normalization/provenance slice; review it as current state, not as an already-approved release.
+- Release `f968533` (API 2.20) contains the reviewed financial-provenance and durable daily-job ownership baseline. The next release adds a complete qualified-universe ranking with explicit screen-only versus full-analysis depth.
 
 ## Decisions so far
 

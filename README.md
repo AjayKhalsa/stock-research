@@ -2,7 +2,7 @@
 
 Personal, long-only NSE swing-research workspace for a 4–8 week horizon. The
 default experience is a precomputed 07:00 IST morning brief: market regime,
-sector leadership, a controlled Top-100 candidate bench, paper-portfolio risk,
+sector leadership, a complete qualified-universe ranking, a controlled deep-analysis bench, paper-portfolio risk,
 and decision dossiers. The original detailed research terminal remains under
 **Research**.
 
@@ -105,8 +105,12 @@ momentum, labels margin expansion/contraction, measures overhead supply, clear
 air, tradeability and move potential, and derives targets from chart structure
 before calculating reward/risk. Data completeness is shown separately for
 price, financial and event evidence and is never presented as win probability.
-The published decision surface is intentionally limited to five ready-now and
-ten near-trigger candidates; all other names remain searchable research.
+The Rankings page persists and paginates every stock that passes the price,
+history, and liquidity gates. Its market-wide screen rank is deterministic.
+The top/owned/watched bench also receives a separate decision rank after fresh
+fundamental, event, and trade-geometry analysis; screen-only rows are labelled
+as such and can be analyzed on demand. Today remains intentionally limited to
+zero-to-five ready or near-entry setups.
 Multi-horizon strength versus NIFTY, relative-volume participation, volatility
 contraction, market breadth and risk-on/risk-off context feed the same auditable
 snapshot. Severe risk-off conditions fail closed for new long entries.
@@ -138,7 +142,7 @@ model-accepted/human-rejected, model-rejected/human-accepted, and both-rejected
 cohorts after 35 bps costs. Human opinions remain measurement-only and are never
 used as training labels. A separate error audit lists false positives, observed
 false negatives, highest-ranked losers, and lowest-ranked winners; genuinely
-missed names outside the frozen Top 100 stay marked unavailable rather than
+missed names outside the frozen deep-analysis bench stay marked unavailable rather than
 being inferred from today's survivors.
 
 In parallel, every published `BUY_NOW` or `WAIT_FOR_ENTRY` candidate with valid
@@ -164,9 +168,10 @@ below 30 outcomes and becomes mature only at 100.
 V2 is explicitly evidence-gated. System compares the production algorithm,
 the not-yet-calibrated challenger, and structured human reviews side by side;
 the challenger remains locked until 100 resolved forward outcomes and can never
-promote itself. The Candidates page supports in-snapshot symbol/company/sector
-search and keeps safety-gated or data-held stocks in a separate rejected audit
-section instead of silently dropping them.
+promote itself. The Rankings page supports server-side symbol/company, sector,
+and evidence-depth filtering across the complete qualified universe. Safety-
+gated and data-held deep-analysis rows remain visible instead of being silently
+dropped.
 
 If a delayed daily job starts after the market opens, the scanner trims Yahoo's
 in-progress daily bar to the latest completed NSE bhavcopy session before any

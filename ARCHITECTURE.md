@@ -86,14 +86,15 @@ No paid data vendor is used anywhere — this is deliberately a zero-cost data s
 ### 3.0 CFO Morning Workspace
 
 The `cfo_workspace_v1` shell replaces the permanent three-column landing page
-with a compact rail: **Morning, Sectors, Candidates, Portfolio, Research,
+with a compact rail: **Morning, Sectors, Rankings, Portfolio, Research,
 System**. Mobile uses Morning/Sectors/Watchlist/Search/More bottom navigation.
 
 The pre-market daily pipeline loads NSE's official master, removes other series/ETF
 instruments, downloads adjusted history in bulk, applies the 252-session,
 ₹20, and ₹5-crore traded-value gates, reconciles Yahoo with NSE bhavcopy, and
 deep-enriches the strongest 150 plus the watchlist/paper portfolio. It stores a
-versioned Top-100 snapshot; a failed run never replaces the last valid one.
+versioned immutable snapshot with the complete qualified ranking and bounded
+deep-analysis bench; a failed run never replaces the last valid one.
 The universe pass uses Yahoo's compact chart JSON with six bounded concurrent
 requests rather than retaining pandas frames or spawning a second yfinance
 process. Only the current 75-symbol batch and a top-150 candle heap stay in
@@ -151,8 +152,12 @@ The same report publishes a shadow-test gate: production remains champion,
 V2 stays unconfigured below 100 resolved outcomes, and promotion always
 requires chronological calibration plus human review. The System UI shows
 production, challenger, and accumulated structured reviews side by side.
-The Candidates UI separates rejected/data-held rows while retaining them for
-audit and supports local symbol, company, and sector search over the snapshot.
+The Rankings UI is a server-paginated view of every stock that passed the daily
+price-history and liquidity gates. Each row has a stable full-universe
+`screen_rank`. The bounded top/owned/watched bench also receives a
+`decision_rank` after fundamental, event, and trade-geometry analysis, while
+all other rows are explicitly `screen` depth and open into an on-demand full
+dossier. This keeps complete ranking coverage separate from complete evidence.
 For counterfactual calibration, snapshot publication adds at most 20 WATCH and
 five rejected rows with valid trade geometry to the forward ledger as
 `observational`. They share the conservative lifecycle but are excluded from
@@ -305,6 +310,7 @@ All routes are prefixed `/api/`. The personal research reads remain open; daily-
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/morning-brief` | Latest valid immutable morning snapshot |
+| GET | `/api/rankings` | Paginated complete qualified-universe screen ranking with evidence-depth filters |
 | GET | `/api/sectors/{sector}` | Sector evidence and ranked constituents |
 | GET | `/api/candidates/{symbol}` | Saved decision dossier, trust controls and external evidence |
 | GET | `/api/recommendation-outcomes[/stats]` | Automatic forward-outcome ledger and scorecard |

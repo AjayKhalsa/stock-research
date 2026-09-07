@@ -205,6 +205,7 @@ CREATE TABLE IF NOT EXISTS analysis_snapshots (
     id            TEXT PRIMARY KEY,
     trading_date  TEXT NOT NULL,
     model_version TEXT NOT NULL,
+    schema_version TEXT NOT NULL DEFAULT 'legacy-v1',
     status        TEXT NOT NULL,
     payload       TEXT NOT NULL,
     created_at    REAL NOT NULL
@@ -228,6 +229,32 @@ CREATE TABLE IF NOT EXISTS candidate_analyses (
 CREATE INDEX IF NOT EXISTS idx_candidate_snapshot_rank
     ON candidate_analyses(snapshot_id, global_rank);
 
+-- Complete qualified-universe ranking.  Rows outside the bounded deep-
+-- analysis bench intentionally stay lightweight and are labelled screen-only;
+-- this keeps coverage honest without pretending every stock has fresh filing
+-- evidence.
+CREATE TABLE IF NOT EXISTS stock_rankings (
+    snapshot_id    TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    company        TEXT NOT NULL,
+    sector         TEXT NOT NULL,
+    screen_rank    INTEGER NOT NULL,
+    screen_score   REAL,
+    decision_rank  INTEGER,
+    decision_score REAL,
+    analysis_depth TEXT NOT NULL,
+    evidence_state TEXT NOT NULL,
+    action         TEXT NOT NULL,
+    setup_type     TEXT,
+    payload        TEXT NOT NULL,
+    created_at     REAL NOT NULL,
+    PRIMARY KEY(snapshot_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_rankings_snapshot_rank
+    ON stock_rankings(snapshot_id, screen_rank);
+CREATE INDEX IF NOT EXISTS idx_stock_rankings_snapshot_sector
+    ON stock_rankings(snapshot_id, sector, screen_rank);
+
 CREATE TABLE IF NOT EXISTS sector_snapshots (
     snapshot_id TEXT NOT NULL,
     sector      TEXT NOT NULL,
@@ -249,6 +276,7 @@ CREATE TABLE IF NOT EXISTS job_runs (
     finished_at REAL,
     target_session TEXT,
     model_version TEXT,
+    schema_version TEXT,
     attempt     INTEGER NOT NULL DEFAULT 1,
     lease_owner TEXT,
     heartbeat_at REAL
@@ -580,6 +608,7 @@ CREATE TABLE IF NOT EXISTS analysis_snapshots (
     id            TEXT PRIMARY KEY,
     trading_date  TEXT NOT NULL,
     model_version TEXT NOT NULL,
+    schema_version TEXT NOT NULL DEFAULT 'legacy-v1',
     status        TEXT NOT NULL,
     payload       TEXT NOT NULL,
     created_at    DOUBLE PRECISION NOT NULL
@@ -603,6 +632,28 @@ CREATE TABLE IF NOT EXISTS candidate_analyses (
 CREATE INDEX IF NOT EXISTS idx_candidate_snapshot_rank
     ON candidate_analyses(snapshot_id, global_rank);
 
+CREATE TABLE IF NOT EXISTS stock_rankings (
+    snapshot_id    TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    company        TEXT NOT NULL,
+    sector         TEXT NOT NULL,
+    screen_rank    INTEGER NOT NULL,
+    screen_score   DOUBLE PRECISION,
+    decision_rank  INTEGER,
+    decision_score DOUBLE PRECISION,
+    analysis_depth TEXT NOT NULL,
+    evidence_state TEXT NOT NULL,
+    action         TEXT NOT NULL,
+    setup_type     TEXT,
+    payload        TEXT NOT NULL,
+    created_at     DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY(snapshot_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_rankings_snapshot_rank
+    ON stock_rankings(snapshot_id, screen_rank);
+CREATE INDEX IF NOT EXISTS idx_stock_rankings_snapshot_sector
+    ON stock_rankings(snapshot_id, sector, screen_rank);
+
 CREATE TABLE IF NOT EXISTS sector_snapshots (
     snapshot_id TEXT NOT NULL,
     sector      TEXT NOT NULL,
@@ -624,6 +675,7 @@ CREATE TABLE IF NOT EXISTS job_runs (
     finished_at DOUBLE PRECISION,
     target_session TEXT,
     model_version TEXT,
+    schema_version TEXT,
     attempt     INTEGER NOT NULL DEFAULT 1,
     lease_owner TEXT,
     heartbeat_at DOUBLE PRECISION
@@ -977,6 +1029,7 @@ def _migrate_daily_job_control() -> None:
     job_columns = {
         "target_session": "TEXT",
         "model_version": "TEXT",
+        "schema_version": "TEXT",
         "attempt": "INTEGER NOT NULL DEFAULT 1",
         "lease_owner": "TEXT",
         "heartbeat_at": "DOUBLE PRECISION" if _PG else "REAL",
@@ -1004,6 +1057,29 @@ def _migrate_daily_job_control() -> None:
         )
 
 
+def _migrate_snapshot_schema_version() -> None:
+    """Keep publication-format changes separate from scoring-model changes."""
+    if _PG:
+        with _conn() as c:
+            with c.cursor() as cur:
+                cur.execute(
+                    "ALTER TABLE analysis_snapshots ADD COLUMN IF NOT EXISTS "
+                    "schema_version TEXT NOT NULL DEFAULT 'legacy-v1'"
+                )
+        return
+    with _conn() as c:
+        existing = {
+            row[1] for row in c.execute(
+                "PRAGMA table_info(analysis_snapshots)"
+            ).fetchall()
+        }
+        if "schema_version" not in existing:
+            c.execute(
+                "ALTER TABLE analysis_snapshots ADD COLUMN schema_version "
+                "TEXT NOT NULL DEFAULT 'legacy-v1'"
+            )
+
+
 def init() -> None:
     """Create schema (idempotent). SQLite path also migrates legacy JSON once."""
     if _PG:
@@ -1017,6 +1093,7 @@ def init() -> None:
         _migrate_saved_screens_columns()
         _migrate_unified_research_columns()
         _migrate_daily_job_control()
+        _migrate_snapshot_schema_version()
         _seed_candidate_enrichments()
         abandon_stale_job_runs()
         return
@@ -1030,6 +1107,7 @@ def init() -> None:
     _migrate_saved_screens_columns()
     _migrate_unified_research_columns()
     _migrate_daily_job_control()
+    _migrate_snapshot_schema_version()
     _migrate_legacy_json()
     _seed_candidate_enrichments()
     abandon_stale_job_runs()
@@ -1429,7 +1507,8 @@ def update_job_run(job_id: str, *, status: Optional[str] = None,
 
 
 def assign_job_run_target(job_id: str, *, target_session: str,
-                          model_version: str) -> dict:
+                          model_version: str,
+                          schema_version: str = "legacy-v1") -> dict:
     """Attach the official session, count attempts and detect prior publication."""
     target = str(target_session or "")[:10]
     if len(target) != 10:
@@ -1443,20 +1522,23 @@ def assign_job_run_target(job_id: str, *, target_session: str,
             raise ValueError("Unknown job run")
         previous = c.execute(_sql(
             "SELECT COALESCE(MAX(attempt),0) AS value FROM job_runs "
-            "WHERE job_type=? AND target_session=? AND model_version=? AND id<>?"
-        ), (row["job_type"], target, model_version, job_id)).fetchone()
+            "WHERE job_type=? AND target_session=? AND model_version=? "
+            "AND COALESCE(schema_version,'legacy-v1')=? AND id<>?"
+        ), (row["job_type"], target, model_version, schema_version, job_id)).fetchone()
         attempt = int(previous["value"] or 0) + 1
         c.execute(_sql(
-            "UPDATE job_runs SET target_session=?,model_version=?,attempt=?,heartbeat_at=? "
+            "UPDATE job_runs SET target_session=?,model_version=?,schema_version=?,"
+            "attempt=?,heartbeat_at=? "
             "WHERE id=? AND status='running'"
-        ), (target, model_version, attempt, current, job_id))
+        ), (target, model_version, schema_version, attempt, current, job_id))
         c.execute(_sql(
             "UPDATE job_leases SET heartbeat_at=?,expires_at=? WHERE job_id=?"
         ), (current, current + JOB_LEASE_SECONDS, job_id))
         snapshot = c.execute(_sql(
             "SELECT id FROM analysis_snapshots WHERE trading_date=? AND model_version=? "
+            "AND schema_version=? "
             "AND status='valid' ORDER BY created_at DESC LIMIT 1"
-        ), (target, model_version)).fetchone()
+        ), (target, model_version, schema_version)).fetchone()
     return {
         "job": get_job_run(job_id),
         "existing_snapshot_id": snapshot["id"] if snapshot else None,
@@ -1613,14 +1695,34 @@ def _recommendation_outcome_values(snapshot_id: str, item: dict, *,
 def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                               sectors: list[dict], *, model_version: str,
                               trading_date: str,
-                              job_id: Optional[str] = None) -> str:
-    """Atomically publish one immutable snapshot per session/model pair."""
+                              job_id: Optional[str] = None,
+                              rankings: Optional[list[dict]] = None,
+                              schema_version: str = "legacy-v1") -> str:
+    """Atomically publish one immutable snapshot per session/model/schema."""
     snapshot_id = uuid.uuid4().hex
     now = time.time()
     safe_summary = dict(summary)
     safe_summary["snapshot_id"] = snapshot_id
     safe_summary["model_version"] = model_version
+    safe_summary["schema_version"] = schema_version
     safe_summary["trading_date"] = trading_date
+    if schema_version.startswith("rankings-"):
+        if rankings is None:
+            raise ValueError("A rankings snapshot requires full qualified-universe rows")
+        symbols = [str(item.get("symbol") or "").upper() for item in rankings]
+        screen_ranks = [item.get("screen_rank") for item in rankings]
+        if not symbols or any(not symbol for symbol in symbols):
+            raise ValueError("Ranking rows require non-empty symbols")
+        if len(set(symbols)) != len(symbols):
+            raise ValueError("Ranking rows must contain unique symbols")
+        if (any(not isinstance(rank, int) for rank in screen_ranks)
+                or sorted(screen_ranks) != list(range(1, len(rankings) + 1))):
+            raise ValueError("Ranking rows must have contiguous screen ranks")
+        expected = ((safe_summary.get("universe") or {}).get("eligible"))
+        if expected is not None and int(expected) != len(rankings):
+            raise ValueError(
+                "Qualified-universe count does not match persisted ranking rows"
+            )
     market_regime = ((summary.get("market_regime") or {}).get("state")
                      if isinstance(summary.get("market_regime"), dict) else None)
     observational_remaining = {"WATCH": 20, "AVOID": 5}
@@ -1646,8 +1748,9 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                 raise RuntimeError("Daily job lost its durable publication lease")
         existing_snapshot = c.execute(_sql(
             "SELECT id FROM analysis_snapshots WHERE trading_date=? AND model_version=? "
+            "AND schema_version=? "
             "AND status='valid' ORDER BY created_at DESC LIMIT 1"
-        ), (trading_date, model_version)).fetchone()
+        ), (trading_date, model_version, schema_version)).fetchone()
         if existing_snapshot:
             return existing_snapshot["id"]
         existing_observations = c.execute(_sql(
@@ -1662,11 +1765,44 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                     0, observational_remaining[action] - int(row["count"] or 0)
                 )
         c.execute(
-            _sql("INSERT INTO analysis_snapshots(id, trading_date, model_version, status, "
-                 "payload, created_at) VALUES (?,?,?,?,?,?)"),
-            (snapshot_id, trading_date, model_version, "valid",
+            _sql("INSERT INTO analysis_snapshots(id, trading_date, model_version, "
+                 "schema_version, status, payload, created_at) VALUES (?,?,?,?,?,?,?)"),
+            (snapshot_id, trading_date, model_version, schema_version, "valid",
              json.dumps(_json_nan_safe(safe_summary)), now),
         )
+        ranking_rows = rankings if rankings is not None else [
+            {
+                **item,
+                "symbol": item.get("symbol"),
+                "company": item.get("company") or item.get("symbol"),
+                "sector": item.get("sector") or "Unclassified",
+                "screen_rank": item.get("screen_rank") or item.get("global_rank") or index,
+                "screen_score": item.get("screen_score") or item.get("score"),
+                "decision_rank": item.get("decision_rank") or item.get("global_rank"),
+                "decision_score": item.get("rank_value") or item.get("score"),
+                "analysis_depth": "full",
+                "evidence_state": item.get("data_completeness") or "unknown",
+                "action": item.get("action") or "WATCH",
+                "setup_type": item.get("setup_type"),
+            }
+            for index, item in enumerate(candidates, 1)
+        ]
+        for ranking_index, item in enumerate(ranking_rows, 1):
+            c.execute(
+                _sql("INSERT INTO stock_rankings(snapshot_id, symbol, company, sector, "
+                     "screen_rank, screen_score, decision_rank, decision_score, "
+                     "analysis_depth, evidence_state, action, setup_type, payload, created_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),
+                (snapshot_id, item.get("symbol"),
+                 item.get("company") or item.get("name") or item.get("symbol"),
+                 item.get("sector") or "Unclassified",
+                 item.get("screen_rank") or item.get("global_rank") or ranking_index,
+                 item.get("screen_score"), item.get("decision_rank"),
+                 item.get("decision_score"), item.get("analysis_depth") or "screen",
+                 item.get("evidence_state") or "unknown",
+                 item.get("action") or "RESEARCH_ONLY", item.get("setup_type"),
+                 json.dumps(_json_nan_safe(item)), now),
+            )
         for item in candidates:
             c.execute(
                 _sql("INSERT INTO candidate_analyses(snapshot_id, symbol, sector, "
@@ -1725,7 +1861,9 @@ def latest_analysis_snapshot() -> Optional[dict]:
         return None
     out = _loads_payload(row["payload"], {})
     out.update({"snapshot_id": row["id"], "trading_date": row["trading_date"],
-                "model_version": row["model_version"], "created_at": row["created_at"]})
+                "model_version": row["model_version"],
+                "schema_version": row["schema_version"],
+                "created_at": row["created_at"]})
     return out
 
 
@@ -1742,6 +1880,134 @@ def snapshot_candidates(snapshot_id: Optional[str] = None, limit: int = 100) -> 
             (snapshot_id, max(1, min(int(limit), 500))),
         ).fetchall()
     return [_loads_payload(r["payload"], {}) for r in rows]
+
+
+def stock_rankings_page(snapshot_id: Optional[str] = None, *, limit: int = 100,
+                        offset: int = 0, query: str = "", sector: str = "",
+                        analysis_depth: str = "") -> dict:
+    """Return a deterministic, paginated view of every qualified stock.
+
+    The screen rank is comparable across the full liquid universe.  The
+    decision rank exists only for the bounded set that received fresh
+    fundamental and event analysis, and `analysis_depth` makes that boundary
+    explicit to clients.
+    """
+    snapshot = latest_analysis_snapshot() if not snapshot_id else None
+    if not snapshot_id:
+        snapshot_id = snapshot.get("snapshot_id") if snapshot else None
+    safe_limit = max(1, min(int(limit), 200))
+    safe_offset = max(0, int(offset))
+    clean_query = str(query or "").strip().upper()[:100]
+    clean_sector = str(sector or "").strip()[:100]
+    clean_depth = str(analysis_depth or "").strip().lower()
+    if clean_depth not in {"", "full", "screen"}:
+        clean_depth = ""
+    if not snapshot_id:
+        return {
+            "snapshot_id": None, "trading_date": None, "model_version": None,
+            "total": 0, "filtered_total": 0, "offset": safe_offset,
+            "limit": safe_limit, "rows": [], "sectors": [],
+            "coverage": "awaiting_first_snapshot",
+        }
+
+    filters = ["snapshot_id = ?"]
+    params: list = [snapshot_id]
+    if clean_query:
+        filters.append("(UPPER(symbol) LIKE ? OR UPPER(company) LIKE ?)")
+        pattern = f"%{clean_query}%"
+        params.extend([pattern, pattern])
+    if clean_sector:
+        filters.append("LOWER(sector) = LOWER(?)")
+        params.append(clean_sector)
+    if clean_depth:
+        filters.append("analysis_depth = ?")
+        params.append(clean_depth)
+    where = " AND ".join(filters)
+
+    with _conn() as c:
+        total_row = c.execute(_sql(
+            "SELECT COUNT(*) AS count FROM stock_rankings WHERE snapshot_id = ?"
+        ), (snapshot_id,)).fetchone()
+        total = int(total_row["count"] or 0)
+        if total:
+            filtered_row = c.execute(_sql(
+                f"SELECT COUNT(*) AS count FROM stock_rankings WHERE {where}"
+            ), tuple(params)).fetchone()
+            rows = c.execute(_sql(
+                f"SELECT payload FROM stock_rankings WHERE {where} "
+                "ORDER BY screen_rank, symbol LIMIT ? OFFSET ?"
+            ), tuple(params + [safe_limit, safe_offset])).fetchall()
+            sector_rows = c.execute(_sql(
+                "SELECT DISTINCT sector FROM stock_rankings WHERE snapshot_id = ? "
+                "ORDER BY sector"
+            ), (snapshot_id,)).fetchall()
+            meta = c.execute(_sql(
+                "SELECT trading_date,model_version,schema_version "
+                "FROM analysis_snapshots WHERE id = ?"
+            ), (snapshot_id,)).fetchone()
+            return {
+                "snapshot_id": snapshot_id,
+                "trading_date": meta["trading_date"] if meta else None,
+                "model_version": meta["model_version"] if meta else None,
+                "schema_version": meta["schema_version"] if meta else None,
+                "total": total,
+                "filtered_total": int(filtered_row["count"] or 0),
+                "offset": safe_offset, "limit": safe_limit,
+                "rows": [_loads_payload(row["payload"], {}) for row in rows],
+                "sectors": [row["sector"] for row in sector_rows],
+                "coverage": ("complete_qualified_universe"
+                             if meta and str(meta["schema_version"]).startswith("rankings-")
+                             else "legacy_published_only"),
+            }
+
+    # Snapshots created before full-universe ranking shipped still render their
+    # bounded published bench.  The coverage label prevents clients from
+    # mistaking that compatibility view for complete-universe coverage.
+    legacy = snapshot_candidates(snapshot_id, 500)
+    legacy_rows = []
+    for item in legacy:
+        row = {
+            **item,
+            "screen_rank": item.get("screen_rank") or item.get("global_rank"),
+            "screen_score": item.get("screen_score") or item.get("score"),
+            "decision_rank": item.get("decision_rank") or item.get("global_rank"),
+            "decision_score": item.get("rank_value") or item.get("score"),
+            "analysis_depth": "full",
+            "evidence_state": item.get("data_completeness") or "unknown",
+        }
+        haystack = f"{row.get('symbol', '')} {row.get('company', '')}".upper()
+        if clean_query and clean_query not in haystack:
+            continue
+        if clean_sector and str(row.get("sector") or "").lower() != clean_sector.lower():
+            continue
+        if clean_depth and clean_depth != "full":
+            continue
+        legacy_rows.append(row)
+    legacy_rows.sort(key=lambda item: (item.get("screen_rank") or 10**9,
+                                       item.get("symbol") or ""))
+    meta = latest_analysis_snapshot() or {}
+    return {
+        "snapshot_id": snapshot_id, "trading_date": meta.get("trading_date"),
+        "model_version": meta.get("model_version"), "total": len(legacy),
+        "filtered_total": len(legacy_rows), "offset": safe_offset,
+        "limit": safe_limit,
+        "rows": legacy_rows[safe_offset:safe_offset + safe_limit],
+        "sectors": sorted({item.get("sector") or "Unclassified" for item in legacy}),
+        "coverage": "legacy_published_only",
+    }
+
+
+def stock_ranking(symbol: str, snapshot_id: Optional[str] = None) -> Optional[dict]:
+    if not snapshot_id:
+        latest = latest_analysis_snapshot()
+        snapshot_id = latest.get("snapshot_id") if latest else None
+    if not snapshot_id:
+        return None
+    with _conn() as c:
+        row = c.execute(_sql(
+            "SELECT payload FROM stock_rankings WHERE snapshot_id = ? AND symbol = ?"
+        ), (snapshot_id, symbol.upper())).fetchone()
+    return _loads_payload(row["payload"], {}) if row else None
 
 
 def candidate_analysis(symbol: str, snapshot_id: Optional[str] = None) -> Optional[dict]:

@@ -86,6 +86,7 @@ export const evaluatePaperTrades = () => API.post('/api/paper-trades/evaluate').
 
 // Daily swing workspace — one precomputed morning snapshot, then drill-down reads.
 export const getMorningBrief = () => API.get('/api/morning-brief').then(r => r.data);
+export const getStockRankings = (params = {}) => API.get('/api/rankings', { params }).then(r => r.data);
 export const getSectorSnapshot = (sector) => API.get(`/api/sectors/${encodeURIComponent(sector)}`).then(r => r.data);
 export const getCandidateAnalysis = (symbol) => API.get(`/api/candidates/${pathSymbol(symbol)}`).then(r => r.data);
 export const getDailyJobStatus = () => API.get('/api/jobs/daily/status').then(r => r.data);

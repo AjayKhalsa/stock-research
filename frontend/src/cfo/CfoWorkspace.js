@@ -5,14 +5,15 @@ import { PriceChart } from '../components/OverviewCard';
 import {
   getCandidateAnalysis, getDailyJobStatus, getMorningBrief,
   getPaperTradeSnapshot, getPortfolioSettings, getSectorSnapshot,
-  getWatchlist, updatePortfolioSettings, createPaperTrade, createHumanReview,
+  getStockRankings, getWatchlist, updatePortfolioSettings, createPaperTrade,
+  createHumanReview,
 } from '../api';
 import './CfoWorkspace.css';
 
 const NAV = [
   ['morning', 'Morning', 'Today'],
   ['sectors', 'Sectors', 'Leadership'],
-  ['candidates', 'Candidates', 'Top 100'],
+  ['rankings', 'Rankings', 'All qualified'],
   ['portfolio', 'Portfolio', 'Risk book'],
   ['research', 'Research', 'Full dossier'],
   ['system', 'System', 'Data & jobs'],
@@ -20,7 +21,7 @@ const NAV = [
 
 const ACTION_LABEL = {
   BUY_NOW: 'Ready now', WAIT_FOR_ENTRY: 'Near entry', WATCH: 'Watch',
-  AVOID: 'Skip', DATA_INSUFFICIENT: 'Needs data',
+  AVOID: 'Skip', DATA_INSUFFICIENT: 'Needs data', RESEARCH_ONLY: 'Screen ranked',
 };
 
 const fmt = (value, digits = 1) => value == null ? '—' : Number(value).toFixed(digits);
@@ -48,31 +49,6 @@ function SectionHeader({ eyebrow, title, detail, action }) {
   return <div className="cfo-section-head"><div><span>{eyebrow}</span><h2>{title}</h2>{detail && <p>{detail}</p>}</div>{action}</div>;
 }
 
-function CandidateRow({ candidate, onOpen, expanded, onToggle }) {
-  const plan = candidate.trade_plan || {};
-  return <div className={`cfo-candidate ${expanded ? 'is-expanded' : ''}`}>
-    <button className="cfo-candidate-main" onClick={onToggle} aria-expanded={expanded}>
-      <span className="cfo-rank">{candidate.global_rank || '—'}</span>
-      <span className="cfo-company"><strong>{candidate.symbol}</strong><small>{candidate.company}</small></span>
-      <span className="cfo-action"><StatusPill value={candidate.action}>{candidate.classification || ACTION_LABEL[candidate.action]}</StatusPill></span>
-      <span><small>Setup</small><strong>{(candidate.setup_type || 'None').replaceAll('_', ' ')}</strong></span>
-      <span><small>Reward / risk</small><strong className="mono">{fmt(plan.risk_reward, 2)}×</strong></span>
-      <span><small>Entry distance</small><strong className="mono">{fmt(candidate.entry_distance_pct)}%</strong></span>
-      <span><small>Business quality</small><strong>{fmt(candidate.components?.business_quality ?? candidate.components?.cfo_health, 0)}</strong></span>
-      <span><small>Data completeness</small><strong>{fmt(candidate.data_confidence?.overall ?? candidate.confidence, 0)}%</strong></span>
-      <span className="cfo-chevron" aria-hidden="true">⌄</span>
-    </button>
-    {expanded && <div className="cfo-candidate-expand">
-      <div><small>Why it ranks</small><p>{candidate.explanation?.why_it_ranks?.join(' · ') || candidate.action_reason || candidate.setup_label || 'No active setup'}.</p>{candidate.explanation?.what_holds_it_back?.length ? <><small>What holds it back</small><p>{candidate.explanation.what_holds_it_back.join(' · ')}.</p></> : null}</div>
-      <div><small>Entry</small><p className="mono">{money(plan.entry?.low)} – {money(plan.entry?.high)}</p></div>
-      <div><small>Stop</small><p className="mono">{money(plan.stop?.price)}</p></div>
-      <div><small>Targets</small><p className="mono">{(plan.targets || []).map(t => money(t.price)).join(' · ') || '—'}</p></div>
-      <div><small>Invalidation</small><p>{plan.invalidation || 'Awaiting complete evidence'}</p></div>
-      <button className="cfo-link-btn" onClick={() => onOpen(candidate.symbol)}>Open decision dossier →</button>
-    </div>}
-  </div>;
-}
-
 function Morning({ brief, job, onPage, onCandidate, onSector }) {
   if (brief.status === 'setup_required') {
     const running = job?.status === 'running';
@@ -97,7 +73,7 @@ function Morning({ brief, job, onPage, onCandidate, onSector }) {
       </section>
     </div>;
   }
-  const top = (brief.candidates || []).filter(c => ['BUY_NOW', 'WAIT_FOR_ENTRY', 'WATCH'].includes(c.action)).slice(0, 8);
+  const top = (brief.candidates || []).filter(c => ['BUY_NOW', 'WAIT_FOR_ENTRY'].includes(c.action)).slice(0, 5);
   const exceptions = brief.data_health?.exceptions || [];
   return <div className="cfo-page">
     <section className="cfo-hero">
@@ -134,8 +110,8 @@ function Morning({ brief, job, onPage, onCandidate, onSector }) {
     </section>
 
     <section className="cfo-panel">
-      <SectionHeader eyebrow="Today’s shortlist" title="Best setups this morning" detail="Ranked by setup quality, relative strength, business health, liquidity and reward versus risk." action={<button onClick={() => onPage('candidates')} className="cfo-text-btn">Open Top 100</button>} />
-      <div className="cfo-morning-cards">{top.length ? top.map(c => <button key={c.symbol} onClick={() => onCandidate(c.symbol)}><span><b>#{c.global_rank}</b><StatusPill value={c.action} /></span><strong>{c.symbol}</strong><small>{c.company}</small><div><span>{c.setup_type?.replaceAll('_', ' ') || 'No setup'}</span><b className="mono">{fmt(c.trade_plan?.risk_reward, 2)}×</b></div></button>) : <p className="cfo-muted">No ranked candidates in the latest snapshot.</p>}</div>
+      <SectionHeader eyebrow="Today’s action list" title="Zero to five ready or near-entry setups" detail="Only evidence-complete stocks at or near their entry zone appear here. The complete qualified ranking remains available separately." action={<button onClick={() => onPage('rankings')} className="cfo-text-btn">Open all rankings</button>} />
+      <div className="cfo-morning-cards">{top.length ? top.map(c => <button key={c.symbol} onClick={() => onCandidate(c.symbol)}><span><b>#{c.screen_rank || c.global_rank}</b><StatusPill value={c.action} /></span><strong>{c.symbol}</strong><small>{c.company}</small><div><span>{c.setup_type?.replaceAll('_', ' ') || 'No setup'}</span><b className="mono">{fmt(c.trade_plan?.risk_reward, 2)}×</b></div></button>) : <p className="cfo-muted">No stock cleared every action gate today. The full ranking is still available for research.</p>}</div>
     </section>
 
     <section className="cfo-two-col">
@@ -155,27 +131,73 @@ function Sectors({ brief, selected, detail, loading, onSelect, onCandidate }) {
   </div>;
 }
 
-function Candidates({ candidates, onOpen }) {
-  const [filter, setFilter] = useState('ALL');
-  const [expanded, setExpanded] = useState(null);
+function Rankings({ universe, onOpen }) {
   const [query, setQuery] = useState('');
-  const normalizedQuery = query.trim().toLowerCase();
-  const matching = candidates.filter(c => !normalizedQuery
-    || `${c.symbol} ${c.company || ''} ${c.sector || ''}`.toLowerCase().includes(normalizedQuery));
-  const isRejected = candidate => ['AVOID', 'DATA_INSUFFICIENT'].includes(candidate.action)
-    || (candidate.hard_blocks || []).length > 0;
-  const rejected = matching.filter(isRejected);
-  const filtered = filter === 'ALL'
-    ? matching.filter(c => !isRejected(c))
-    : matching.filter(c => c.action === filter);
+  const [depth, setDepth] = useState('');
+  const [sector, setSector] = useState('');
+  const [result, setResult] = useState({ rows: [], total: 0, filtered_total: 0, sectors: [] });
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError('');
+    const timer = setTimeout(() => {
+      getStockRankings({ limit: 100, offset: 0, query: query.trim(), sector,
+        analysis_depth: depth }).then(data => {
+          if (active) setResult(data);
+        }).catch(() => {
+          if (active) setError('The complete ranking could not be loaded.');
+        }).finally(() => {
+          if (active) setLoading(false);
+        });
+    }, 200);
+    return () => { active = false; clearTimeout(timer); };
+  }, [query, sector, depth]);
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const next = await getStockRankings({ limit: 100, offset: result.rows.length,
+        query: query.trim(), sector, analysis_depth: depth });
+      setResult(current => ({ ...next, rows: [...current.rows, ...next.rows] }));
+    } catch {
+      setError('The next ranking page could not be loaded.');
+    } finally { setLoadingMore(false); }
+  };
+
+  const complete = result.coverage === 'complete_qualified_universe';
   return <div className="cfo-page">
-    <SectionHeader eyebrow="Daily ranking" title="Top 100 setups" detail="Expand a row for the price levels and reason. Open it for the chart and source checks." />
-    <label className="cfo-candidate-search"><span>Find in today’s ranking</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Symbol, company, or sector" /></label>
-    <div className="cfo-filterbar" role="group" aria-label="Filter candidates">{['ALL', 'BUY_NOW', 'WAIT_FOR_ENTRY', 'WATCH', 'AVOID', 'DATA_INSUFFICIENT'].map(f => <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>{f === 'ALL' ? 'All' : ACTION_LABEL[f]} <span>{f === 'ALL' ? candidates.length : candidates.filter(c => c.action === f).length}</span></button>)}</div>
-    <div className="cfo-bench-head"><span>Rank</span><span>Company</span><span>Status</span><span>Setup</span><span>Reward / risk</span><span>Entry distance</span><span>Business</span><span>Data confidence</span></div>
-    <div className="cfo-bench">{filtered.map(candidate => <CandidateRow key={candidate.symbol} candidate={candidate} expanded={expanded === candidate.symbol} onToggle={() => setExpanded(expanded === candidate.symbol ? null : candidate.symbol)} onOpen={onOpen} />)}</div>
-    {!filtered.length && <div className="cfo-quiet"><span>—</span><div><strong>No matching candidates</strong><p>Try another search or status filter.</p></div></div>}
-    {filter === 'ALL' && rejected.length > 0 && <section className="cfo-rejected"><SectionHeader eyebrow="Safety gates" title="Rejected and data-held stocks" detail="These names remain visible for audit. A high component score cannot override a failed safety or evidence check." /><div className="cfo-bench">{rejected.map(candidate => <CandidateRow key={candidate.symbol} candidate={candidate} expanded={expanded === candidate.symbol} onToggle={() => setExpanded(expanded === candidate.symbol ? null : candidate.symbol)} onOpen={onOpen} />)}</div></section>}
+    <SectionHeader eyebrow="Daily ranking" title="Every qualified NSE stock" detail="Screen rank compares the complete liquid universe. Decision rank appears only after the deeper financial, event, and trade-plan checks." />
+    <div className="cfo-summary-strip cfo-ranking-summary">
+      <Metric label="Qualified and ranked" value={result.total || universe?.ranked || universe?.eligible || 0} note="complete screen universe" />
+      <Metric label="Shown" value={result.rows.length} note={`${result.filtered_total || 0} match current filters`} />
+      <Metric label="Deep analysis" value={result.rows.filter(row => row.analysis_depth === 'full').length} note="in loaded rows" />
+      <Metric label="Snapshot" value={result.trading_date || 'Pending'} note={result.model_version || 'awaiting publication'} />
+    </div>
+    {!complete && !loading && <div className="cfo-validation-note"><strong>Compatibility view</strong><span>This older snapshot contains only its published deep-analysis bench. The next validated scan will publish the complete qualified ranking.</span></div>}
+    <div className="cfo-ranking-controls">
+      <label className="cfo-candidate-search"><span>Search all qualified stocks</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Symbol or company" /></label>
+      <label><span>Sector</span><select value={sector} onChange={event => setSector(event.target.value)}><option value="">All sectors</option>{(result.sectors || []).map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+      <label><span>Evidence depth</span><select value={depth} onChange={event => setDepth(event.target.value)}><option value="">All qualified</option><option value="full">Full decision analysis</option><option value="screen">Screen rank only</option></select></label>
+    </div>
+    {loading ? <div className="cfo-loading"><span /><p>Loading the qualified-universe ranking…</p></div> : error && !result.rows.length ? <EmptyState title="Ranking unavailable" body={error} /> : <>
+      <div className="cfo-ranking-head"><span>Screen rank</span><span>Company</span><span>Screen score</span><span>Evidence depth</span><span>Decision rank</span><span>Decision state</span><span>Why this row exists</span></div>
+      <div className="cfo-ranking-list">{result.rows.map(row => <button key={row.symbol} className="cfo-ranking-row" onClick={() => onOpen(row.symbol)}>
+        <span className="cfo-rank">#{row.screen_rank}</span>
+        <span className="cfo-company"><strong>{row.symbol}</strong><small>{row.company}</small></span>
+        <span><small>Screen score</small><strong className="mono">{fmt(row.screen_score, 1)}</strong></span>
+        <span><small>Evidence</small><strong>{row.analysis_depth === 'full' ? (row.evidence_state === 'full' ? 'Full evidence' : `Deep · ${row.evidence_state || 'unknown'} evidence`) : 'Screen only'}</strong></span>
+        <span><small>Decision rank</small><strong className="mono">{row.decision_rank ? `#${row.decision_rank}` : '—'}</strong></span>
+        <span><StatusPill value={row.action}>{ACTION_LABEL[row.action] || row.action}</StatusPill></span>
+        <span><small>Context</small><strong>{row.ranking_note}</strong></span>
+      </button>)}</div>
+      {!result.rows.length && <div className="cfo-quiet"><span>—</span><div><strong>No matching ranked stocks</strong><p>Try another search or evidence filter.</p></div></div>}
+      {result.rows.length < result.filtered_total && <button className="cfo-load-more" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : `Load next 100 · ${result.filtered_total - result.rows.length} remaining`}</button>}
+      {error && result.rows.length > 0 && <p className="cfo-error">{error}</p>}
+    </>}
   </div>;
 }
 
@@ -191,7 +213,7 @@ function TrustPanel({ data }) {
   ];
   const label = state => state === 'pass' ? 'Pass' : state === 'block' ? 'Blocked' : state === 'early' ? 'Early' : state === 'not_covered' ? 'Not covered' : 'Caution';
   const tone = state => state === 'pass' ? 'healthy' : state === 'block' ? 'failed' : state === 'not_covered' ? 'neutral' : 'attention';
-  const rankText = data.global_rank ? `#${data.global_rank} overall · #${data.sector_rank} in ${data.sector}` : data.universe_membership?.label;
+  const rankText = data.universe_membership?.label || (data.global_rank ? `#${data.global_rank} in the deep-analysis bench · #${data.sector_rank} in ${data.sector}` : 'Outside the latest qualified ranking');
   return <div className="cfo-panel cfo-trust-panel"><SectionHeader eyebrow="Can I trust this?" title="Checks behind this stock" detail="Use the checks and their limits—not the ticker alone." /><div className="cfo-trust-score"><strong>{fmt(data.score, 0)}<span>/100</span></strong><div><b>Rules-based setup score</b><small>{rankText}</small></div></div><div className="cfo-trust-list">{rows.map(([name, state, detail]) => <div key={name}><StatusPill value={tone(state)}>{label(state)}</StatusPill><span><strong>{name}</strong><small>{detail}</small></span></div>)}</div></div>;
 }
 
@@ -358,7 +380,7 @@ function System({ job, brief }) {
   const archiveIssues = (archiveAudit.checks || []).filter(item => item.status !== 'pass');
   const scanHistory = brief.scan_history || [];
   return <div className="cfo-page"><SectionHeader eyebrow="System" title="Data, automation and audit" detail="The workspace prepares itself. Job controls stay here, away from daily decisions." />
-    <section className="cfo-two-col"><div className="cfo-panel"><SectionHeader eyebrow="Daily pipeline" title="07:00 IST snapshot" /><div className="cfo-job"><StatusPill value={job?.status}>{job?.status || 'Never run'}</StatusPill><h3>{job?.stage?.replaceAll('_', ' ') || 'Waiting'}</h3><p>{job?.progress || 0} of {job?.total || 0} · {pct}%</p><div><i style={{ width: `${pct}%` }} /></div>{job?.error && <small className="cfo-error">{job.error}</small>}</div><p className="cfo-muted">Runs from the protected scheduler. A failed run never replaces the last valid snapshot.</p></div><div className="cfo-panel"><SectionHeader eyebrow="Current snapshot" title="Coverage" /><div className="cfo-metric-grid"><Metric label="Official universe" value={brief.universe?.official_equities || 0} /><Metric label="Eligible" value={brief.universe?.eligible || 0} /><Metric label="Deep enriched" value={brief.universe?.deeply_enriched || 0} /><Metric label="Published" value={brief.universe?.published || 0} /></div></div></section>
+    <section className="cfo-two-col"><div className="cfo-panel"><SectionHeader eyebrow="Daily pipeline" title="07:00 IST snapshot" /><div className="cfo-job"><StatusPill value={job?.status}>{job?.status || 'Never run'}</StatusPill><h3>{job?.stage?.replaceAll('_', ' ') || 'Waiting'}</h3><p>{job?.progress || 0} of {job?.total || 0} · {pct}%</p><div><i style={{ width: `${pct}%` }} /></div>{job?.error && <small className="cfo-error">{job.error}</small>}</div><p className="cfo-muted">Runs from the protected scheduler. A failed run never replaces the last valid snapshot.</p></div><div className="cfo-panel"><SectionHeader eyebrow="Current snapshot" title="Coverage" /><div className="cfo-metric-grid"><Metric label="Official universe" value={brief.universe?.official_equities || 0} /><Metric label="Ranked universe" value={brief.universe?.ranked || brief.universe?.eligible || 0} /><Metric label="Deep enriched" value={brief.universe?.deeply_enriched || 0} /><Metric label="Deep dossiers" value={brief.universe?.published || 0} /></div></div></section>
     <section className="cfo-panel"><SectionHeader eyebrow="Scan observability" title="Seven-run operating history" detail="Each run retains its timing, coverage, action mix, provider failures, and archive-quality result." />{scanHistory.length ? <dl className="cfo-definition">{scanHistory.map(run => { const payload = run.payload || {}; const actions = payload.published_action_counts || {}; return <div key={run.id}><dt>{payload.trading_date || new Date(run.started_at * 1000).toLocaleDateString('en-IN')} · {run.status}</dt><dd>{fmt(run.duration_seconds, 0)}s · {payload.stocks_scanned || 0} scanned · {actions.BUY_NOW || 0} ready · {actions.WAIT_FOR_ENTRY || 0} near · {payload.committee_failures || 0} AI failures · {payload.data_quality?.failures || 0} data failures</dd></div>; })}</dl> : <p className="cfo-muted">Run history will appear after the next scheduled scan.</p>}</section>
     <section className="cfo-panel"><SectionHeader eyebrow="Provider policy" title="Free-data-first, evidence-aware" /><div className="cfo-provider-grid"><div><StatusPill value="healthy">Official</StatusPill><h3>NSE equity master</h3><p>Daily eligible universe and listed-security identity.</p></div><div><StatusPill value={brief.data_health?.official_price_as_of ? 'healthy' : 'attention'}>{brief.data_health?.official_price_as_of ? 'Reconciled' : 'Pending'}</StatusPill><h3>NSE bhavcopy</h3><p>Official latest-session close and the 1% conflict gate.</p></div><div><StatusPill value="neutral">Adjusted</StatusPill><h3>Yahoo Finance</h3><p>Split/dividend-adjusted history for indicators and structure.</p></div><div><StatusPill value="neutral">Cached 7 days</StatusPill><h3>Financial evidence</h3><p>Reported statements with source, age and completeness retained.</p></div><div><StatusPill value={brief.external_enrichment?.covered ? 'healthy' : 'neutral'}>{brief.external_enrichment?.covered || 0} covered</StatusPill><h3>Bull AI evidence</h3><p>Bounded filings, guidance, peers, counterparties and transactions. Evidence never boosts a score automatically.</p></div></div></section>
     <section className="cfo-panel"><SectionHeader eyebrow="Immutable research archive" title="Point-in-time data foundation" detail="Raw exchange bars, adjusted-provider revisions, financial observations, events, and features are appended. Provider corrections create a new revision instead of rewriting history." /><div className="cfo-summary-strip"><Metric label="Canonical securities" value={archiveCounts.securities || 0} /><Metric label="Raw bars" value={archiveCounts.market_prices_raw || 0} note={archive.latest_raw_date || 'awaiting first archive run'} /><Metric label="Adjusted revisions" value={archiveCounts.market_prices_adjusted || 0} /><Metric label="Financial reports" value={archiveCounts.financial_reports || 0} /><Metric label="Financial metrics" value={archiveCounts.financial_metrics || 0} /><Metric label="Company events" value={archiveCounts.company_events || 0} /><Metric label="Feature snapshots" value={archiveCounts.stock_feature_snapshots || 0} note={archive.latest_feature_date || 'awaiting first archive run'} /></div><div className="cfo-job"><StatusPill value={archiveAudit.status}>{archiveAudit.status || 'Awaiting first audit'}</StatusPill><h3>Automated archive audit</h3><p>{archiveAuditMetrics.failures || 0} failures · {archiveAuditMetrics.warnings || 0} warnings · {fmt(archiveAuditMetrics.raw_coverage_pct)}% raw coverage · {fmt(archiveAuditMetrics.feature_coverage_pct)}% feature coverage</p>{archiveIssues.length > 0 && <ul>{archiveIssues.slice(0, 5).map(item => <li key={item.name}>{item.message}</li>)}</ul>}</div></section>
@@ -366,7 +388,7 @@ function System({ job, brief }) {
     <section className="cfo-panel"><SectionHeader eyebrow="Point-in-time validation" title="Cost-adjusted snapshot replay" detail="Only recommendations frozen before their outcome are included. The result is early until at least 30 trades and mature at 100." /><div className="cfo-summary-strip"><Metric label="Status" value={(backtest.status || 'no_data').replaceAll('_', ' ')} note={`${validation.sample || 0} resolved trades`} /><Metric label="Net expectancy" value={`${fmt(validation.net_expectancy_r, 3)}R`} note={`${fmt(validation.gross_expectancy_r, 3)}R before costs`} /><Metric label="Net result" value={`${fmt(validation.net_total_r, 2)}R`} /><Metric label="Max drawdown" value={`${fmt(validation.max_drawdown_r, 2)}R`} /><Metric label="Win rate" value={`${fmt(validation.win_rate_pct)}%`} note={validation.win_rate_95ci_pct ? `95% range ${validation.win_rate_95ci_pct[0]}–${validation.win_rate_95ci_pct[1]}%` : '95% range unavailable'} /><Metric label="Round-trip costs" value={`${fmt(backtest.cost_model?.round_trip_bps, 0)} bps`} /></div><div className="cfo-summary-strip cfo-validation-secondary"><Metric label="Median trade" value={`${fmt(validation.net_median_r, 3)}R`} /><Metric label="Volatility" value={`${fmt(validation.net_volatility_r, 3)}R`} /><Metric label="Profit factor" value={fmt(validation.profit_factor, 2)} /><Metric label="Average winner" value={`${fmt(validation.avg_winner_r, 3)}R`} note={`Average loser ${fmt(validation.avg_loser_r, 3)}R`} /><Metric label="Target hit" value={`${fmt(validation.target_hit_rate_pct)}%`} note={`Stop hit ${fmt(validation.stop_hit_rate_pct)}%`} /><Metric label="Holding time" value={`${fmt(validation.median_holding_sessions, 0)} sessions`} /></div><p className="cfo-footnote">Forward snapshot replay · conservative daily-bar fills · corporate-action-adjusted levels. CAGR stays unavailable until real capital allocation and cash timing exist. Historical constituent masters before this ledger began cannot be reconstructed.</p></section>
     <section className="cfo-two-col cfo-backtest-breakdowns"><BacktestBreakdown eyebrow="Validation slice" title="Setup results" rows={backtest.by_setup} /><BacktestBreakdown eyebrow="Validation slice" title="Market-regime results" rows={backtest.by_market_regime} /><BacktestBreakdown eyebrow="Validation slice" title="Sector results" rows={backtest.by_sector} /><BacktestBreakdown eyebrow="Signal-time size proxy" title="Market-cap results" rows={backtest.by_market_cap_bucket} /></section>
     <section className="cfo-panel"><SectionHeader eyebrow="Shadow testing" title="Production, V2, and human judgment" detail="A challenger is calibrated only after enough clean outcomes exist, and it cannot replace production automatically." /><div className="cfo-shadow-grid"><article><StatusPill value="healthy">Production</StatusPill><h3>Current algorithm</h3><strong>{brief.model_version || legacyShadow.current?.model_version || 'Current rules'}</strong><p>{validation.sample || 0} resolved outcomes · live decisions remain unchanged.</p></article><article><StatusPill value={calibration.status === 'shadow_candidate_ready' ? 'attention' : 'neutral'}>{(calibration.status || legacyShadow.challenger?.status || 'awaiting_evidence').replaceAll('_', ' ')}</StatusPill><h3>V2 challenger</h3><strong>{challenger.model_version || `${outcomesRemaining} outcomes remaining`}</strong><p>{challenger.holdout ? `${challenger.holdout.sample} holdout selections · ${fmt(challenger.holdout.net_expectancy_r, 3)}R net expectancy. Human promotion review is still required.` : promotion.next_step || 'Continue forward collection without changing live weights.'}</p></article><article><StatusPill value="neutral">Human review</StatusPill><h3>Structured judgment</h3><strong>{reviews.total || 0} reviews</strong><p>Agreement and disagreement stay linked to the exact model snapshot.</p></article></div></section>
-    <section className="cfo-two-col"><div className="cfo-panel"><SectionHeader eyebrow="Human versus model" title="Outcome-linked experiment" detail="The latest human judgment per snapshot is measured after costs. Opinions never become training labels." /><dl className="cfo-definition"><div><dt>Both accepted</dt><dd>{cohorts.model_accepted_human_accepted?.sample || 0} outcomes · {fmt(cohorts.model_accepted_human_accepted?.net_expectancy_r, 3)}R</dd></div><div><dt>Human rejected</dt><dd>{cohorts.model_accepted_human_rejected?.sample || 0} outcomes · {fmt(cohorts.model_accepted_human_rejected?.net_expectancy_r, 3)}R</dd></div><div><dt>Human rescued</dt><dd>{cohorts.model_rejected_human_accepted?.sample || 0} outcomes · {fmt(cohorts.model_rejected_human_accepted?.net_expectancy_r, 3)}R</dd></div><div><dt>Both rejected</dt><dd>{cohorts.both_rejected?.sample || 0} outcomes · {fmt(cohorts.both_rejected?.net_expectancy_r, 3)}R</dd></div></dl></div><div className="cfo-panel"><SectionHeader eyebrow="Model errors" title="False positives and false negatives" detail="Errors use net R after 35 bps. Never-surfaced stocks remain explicitly unavailable until the full universe is outcome-tracked." /><div className="cfo-metric-grid"><Metric label="Resolved audit sample" value={errors.resolved_sample || 0} /><Metric label="False positives" value={errors.false_positives?.count || 0} /><Metric label="False negatives" value={errors.false_negatives?.count || 0} /><Metric label="Missed opportunities" value="Unavailable" note="outside-Top-100 outcomes are not archived" /></div></div></section>
+    <section className="cfo-two-col"><div className="cfo-panel"><SectionHeader eyebrow="Human versus model" title="Outcome-linked experiment" detail="The latest human judgment per snapshot is measured after costs. Opinions never become training labels." /><dl className="cfo-definition"><div><dt>Both accepted</dt><dd>{cohorts.model_accepted_human_accepted?.sample || 0} outcomes · {fmt(cohorts.model_accepted_human_accepted?.net_expectancy_r, 3)}R</dd></div><div><dt>Human rejected</dt><dd>{cohorts.model_accepted_human_rejected?.sample || 0} outcomes · {fmt(cohorts.model_accepted_human_rejected?.net_expectancy_r, 3)}R</dd></div><div><dt>Human rescued</dt><dd>{cohorts.model_rejected_human_accepted?.sample || 0} outcomes · {fmt(cohorts.model_rejected_human_accepted?.net_expectancy_r, 3)}R</dd></div><div><dt>Both rejected</dt><dd>{cohorts.both_rejected?.sample || 0} outcomes · {fmt(cohorts.both_rejected?.net_expectancy_r, 3)}R</dd></div></dl></div><div className="cfo-panel"><SectionHeader eyebrow="Model errors" title="False positives and false negatives" detail="Errors use net R after 35 bps. Screen-only names are ranked but remain unavailable for outcome claims until the deep-analysis bench tracks them." /><div className="cfo-metric-grid"><Metric label="Resolved audit sample" value={errors.resolved_sample || 0} /><Metric label="False positives" value={errors.false_positives?.count || 0} /><Metric label="False negatives" value={errors.false_negatives?.count || 0} /><Metric label="Missed opportunities" value="Unavailable" note="outside-bench outcomes are not archived" /></div></div></section>
   </div>;
 }
 
@@ -407,7 +429,7 @@ export default function CfoWorkspace() {
     try { setSectorDetail(await getSectorSnapshot(sector)); } catch {} finally { setSectorLoading(false); }
   };
   const openCandidate = async symbol => {
-    setPage('candidates'); setSelectedCandidate(symbol); setCandidateLoading(true); setCandidateData(null); setCandidateError('');
+    setPage('rankings'); setSelectedCandidate(symbol); setCandidateLoading(true); setCandidateData(null); setCandidateError('');
     try { setCandidateData(await getCandidateAnalysis(symbol)); }
     catch (error) {
       const saved = (brief?.candidates || []).find(c => c.symbol === symbol);
@@ -427,7 +449,7 @@ export default function CfoWorkspace() {
     <aside className="cfo-rail"><div className="cfo-brand"><span>SL</span><div><strong>StockLens</strong><small>Swing workspace</small></div></div><nav>{NAV.map(([id, label, sub]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { setPage(id); setSelectedCandidate(null); }}><b>{label.slice(0, 1)}</b><span><strong>{label}</strong><small>{sub}</small></span></button>)}</nav><button className="cfo-collapse" onClick={() => setRailOpen(v => !v)}>{railOpen ? 'Collapse rail' : 'Expand'}</button></aside>
     <div className="cfo-workspace">
       <header className="cfo-topbar"><button className="cfo-menu" onClick={() => setRailOpen(v => !v)} aria-label="Toggle navigation">☰</button><div className="cfo-global-search"><SearchBar onSelect={openCandidate} /></div><div className="cfo-top-status"><span><small>Updated</small><strong>{brief?.trading_date || 'Pending'}</strong></span><StatusPill value={brief?.data_health?.status}>{brief?.data_health?.status || 'Loading'}</StatusPill><span><small>Open risk</small><strong>{fmt(brief?.portfolio?.heat_pct)}%</strong></span><button onClick={() => setDrawer(true)}>Watchlist <b>{watchlist.length}</b></button></div></header>
-      <main className="cfo-canvas">{loading ? <div className="cfo-loading"><span /><p>Opening your latest morning snapshot…</p></div> : error && !brief ? <EmptyState title="Morning data is unavailable" body={error} /> : selectedCandidate ? <CandidateDossier data={candidateData} loading={candidateLoading} error={candidateError} symbol={selectedCandidate} onBack={() => setSelectedCandidate(null)} onResearch={openResearch} settings={settings} /> : page === 'morning' ? <Morning brief={brief} job={job} onPage={setPage} onCandidate={openCandidate} onSector={openSector} /> : page === 'sectors' ? <Sectors brief={brief} selected={selectedSector} detail={sectorDetail} loading={sectorLoading} onSelect={openSector} onCandidate={openCandidate} /> : page === 'candidates' ? <Candidates candidates={brief.candidates || []} onOpen={openCandidate} /> : page === 'portfolio' ? <Portfolio snapshot={portfolio} settings={settings} onSave={saveSettings} /> : page === 'research' ? <div className="cfo-research-embed"><LegacyResearch initialSymbol={researchSymbol} embedded /></div> : <System job={job} brief={brief} />}</main>
+      <main className="cfo-canvas">{loading ? <div className="cfo-loading"><span /><p>Opening your latest morning snapshot…</p></div> : error && !brief ? <EmptyState title="Morning data is unavailable" body={error} /> : selectedCandidate ? <CandidateDossier data={candidateData} loading={candidateLoading} error={candidateError} symbol={selectedCandidate} onBack={() => setSelectedCandidate(null)} onResearch={openResearch} settings={settings} /> : page === 'morning' ? <Morning brief={brief} job={job} onPage={setPage} onCandidate={openCandidate} onSector={openSector} /> : page === 'sectors' ? <Sectors brief={brief} selected={selectedSector} detail={sectorDetail} loading={sectorLoading} onSelect={openSector} onCandidate={openCandidate} /> : page === 'rankings' ? <Rankings universe={brief.universe} onOpen={openCandidate} /> : page === 'portfolio' ? <Portfolio snapshot={portfolio} settings={settings} onSave={saveSettings} /> : page === 'research' ? <div className="cfo-research-embed"><LegacyResearch initialSymbol={researchSymbol} embedded /></div> : <System job={job} brief={brief} />}</main>
     </div>
     {drawer && <div className="cfo-drawer-scrim" onClick={() => setDrawer(false)}><aside className="cfo-drawer" onClick={e => e.stopPropagation()}><header><div><small>Context drawer</small><h2>Watchlist</h2></div><button onClick={() => setDrawer(false)}>Close</button></header>{watchlist.length ? watchlist.map(w => <button key={w.symbol} onClick={() => { setDrawer(false); openResearch(w.symbol); }}><strong>{w.symbol}</strong><span>{w.name}</span><b>Open →</b></button>) : <p>No stocks in your watchlist yet.</p>}</aside></div>}
     <nav className="cfo-mobile-nav">{[['morning', 'Morning'], ['sectors', 'Sectors'], ['watchlist', 'Watchlist'], ['search', 'Search'], ['more', 'More']].map(([id, label]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => id === 'watchlist' ? setDrawer(true) : id === 'search' ? document.querySelector('.cfo-global-search input')?.focus() : setPage(id === 'more' ? 'system' : id)}><b>{label.slice(0, 1)}</b><span>{label}</span></button>)}</nav>

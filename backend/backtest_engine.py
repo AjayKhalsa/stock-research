@@ -197,7 +197,7 @@ def run_snapshot_backtest(*, model_version: Optional[str] = None,
         "controls": {
             "recommendations": "immutable snapshot payloads only",
             "lookahead": "candles strictly after signal date",
-            "universe": "the published Top 100 selection is frozen at each signal date",
+            "universe": "the published deep-analysis bench is frozen at each signal date",
             "survivorship": "prior selections are never rewritten using today's universe",
             "corporate_actions": "levels rescaled to the current adjusted-price basis",
             "execution": "entry-high fill; entry-bar conflicts excluded; later conflicts stop-first",

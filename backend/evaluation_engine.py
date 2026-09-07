@@ -127,7 +127,7 @@ def model_error_dashboard() -> dict:
         "lowest_ranked_winners": [_example(row) for row in lowest_ranked_winners[:10]],
         "missed_opportunities": {
             "status": "unavailable",
-            "reason": "Names outside the frozen Top 100 were not outcome-tracked.",
+            "reason": "Names outside the frozen deep-analysis bench were not outcome-tracked.",
         },
         "definitions": {
             "false_positive": "Actionable recommendation with non-positive net R after 35 bps.",

@@ -33,6 +33,7 @@ FUNDAMENTAL_CONCURRENCY = 4
 MINIMUM_USABLE_HISTORY_RATIO = 0.70
 MINIMUM_USABLE_HISTORY_ABSOLUTE = 1500
 MINIMUM_ELIGIBLE_STOCKS = 500
+SNAPSHOT_SCHEMA_VERSION = "rankings-v1"
 
 _RUN_LOCK = asyncio.Lock()
 _ACTIVE_TASK: asyncio.Task | None = None
@@ -230,6 +231,7 @@ async def run_daily_pipeline(job_id: str) -> None:
             target = db.assign_job_run_target(
                 job_id, target_session=str(official_as_of)[:10],
                 model_version=cfo_engine.MODEL_VERSION,
+                schema_version=SNAPSHOT_SCHEMA_VERSION,
             )
             if target.get("existing_snapshot_id"):
                 db.update_job_run(
@@ -335,7 +337,14 @@ async def run_daily_pipeline(job_id: str) -> None:
                 feature_scope="universe", isin_by_symbol=isin_by_symbol,
             )
 
-            preliminary.sort(key=lambda item: item.get("preliminary_score", 0), reverse=True)
+            preliminary.sort(key=lambda item: (
+                -float(item.get("preliminary_score") or 0), item.get("symbol") or "",
+            ))
+            for screen_rank, item in enumerate(preliminary, 1):
+                item["screen_rank"] = screen_rank
+            screen_rank_by_symbol = {
+                item["symbol"]: item["screen_rank"] for item in preliminary
+            }
             market_regime = _market_regime(nifty, preliminary)
             deep = preliminary[:DEEP_CANDIDATES]
             seen = {item["symbol"] for item in deep}
@@ -447,7 +456,58 @@ async def run_daily_pipeline(job_id: str) -> None:
             validation_status = db.get_setting("cfo_historical_validation_status", "pending")
             for candidate in candidates:
                 candidate["evidence"]["model"]["validation_status"] = validation_status
+                candidate["screen_rank"] = screen_rank_by_symbol.get(candidate["symbol"])
             _enforce_shortlist_caps(candidates)
+            decision_order = sorted(candidates, key=lambda row: (
+                -float(row.get("rank_value") or 0),
+                -float(row.get("score") or 0),
+                row.get("symbol") or "",
+            ))
+            for decision_rank, candidate in enumerate(decision_order, 1):
+                candidate["decision_rank"] = decision_rank
+
+            enriched_by_symbol = {item["symbol"]: item for item in candidates}
+            rankings = []
+            for item in preliminary:
+                full = enriched_by_symbol.get(item["symbol"])
+                factors = item.get("factors") or {}
+                eligibility = item.get("eligibility") or {}
+                rankings.append({
+                    "symbol": item["symbol"],
+                    "company": item.get("name") or item["symbol"],
+                    "sector": (full or {}).get("sector") or "Unclassified",
+                    "screen_rank": item["screen_rank"],
+                    "screen_score": item.get("preliminary_score"),
+                    "decision_rank": (full or {}).get("decision_rank"),
+                    "decision_score": (full or {}).get("rank_value"),
+                    "analysis_depth": "full" if full else "screen",
+                    "evidence_state": ((full or {}).get("data_completeness")
+                                       or "screen_only"),
+                    "action": (full or {}).get("action") or "RESEARCH_ONLY",
+                    "classification": (full or {}).get("classification")
+                                      or "Qualified screen",
+                    "setup_type": (full or {}).get("setup_type"),
+                    "price": (full or {}).get("price") or factors.get("price"),
+                    "relative_strength_3m_pct": item.get("rs_3m_pct"),
+                    "median_traded_value": eligibility.get("median_traded_value"),
+                    "technical_components": item.get("components") or {},
+                    "trend_score": factors.get("trend_score"),
+                    "rsi": factors.get("rsi"),
+                    "volume_ratio": factors.get("vol_ratio"),
+                    "business_quality": ((full or {}).get("components") or {}).get(
+                        "business_quality"
+                    ),
+                    "data_confidence": ((full or {}).get("data_confidence") or {}).get(
+                        "overall"
+                    ),
+                    "ranking_note": (
+                        "Deep decision analysis completed; evidence completeness is "
+                        "reported separately"
+                        if full else
+                        "Qualified on price history and liquidity; open the dossier to run "
+                        "fresh financial and event analysis"
+                    ),
+                })
             action_order = {"BUY_NOW": 5, "WAIT_FOR_ENTRY": 4, "WATCH": 3, "DATA_INSUFFICIENT": 2, "AVOID": 1}
             candidates.sort(key=lambda row: (action_order.get(row["action"], 0), row["rank_value"], row["score"]), reverse=True)
             analyzed_action_counts = {
@@ -518,7 +578,8 @@ async def run_daily_pipeline(job_id: str) -> None:
                 "published_at": now.isoformat(), "snapshot_time_ist": now.strftime("%d %b %Y, %H:%M IST"),
                 "market_regime": market_regime, "universe": {
                     "official_equities": len(universe), "eligible": len(preliminary),
-                    "deeply_enriched": len(enriched), "published": len(candidates),
+                    "ranked": len(rankings), "deeply_enriched": len(enriched),
+                    "published": len(candidates),
                 },
                 "data_health": {"status": "attention" if data_exceptions else "healthy",
                                 "exceptions": data_exceptions, "official_price_as_of": bhavcopy.get("as_of"),
@@ -553,8 +614,9 @@ async def run_daily_pipeline(job_id: str) -> None:
             snapshot_id = db.publish_analysis_snapshot(summary, candidates, sectors,
                                                        model_version=cfo_engine.MODEL_VERSION,
                                                        trading_date=trading_date,
-                                                       job_id=job_id)
-            db.screen_save("CFO Morning Top 100", [c["symbol"] for c in candidates], candidates, time.time())
+                                                       job_id=job_id, rankings=rankings,
+                                                       schema_version=SNAPSHOT_SCHEMA_VERSION)
+            db.screen_save("CFO Deep-analysis bench", [c["symbol"] for c in candidates], candidates, time.time())
             published_action_counts = {
                 action: sum(candidate["action"] == action for candidate in candidates)
                 for action in action_order
@@ -568,6 +630,7 @@ async def run_daily_pipeline(job_id: str) -> None:
                                   "usable_histories": usable_histories,
                                   "missing_market_histories": len(universe) - usable_histories,
                                   "eligible": len(preliminary),
+                                  "ranked": len(rankings),
                                   "deeply_enriched": len(enriched),
                                   "partial_financials": partial_financials,
                                   "published": len(candidates),

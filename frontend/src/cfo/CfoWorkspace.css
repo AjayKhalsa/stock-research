@@ -161,6 +161,22 @@
 .cfo-filterbar button span { margin-left: 6px; opacity: .72; }
 .cfo-candidate-search { display: grid; gap: 6px; max-width: 420px; margin-top: 18px; color: var(--cfo-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
 .cfo-candidate-search input { min-height: 42px; padding: 0 13px; color: var(--cfo-ink); background: #fff; border: 1px solid var(--cfo-line); border-radius: 9px; font: 500 13px var(--font-body); text-transform: none; letter-spacing: normal; }
+.cfo-ranking-summary { margin-top: 18px; }
+.cfo-ranking-controls { margin: 18px 0 10px; display: grid; grid-template-columns: minmax(260px, 1fr) 190px 210px; align-items: end; gap: 10px; }
+.cfo-ranking-controls .cfo-candidate-search { max-width: none; margin: 0; }
+.cfo-ranking-controls > label { display: grid; gap: 6px; color: var(--cfo-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.cfo-ranking-controls select { min-height: 42px; padding: 0 12px; color: var(--cfo-ink); background: #fff; border: 1px solid var(--cfo-line); border-radius: 9px; font: 500 12px var(--font-body); text-transform: none; letter-spacing: normal; }
+.cfo-ranking-head, .cfo-ranking-row { display: grid; grid-template-columns: 70px minmax(170px, 1.25fr) 90px 110px 95px 120px minmax(230px, 1.5fr); align-items: center; gap: 12px; }
+.cfo-ranking-head { padding: 10px 15px; color: var(--cfo-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.cfo-ranking-list { max-height: calc(100vh - 360px); overflow: auto; border: 1px solid var(--cfo-line); border-radius: 10px; background: #fff; }
+.cfo-ranking-row { width: 100%; min-height: 66px; padding: 9px 15px; color: inherit; text-align: left; background: #fff; border: 0; border-top: 1px solid #e9ecf0; cursor: pointer; content-visibility: auto; contain-intrinsic-block-size: 66px; }
+.cfo-ranking-row:first-child { border-top: 0; }
+.cfo-ranking-row:hover { background: #f8f9fb; }
+.cfo-ranking-row > span:not(.cfo-company):not(.cfo-rank) { display: grid; min-width: 0; }
+.cfo-ranking-row small { color: var(--cfo-muted); font-size: 9px; text-transform: capitalize; }
+.cfo-ranking-row > span:last-child strong { color: #4f5b6e; font-size: 10px; font-weight: 500; line-height: 1.35; }
+.cfo-load-more { min-height: 42px; margin: 14px auto 0; padding: 0 18px; display: block; color: var(--cfo-indigo-dark); background: #fff; border: 1px solid var(--cfo-line); border-radius: 9px; cursor: pointer; font-weight: 700; }
+.cfo-load-more:disabled { opacity: .55; cursor: progress; }
 .cfo-rejected { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--cfo-line); }
 .cfo-bench-head, .cfo-candidate-main { display: grid; grid-template-columns: 48px minmax(180px, 1.5fr) 130px 120px 92px 105px 80px 95px 24px; align-items: center; gap: 10px; }
 .cfo-bench-head { padding: 10px 15px; color: var(--cfo-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
@@ -408,6 +424,18 @@
   .cfo-sector-grid > button { min-height: 158px; }
   .cfo-sector-candidates > button { grid-template-columns: 65px minmax(0,1fr) auto; }
   .cfo-sector-candidates > button .cfo-pill { display: none; }
+  .cfo-ranking-controls { grid-template-columns: 1fr 1fr; }
+  .cfo-ranking-controls .cfo-candidate-search { grid-column: 1 / -1; }
+  .cfo-ranking-head { display: none; }
+  .cfo-ranking-list { max-height: none; overflow: visible; border: 0; background: transparent; }
+  .cfo-ranking-row { min-height: 150px; margin-bottom: 9px; padding: 14px; grid-template-columns: 44px minmax(0,1fr) auto; grid-template-areas: 'rank company action' '. score depth' '. decision note'; gap: 10px; border: 1px solid var(--cfo-line) !important; border-radius: 10px; }
+  .cfo-ranking-row > .cfo-rank { grid-area: rank; }
+  .cfo-ranking-row > .cfo-company { grid-area: company; }
+  .cfo-ranking-row > span:nth-child(3) { grid-area: score; }
+  .cfo-ranking-row > span:nth-child(4) { grid-area: depth; justify-self: end; }
+  .cfo-ranking-row > span:nth-child(5) { grid-area: decision; }
+  .cfo-ranking-row > span:nth-child(6) { grid-area: action; }
+  .cfo-ranking-row > span:nth-child(7) { grid-area: note; justify-self: end; text-align: right; }
   .cfo-bench-head { display: none; }
   .cfo-bench { max-height: none; overflow: visible; border: 0; background: transparent; }
   .cfo-candidate { margin-bottom: 9px; border: 1px solid var(--cfo-line) !important; border-radius: 10px; overflow: hidden; background: #fff; }
