@@ -60,7 +60,8 @@ const brief = {
   data_archive_status: { immutable_revisions: true, latest_raw_date: '2026-08-28',
     latest_feature_date: '2026-08-28', counts: { securities: 2200,
       market_prices_raw: 2200, market_prices_adjusted: 78000,
-      financial_reports: 900, company_events: 40, stock_feature_snapshots: 2350 },
+      financial_reports: 900, financial_metrics: 12000,
+      company_events: 40, stock_feature_snapshots: 2350 },
     latest_audit: { status: 'attention', as_of_date: '2026-08-28',
       metrics: { failures: 0, warnings: 2, raw_coverage_pct: 100,
         feature_coverage_pct: 100 },
@@ -222,6 +223,7 @@ test('shows the automatic historical truth ledger in System', async () => {
   expect(screen.getByText(/False positives and false negatives/i)).toBeInTheDocument();
   expect(screen.getByText(/Point-in-time data foundation/i)).toBeInTheDocument();
   expect(screen.getByText('78000')).toBeInTheDocument();
+  expect(screen.getByText('12000')).toBeInTheDocument();
   expect(screen.getByText(/Automated archive audit/i)).toBeInTheDocument();
   expect(screen.getByText(/0 failures · 2 warnings/i)).toBeInTheDocument();
   expect(screen.getByText(/Seven-run operating history/i)).toBeInTheDocument();

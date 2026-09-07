@@ -358,8 +358,25 @@ class CfoEngineTests(unittest.TestCase):
         self.assertEqual(result["sector"], "Financial Services")
         self.assertEqual(result["industry"], "Capital Markets")
 
+    def test_financial_overlay_retains_both_provider_documents(self):
+        result = data_cache.enrich_with_yf_fundamentals(
+            {"source_url": "https://www.screener.in/company/TCS/consolidated/",
+             "annual_pl": [{"year": "Mar 2025", "revenue": 100,
+                            "source": "Screener.in",
+                            "source_url": "https://www.screener.in/company/TCS/consolidated/"}]},
+            {"source_url": "https://finance.yahoo.com/quote/TCS.NS/financials/",
+             "pl_by_year": {2025: {"revenue": 110}},
+             "bs_by_year": {}, "cf_by_year": {}},
+        )
+        self.assertEqual(result["annual_pl"][0]["revenue"], 110)
+        self.assertEqual(len(result["provider_sources"]), 2)
+        self.assertEqual(result["annual_pl"][0]["supplemental_sources"][0]["source"],
+                         "Yahoo Finance")
+
     def test_daily_pipeline_requires_majority_price_history_coverage(self):
-        self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_RATIO, 0.50)
+        self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_RATIO, 0.70)
+        self.assertEqual(market_pipeline.MINIMUM_USABLE_HISTORY_ABSOLUTE, 1500)
+        self.assertEqual(market_pipeline.MINIMUM_ELIGIBLE_STOCKS, 500)
         self.assertEqual(market_pipeline.PUBLISHED_CANDIDATES, 100)
 
     def test_daily_pipeline_excludes_in_progress_bar_after_official_close(self):
@@ -481,6 +498,101 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(len(response.json()["runs"]), 1)
         self.assertEqual(response.json()["runs"][0]["payload"]["stocks_scanned"], 2288)
         self.assertGreaterEqual(response.json()["runs"][0]["duration_seconds"], 0)
+        self.assertIsNotNone(response.json()["runs"][0]["heartbeat_age_seconds"])
+        status = self.client.get("/api/jobs/daily/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertIn("latest_valid_session", status.json())
+        self.assertIn("consecutive_failures", status.json())
+        self.assertIn("lease_active", status.json())
+
+    def test_daily_job_lease_is_reused_and_released_on_terminal_status(self):
+        first = db.acquire_job_run(
+            job_type="lease_test_live", model_version="test-model", lease_seconds=60,
+        )
+        second = db.acquire_job_run(
+            job_type="lease_test_live", model_version="test-model", lease_seconds=60,
+        )
+        self.assertFalse(first["reused"])
+        self.assertTrue(second["reused"])
+        self.assertEqual(second["id"], first["id"])
+
+        db.update_job_run(first["id"], status="completed", stage="published")
+        third = db.acquire_job_run(
+            job_type="lease_test_live", model_version="test-model", lease_seconds=60,
+        )
+        self.assertNotEqual(third["id"], first["id"])
+        db.update_job_run(third["id"], status="failed", stage="failed")
+
+    def test_expired_daily_job_lease_abandons_old_owner(self):
+        first = db.acquire_job_run(
+            job_type="lease_test_expired", model_version="test-model", lease_seconds=60,
+        )
+        with db._conn() as connection:
+            connection.execute(
+                db._sql("UPDATE job_leases SET expires_at=? WHERE job_type=?"),
+                (0, "lease_test_expired"),
+            )
+        replacement = db.acquire_job_run(
+            job_type="lease_test_expired", model_version="test-model", lease_seconds=60,
+        )
+        self.assertNotEqual(replacement["id"], first["id"])
+        self.assertEqual(db.get_job_run(first["id"])["status"], "abandoned")
+        db.update_job_run(replacement["id"], status="failed", stage="failed")
+
+    def test_expired_worker_cannot_publish_after_lease_takeover(self):
+        first = db.acquire_job_run(
+            job_type="lease_test_publish", model_version="lease-guard-v1",
+            lease_seconds=60,
+        )
+        db.assign_job_run_target(
+            first["id"], target_session="2026-09-03",
+            model_version="lease-guard-v1",
+        )
+        with db._conn() as connection:
+            connection.execute(
+                db._sql("UPDATE job_leases SET expires_at=? WHERE job_type=?"),
+                (0, "lease_test_publish"),
+            )
+        replacement = db.acquire_job_run(
+            job_type="lease_test_publish", model_version="lease-guard-v1",
+            lease_seconds=60,
+        )
+        db.assign_job_run_target(
+            replacement["id"], target_session="2026-09-03",
+            model_version="lease-guard-v1",
+        )
+        candidate = {"symbol": "LEASEGUARD", "sector": "IT", "action": "WATCH"}
+        with self.assertRaisesRegex(RuntimeError, "lost its durable publication lease"):
+            db.publish_analysis_snapshot(
+                {"candidates": [candidate], "sectors": []}, [candidate], [],
+                model_version="lease-guard-v1", trading_date="2026-09-03",
+                job_id=first["id"],
+            )
+        snapshot_id = db.publish_analysis_snapshot(
+            {"candidates": [candidate], "sectors": []}, [candidate], [],
+            model_version="lease-guard-v1", trading_date="2026-09-03",
+            job_id=replacement["id"],
+        )
+        self.assertTrue(snapshot_id)
+        db.update_job_run(replacement["id"], status="completed", stage="published")
+
+    def test_job_target_detects_existing_session_publication(self):
+        candidate = {"symbol": "LEASEPUB", "sector": "IT", "action": "WATCH"}
+        snapshot_id = db.publish_analysis_snapshot(
+            {"candidates": [candidate], "sectors": []}, [candidate], [],
+            model_version="lease-publish-v1", trading_date="2026-09-04",
+        )
+        job = db.acquire_job_run(
+            job_type="lease_test_target", model_version="lease-publish-v1",
+        )
+        target = db.assign_job_run_target(
+            job["id"], target_session="2026-09-04",
+            model_version="lease-publish-v1",
+        )
+        self.assertEqual(target["existing_snapshot_id"], snapshot_id)
+        self.assertEqual(target["job"]["target_session"], "2026-09-04")
+        self.assertEqual(target["job"]["attempt"], 1)
+        db.update_job_run(job["id"], status="completed", stage="already_published")
 
     def test_backtest_endpoints_expose_point_in_time_report_and_validate_costs(self):
         report = backtest_engine.run_snapshot_backtest(persist=False)
@@ -674,7 +786,7 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         matching = [item for item in db.recommendation_outcomes_recent(500)
                     if item["symbol"] == "SHADOWTEST"
                     and item["model_version"] == "shadow-test-v1"]
-        self.assertNotEqual(second_snapshot, snapshot_id)
+        self.assertEqual(second_snapshot, snapshot_id)
         self.assertEqual(len(matching), 1)
 
     def test_human_review_rejects_unknown_recommendation_snapshot(self):
@@ -708,6 +820,15 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertEqual(audit.status_code, 200)
         self.assertIn(audit.json()["status"], {"healthy", "attention", "failed"})
         self.assertIn("raw_coverage_pct", audit.json()["metrics"])
+
+        with patch("routers.cfo_workspace.db.financial_metric_history",
+                   return_value=[{"metric_name": "roe", "metric_value": 18}]) as history:
+            metrics = self.client.get(
+                "/api/data-archive/financials/TCS?metric=roe&as_of=500&limit=10"
+            )
+        self.assertEqual(metrics.status_code, 200)
+        self.assertEqual(metrics.json()["rows"][0]["metric_name"], "roe")
+        history.assert_called_once_with("TCS", metric="roe", as_of=500.0, limit=10)
 
     def test_any_eligible_nse_stock_can_be_analysed_on_demand(self):
         history = candles()

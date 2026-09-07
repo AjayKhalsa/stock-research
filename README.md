@@ -23,9 +23,9 @@ npm start
 ```
 
 The included GitHub workflow uses its short-lived job installation token to
-call the protected `POST /api/jobs/daily/run` early on weekdays. It is queued
-at 02:00 IST to absorb GitHub's observed multi-hour scheduler delay and keep
-the completed snapshot available for the morning decision window. The
+call the protected `POST /api/jobs/daily/run` at 02:00, 04:00 and 06:00 IST on
+trading mornings. A durable database lease admits only one worker, and later
+attempts reuse the same session/model result after it has published. The
 backend verifies both repository access and the live workflow run, so no shared
 scheduler secret is required. `CRON_SECRET_KEY` remains available as an optional
 fallback when using another scheduler.
@@ -58,6 +58,14 @@ filing date, and source document when available. Missing filing dates remain
 missing; point-in-time consumers can safely fall back to the observation time
 instead of assuming the data was known earlier.
 
+Statement payloads are also flattened into immutable, queryable metric rows
+with metric name, numeric value, unit, period, observation time, optional filing
+date, provider page, and revision hash. Screener and Yahoo overlays retain both
+provider pages rather than presenting a blended number as exchange-filed data.
+Point-in-time metric history is available at
+`GET /api/data-archive/financials/{symbol}` with optional `metric` and `as_of`
+filters.
+
 Each completed scan also persists a bounded archive-quality audit. It checks
 canonical identifiers, duplicate symbols, official-session and universe
 coverage, OHLC/volume integrity, orphan records, feature coverage, and
@@ -69,7 +77,9 @@ Daily jobs retain a bounded operating ledger at `GET /api/jobs/daily/history`.
 Completed rows include duration, universe/history coverage, financial gaps,
 published and analyzed action counts, committee/provider failures, archive
 attempts, and data-quality totals. Failed rows retain the failed stage and
-elapsed time while the last valid research snapshot remains untouched.
+elapsed time while the last valid research snapshot remains untouched. Durable
+30-minute ownership leases, stage heartbeats and startup cleanup prevent
+duplicate workers and turn interrupted rows into explicit `abandoned` history.
 
 ## Bull AI evidence
 
@@ -87,8 +97,8 @@ from loading.
 The all-NSE price pass is sized for Render's free memory limit: six bounded
 Yahoo chart requests run at once, only one 75-symbol batch is resident, and
 full candles are retained only for the top-150/owned/watched bench. A snapshot
-is held back unless at least half the official universe has 252-session history
-and at least 100 stocks pass the price/liquidity gates.
+is held back unless at least `max(1,500, 70% of the official universe)` has
+252-session history and at least 500 stocks pass the price/liquidity gates.
 
 Swing model `swing-v1.5.0` separates business quality from quarterly earnings
 momentum, labels margin expansion/contraction, measures overhead supply, clear

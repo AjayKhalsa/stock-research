@@ -377,11 +377,12 @@ async def resolve_screener_slug(symbol: str) -> Optional[str]:
     return best
 
 
-async def _fetch_screener_html(symbol: str) -> Optional[str]:
+async def _fetch_screener_html(symbol: str) -> Optional[tuple[str, str]]:
     """
     Resilient HTML fetch: try the direct consolidated/standalone slugs, retry
     once on a transient failure (429 / connection drop), and finally resolve
-    the canonical slug through the search API. Returns HTML or None.
+    the canonical slug through the search API. Returns (HTML, final URL) or
+    None so every parsed financial observation can retain its provider page.
     """
     urls = [
         f"https://www.screener.in/company/{symbol}/consolidated/",
@@ -393,7 +394,7 @@ async def _fetch_screener_html(symbol: str) -> Optional[str]:
             async with httpx.AsyncClient(timeout=22, follow_redirects=True) as c:
                 r = await c.get(url, headers=SCRAPE_HEADERS)
             if r.status_code == 200:
-                return r.text
+                return r.text, str(r.url)
             if r.status_code == 429:
                 rate_limited = True
             print(f"[screener_full] HTTP {r.status_code} from {url}"
@@ -414,7 +415,7 @@ async def _fetch_screener_html(symbol: str) -> Optional[str]:
                     r = await c.get(url, headers=SCRAPE_HEADERS)
                 if r.status_code == 200:
                     print(f"[screener_full] resolved {symbol} -> slug {slug}")
-                    return r.text
+                    return r.text, str(r.url)
             except Exception as e:
                 print(f"[screener_full] slug retry {type(e).__name__}: {e} ({url})")
 
@@ -429,9 +430,16 @@ async def fetch_screener_full(symbol: str) -> dict:
     the merged top-ratio + annual P&L / balance sheet / cash flow dict.
     Returns {} only when every attempt failed.
     """
-    html = await _fetch_screener_html(symbol)
-    if html is None:
+    document = await _fetch_screener_html(symbol)
+    if document is None:
         return {}
+    html, source_url = document
     base   = parse_screener(html)
     annual = parse_screener_annual(html)
-    return {**base, **annual}
+    result = {**base, **annual, "source_url": source_url}
+    for key in ("quarterly_results", "annual_pl", "annual_bs", "annual_cf"):
+        for period in result.get(key) or []:
+            if isinstance(period, dict):
+                period.setdefault("source", "Screener.in")
+                period.setdefault("source_url", source_url)
+    return result

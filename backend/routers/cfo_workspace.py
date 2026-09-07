@@ -289,6 +289,16 @@ def data_archive_audit():
     return db.run_data_archive_audit(persist=False)
 
 
+@router.get("/api/data-archive/financials/{symbol}")
+def financial_metric_history(symbol: str, metric: Optional[str] = None,
+                             as_of: Optional[float] = None, limit: int = 500):
+    _feature_enabled()
+    return {"symbol": symbol.upper(), "metric": metric, "as_of": as_of,
+            "rows": db.financial_metric_history(
+                symbol, metric=metric, as_of=as_of, limit=limit,
+            )}
+
+
 @router.get("/api/recommendation-outcomes/stats")
 def recommendation_outcome_stats():
     _feature_enabled()
@@ -341,7 +351,7 @@ def shadow_model(model_version: Optional[str] = None):
 @router.get("/api/jobs/daily/status")
 def daily_status():
     _feature_enabled()
-    return db.latest_job_run() or {"status": "never_run", "stage": "waiting", "progress": 0, "total": 0}
+    return db.daily_job_control_status()
 
 
 @router.get("/api/jobs/daily/history")

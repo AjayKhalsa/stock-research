@@ -56,7 +56,7 @@ Running a screen follows the same shape but additionally fans out to Screener.in
 
 ## 2. Tech Stack
 
-**Backend** — Python, FastAPI, uvicorn. No ORM (raw SQL via `sqlite3`/`psycopg`). Interactive work remains request-based; the all-NSE morning analysis is a protected in-process background job launched by the weekday scheduler, with staged progress, bounded concurrency and failure-safe publishing.
+**Backend** — Python, FastAPI, uvicorn. No ORM (raw SQL via `sqlite3`/`psycopg`). Interactive work remains request-based; the all-NSE morning analysis is a protected background job launched by the weekday scheduler, with a durable database lease, staged heartbeats, bounded concurrency and failure-safe publishing.
 
 ```
 fastapi, uvicorn[standard], httpx, beautifulsoup4, lxml, feedparser,
@@ -89,7 +89,7 @@ The `cfo_workspace_v1` shell replaces the permanent three-column landing page
 with a compact rail: **Morning, Sectors, Candidates, Portfolio, Research,
 System**. Mobile uses Morning/Sectors/Watchlist/Search/More bottom navigation.
 
-The 07:00 IST pipeline loads NSE's official master, removes other series/ETF
+The pre-market daily pipeline loads NSE's official master, removes other series/ETF
 instruments, downloads adjusted history in bulk, applies the 252-session,
 ₹20, and ₹5-crore traded-value gates, reconciles Yahoo with NSE bhavcopy, and
 deep-enriches the strongest 150 plus the watchlist/paper portfolio. It stores a
@@ -97,8 +97,9 @@ versioned Top-100 snapshot; a failed run never replaces the last valid one.
 The universe pass uses Yahoo's compact chart JSON with six bounded concurrent
 requests rather than retaining pandas frames or spawning a second yfinance
 process. Only the current 75-symbol batch and a top-150 candle heap stay in
-memory. Publication requires usable 252-session history for at least 50% of the
-official universe and at least 100 eligible equities; otherwise the run records
+memory. Publication requires usable 252-session history for at least
+`max(1,500, 70% of the official universe)` and at least 500 eligible equities;
+otherwise the run records
 an explicit coverage failure and Morning explains why no snapshot was shown.
 
 Candidate scores use versioned, deterministic components: setup 20%, earnings
@@ -288,7 +289,7 @@ Institutional-footprint detectors, described in-code as "the present-day confirm
 
 ### 4.8 Persistence — `db.py`
 
-Dual-backend by design (see §1): **Postgres when `DATABASE_URL` is set, SQLite otherwise** (local dev default, zero config). Every public function has an identical signature on both backends. Alongside watchlist/alerts/settings/cache/screens/paper trades, the CFO workspace stores `analysis_snapshots`, `candidate_analyses`, `sector_snapshots`, `job_runs`, `backtest_runs`, `recommendation_outcomes`, and versioned `candidate_enrichments`. Snapshot publication and its child records commit atomically. The SQLite path also auto-migrates legacy JSON data. A concise source-backed Bull AI seed is idempotently loaded on startup; large raw connector responses are not persisted.
+Dual-backend by design (see §1): **Postgres when `DATABASE_URL` is set, SQLite otherwise** (local dev default, zero config). Every public function has an identical signature on both backends. Alongside watchlist/alerts/settings/cache/screens/paper trades, the CFO workspace stores `analysis_snapshots`, `candidate_analyses`, `sector_snapshots`, `job_runs`, durable `job_leases`, `backtest_runs`, `recommendation_outcomes`, and versioned `candidate_enrichments`. Snapshot publication and its child records commit atomically. Daily ownership is serialized in the database, refreshed by stage heartbeats and abandoned after 30 minutes without a heartbeat; a `(trading session, model version)` result is reused rather than republished. The SQLite path also auto-migrates legacy JSON data. A concise source-backed Bull AI seed is idempotently loaded on startup; large raw connector responses are not persisted.
 
 ### 4.9 Alerts — `alert_store.py`
 
@@ -310,7 +311,7 @@ All routes are prefixed `/api/`. The personal research reads remain open; daily-
 | GET | `/api/backtests/latest` | Latest point-in-time, cost-adjusted validation report |
 | GET | `/api/backtests` | Recent stored validation runs |
 | POST | `/api/backtests/run` | Recompute validation with bounded cost assumptions |
-| GET | `/api/jobs/daily/status` | Staged daily-job progress/error |
+| GET | `/api/jobs/daily/status` | Staged progress, session target, heartbeat, lease and failure streak |
 | POST | `/api/jobs/daily/run` | Protected all-NSE snapshot launch |
 | GET/PUT | `/api/portfolio/settings` | Versioned portfolio risk policy |
 
@@ -395,10 +396,10 @@ All routes are prefixed `/api/`. The personal research reads remain open; daily-
 | Frontend build | Vercel, builds from `main`. `REACT_APP_API_URL` set as a Vercel env var (build-time, requires rebuild to change) |
 | Backend | Render (`render.yaml` blueprint), free web plan, `uvicorn main:app` |
 | Database | `DATABASE_URL` env var on Render → the Supabase session pooler; `DB_POOL_SIZE` defaults to 6 |
-| Secrets | `GEMINI_API_KEY` is set directly in Render. GitHub Actions uses its short-lived job installation token; the backend verifies repository access and the active `main` run. `CRON_SECRET_KEY` remains an optional fallback for another scheduler. The workflow queues at 02:00 IST so observed GitHub delays still finish before the morning window; analysis always uses the latest completed NSE session. |
+| Secrets | `GEMINI_API_KEY` is set directly in Render. GitHub Actions uses its short-lived job installation token; the backend verifies repository access and the active `main` run. `CRON_SECRET_KEY` remains an optional fallback for another scheduler. The workflow attempts at 02:00, 04:00 and 06:00 IST; the durable lease and session/model idempotency make repeats safe. Analysis always uses the latest completed NSE session. |
 | CORS | Backend allows any `*.vercel.app` origin plus local dev hosts — no per-deployment CORS config needed |
 
-**To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY` and `DATABASE_URL`; deploy `frontend/` to Vercel with `REACT_APP_API_URL` pointed at the backend. The weekday workflow sends its short-lived GitHub installation token and run ID at 07:00 IST; the backend verifies that the token can access this repository and that the referenced scheduled/manual run is currently active on `main`. Set `CRON_SECRET_KEY` only if an additional non-GitHub scheduler needs access. `db.py` speaks standard Postgres via `psycopg` and uses a bounded connection pool in production. Bull AI is not a required backend secret or runtime dependency: approved evidence is normalized into the enrichment store before publication.
+**To stand this up fresh:** deploy `backend/` to Render (or any ASGI host) with `GEMINI_API_KEY` and `DATABASE_URL`; deploy `frontend/` to Vercel with `REACT_APP_API_URL` pointed at the backend. The weekday workflow sends its short-lived GitHub installation token and run ID at 02:00, 04:00 and 06:00 IST; the backend verifies that the token can access this repository and that the referenced scheduled/manual run is currently active on `main`. Set `CRON_SECRET_KEY` only if an additional non-GitHub scheduler needs access. `db.py` speaks standard Postgres via `psycopg` and uses a bounded connection pool in production. Bull AI is not a required backend secret or runtime dependency: approved evidence is normalized into the enrichment store before publication.
 
 ---
 

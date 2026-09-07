@@ -71,6 +71,7 @@ class ImmutableArchiveTests(unittest.TestCase):
             "symbol": self.SYMBOL, "isin": self.ISIN, "observed_at": 500,
             "origin": "exchange filing",
             "payload": {
+                "source_url": "https://example.test/company/archive-quality",
                 "quarterly_results": [{"quarter": "2026-Q1", "revenue": 100,
                                        "net_profit": 12, "filing_date": "2026-08-01"}],
                 "annual_bs": [{"year": "2026", "debt": 20, "cash": 15}],
@@ -92,11 +93,19 @@ class ImmutableArchiveTests(unittest.TestCase):
         self.assertEqual(counts["corporate_actions"] - before["corporate_actions"], 1)
         self.assertEqual(counts["stock_feature_snapshots"] - before["stock_feature_snapshots"], 3)
         self.assertEqual(counts["financial_reports"] - before["financial_reports"], 3)
+        self.assertEqual(counts["financial_metrics"] - before["financial_metrics"], 6)
         self.assertEqual(counts["company_events"] - before["company_events"], 2)
         self.assertTrue(after["immutable_revisions"])
         self.assertEqual(audit["metrics"]["failures"], 0)
         self.assertEqual(audit["status"], "attention")
+        self.assertEqual(audit["metrics"]["financial_metric_count"], 6)
         self.assertEqual(after["latest_audit"]["as_of_date"], "2026-09-04")
+        metrics = db.financial_metric_history(self.SYMBOL)
+        self.assertEqual(len(metrics), 6)
+        self.assertTrue(all(row["source_document"] for row in metrics))
+        self.assertEqual(db.financial_metric_history(self.SYMBOL, metric="roe")[0]["unit"],
+                         "percent")
+        self.assertEqual(db.financial_metric_history(self.SYMBOL, as_of=499), [])
 
 
 if __name__ == "__main__":

@@ -30,7 +30,9 @@ PUBLISHED_CANDIDATES = 100
 MAX_ACTIONABLE_TODAY = 5
 MAX_NEAR_TRIGGER = 10
 FUNDAMENTAL_CONCURRENCY = 4
-MINIMUM_USABLE_HISTORY_RATIO = 0.50
+MINIMUM_USABLE_HISTORY_RATIO = 0.70
+MINIMUM_USABLE_HISTORY_ABSOLUTE = 1500
+MINIMUM_ELIGIBLE_STOCKS = 500
 
 _RUN_LOCK = asyncio.Lock()
 _ACTIVE_TASK: asyncio.Task | None = None
@@ -216,7 +218,30 @@ async def run_daily_pipeline(job_id: str) -> None:
                 nse_bhavcopy.fetch_latest_bhavcopy(),
             )
             official_as_of = bhavcopy.get("as_of")
+            if not official_as_of:
+                raise RuntimeError("Official NSE bhavcopy session is unavailable")
             nifty = _completed_history(nifty, official_as_of)
+            nifty_as_of = str((nifty[-1] if nifty else {}).get("date") or "")[:10]
+            if nifty_as_of != str(official_as_of)[:10]:
+                raise RuntimeError(
+                    f"NIFTY benchmark session {nifty_as_of or 'unavailable'} does not match "
+                    f"official NSE session {official_as_of}"
+                )
+            target = db.assign_job_run_target(
+                job_id, target_session=str(official_as_of)[:10],
+                model_version=cfo_engine.MODEL_VERSION,
+            )
+            if target.get("existing_snapshot_id"):
+                db.update_job_run(
+                    job_id, status="completed", stage="already_published",
+                    progress=0, total=0, payload={
+                        "snapshot_id": target["existing_snapshot_id"],
+                        "trading_date": str(official_as_of)[:10],
+                        "publication_reused": True,
+                        "duration_seconds": round(time.time() - pipeline_started_at, 2),
+                    },
+                )
+                return
             official_bars = bhavcopy.get("bars") or {}
             universe = [row for row in universe if _is_mainboard_cash_equity(row)]
             if not universe:
@@ -284,16 +309,19 @@ async def run_daily_pipeline(job_id: str) -> None:
                                   payload={"eligible": len(preliminary), "universe": len(universe),
                                            "usable_histories": usable_histories})
 
-            minimum_usable = max(PUBLISHED_CANDIDATES, int(len(universe) * MINIMUM_USABLE_HISTORY_RATIO))
+            minimum_usable = max(
+                MINIMUM_USABLE_HISTORY_ABSOLUTE,
+                int(len(universe) * MINIMUM_USABLE_HISTORY_RATIO),
+            )
             if usable_histories < minimum_usable:
                 raise RuntimeError(
                     f"Price-history coverage too low: {usable_histories}/{len(universe)} "
                     f"usable (minimum {minimum_usable})"
                 )
-            if len(preliminary) < PUBLISHED_CANDIDATES:
+            if len(preliminary) < MINIMUM_ELIGIBLE_STOCKS:
                 raise RuntimeError(
                     f"Eligible universe too small: {len(preliminary)} "
-                    f"(minimum {PUBLISHED_CANDIDATES})"
+                    f"(minimum {MINIMUM_ELIGIBLE_STOCKS})"
                 )
 
             feature_date = official_as_of or (
@@ -524,7 +552,8 @@ async def run_daily_pipeline(job_id: str) -> None:
             trading_date = bhavcopy.get("as_of") or (nifty[-1].get("date") if nifty else now.date().isoformat())
             snapshot_id = db.publish_analysis_snapshot(summary, candidates, sectors,
                                                        model_version=cfo_engine.MODEL_VERSION,
-                                                       trading_date=trading_date)
+                                                       trading_date=trading_date,
+                                                       job_id=job_id)
             db.screen_save("CFO Morning Top 100", [c["symbol"] for c in candidates], candidates, time.time())
             published_action_counts = {
                 action: sum(candidate["action"] == action for candidate in candidates)
@@ -562,9 +591,17 @@ async def run_daily_pipeline(job_id: str) -> None:
 
 def start_daily_pipeline() -> dict:
     global _ACTIVE_TASK
-    latest = db.latest_job_run()
     if _ACTIVE_TASK and not _ACTIVE_TASK.done():
-        return latest or {"status": "running"}
-    job = db.create_job_run()
-    _ACTIVE_TASK = asyncio.create_task(run_daily_pipeline(job["id"]))
+        return db.latest_job_run() or {"status": "running"}
+    job = db.acquire_job_run(model_version=cfo_engine.MODEL_VERSION)
+    if job.get("reused"):
+        return job
+    try:
+        _ACTIVE_TASK = asyncio.create_task(run_daily_pipeline(job["id"]))
+    except Exception as exc:
+        db.update_job_run(
+            job["id"], status="failed", stage="failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
     return job

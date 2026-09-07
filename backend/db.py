@@ -246,9 +246,25 @@ CREATE TABLE IF NOT EXISTS job_runs (
     error       TEXT,
     payload     TEXT,
     started_at  REAL NOT NULL,
-    finished_at REAL
+    finished_at REAL,
+    target_session TEXT,
+    model_version TEXT,
+    attempt     INTEGER NOT NULL DEFAULT 1,
+    lease_owner TEXT,
+    heartbeat_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs_latest ON job_runs(job_type, started_at);
+CREATE INDEX IF NOT EXISTS idx_job_runs_target
+    ON job_runs(job_type, target_session, model_version, started_at);
+
+CREATE TABLE IF NOT EXISTS job_leases (
+    job_type     TEXT PRIMARY KEY,
+    job_id       TEXT NOT NULL,
+    lease_owner  TEXT NOT NULL,
+    acquired_at  REAL NOT NULL,
+    heartbeat_at REAL NOT NULL,
+    expires_at   REAL NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id            TEXT PRIMARY KEY,
@@ -383,6 +399,28 @@ CREATE TABLE IF NOT EXISTS financial_reports (
 );
 CREATE INDEX IF NOT EXISTS idx_financial_reports_point_in_time
     ON financial_reports(security_id, observed_at, statement_type);
+CREATE INDEX IF NOT EXISTS idx_financial_reports_latest_period
+    ON financial_reports(security_id, statement_type, period_label, observed_at);
+
+CREATE TABLE IF NOT EXISTS financial_metrics (
+    id              TEXT PRIMARY KEY,
+    report_id       TEXT NOT NULL,
+    security_id     TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    statement_type  TEXT NOT NULL,
+    period_label    TEXT NOT NULL,
+    metric_name     TEXT NOT NULL,
+    metric_value    REAL NOT NULL,
+    unit            TEXT,
+    filing_date     TEXT,
+    observed_at     REAL NOT NULL,
+    source          TEXT,
+    source_document TEXT,
+    revision_hash   TEXT NOT NULL,
+    UNIQUE(report_id, metric_name, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_financial_metrics_point_in_time
+    ON financial_metrics(security_id, metric_name, observed_at);
 
 CREATE TABLE IF NOT EXISTS company_events (
     id            TEXT PRIMARY KEY,
@@ -583,9 +621,25 @@ CREATE TABLE IF NOT EXISTS job_runs (
     error       TEXT,
     payload     TEXT,
     started_at  DOUBLE PRECISION NOT NULL,
-    finished_at DOUBLE PRECISION
+    finished_at DOUBLE PRECISION,
+    target_session TEXT,
+    model_version TEXT,
+    attempt     INTEGER NOT NULL DEFAULT 1,
+    lease_owner TEXT,
+    heartbeat_at DOUBLE PRECISION
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs_latest ON job_runs(job_type, started_at);
+CREATE INDEX IF NOT EXISTS idx_job_runs_target
+    ON job_runs(job_type, target_session, model_version, started_at);
+
+CREATE TABLE IF NOT EXISTS job_leases (
+    job_type     TEXT PRIMARY KEY,
+    job_id       TEXT NOT NULL,
+    lease_owner  TEXT NOT NULL,
+    acquired_at  DOUBLE PRECISION NOT NULL,
+    heartbeat_at DOUBLE PRECISION NOT NULL,
+    expires_at   DOUBLE PRECISION NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id            TEXT PRIMARY KEY,
@@ -720,6 +774,28 @@ CREATE TABLE IF NOT EXISTS financial_reports (
 );
 CREATE INDEX IF NOT EXISTS idx_financial_reports_point_in_time
     ON financial_reports(security_id, observed_at, statement_type);
+CREATE INDEX IF NOT EXISTS idx_financial_reports_latest_period
+    ON financial_reports(security_id, statement_type, period_label, observed_at);
+
+CREATE TABLE IF NOT EXISTS financial_metrics (
+    id              TEXT PRIMARY KEY,
+    report_id       TEXT NOT NULL,
+    security_id     TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    statement_type  TEXT NOT NULL,
+    period_label    TEXT NOT NULL,
+    metric_name     TEXT NOT NULL,
+    metric_value    DOUBLE PRECISION NOT NULL,
+    unit            TEXT,
+    filing_date     TEXT,
+    observed_at     DOUBLE PRECISION NOT NULL,
+    source          TEXT,
+    source_document TEXT,
+    revision_hash   TEXT NOT NULL,
+    UNIQUE(report_id, metric_name, revision_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_financial_metrics_point_in_time
+    ON financial_metrics(security_id, metric_name, observed_at);
 
 CREATE TABLE IF NOT EXISTS company_events (
     id            TEXT PRIMARY KEY,
@@ -896,6 +972,38 @@ def _migrate_unified_research_columns() -> None:
                   "ON recommendation_outcomes(status, symbol)")
 
 
+def _migrate_daily_job_control() -> None:
+    """Add durable lease/target metadata to databases created before API 2.20."""
+    job_columns = {
+        "target_session": "TEXT",
+        "model_version": "TEXT",
+        "attempt": "INTEGER NOT NULL DEFAULT 1",
+        "lease_owner": "TEXT",
+        "heartbeat_at": "DOUBLE PRECISION" if _PG else "REAL",
+    }
+    if _PG:
+        with _conn() as c:
+            with c.cursor() as cur:
+                for name, sql_type in job_columns.items():
+                    cur.execute(
+                        f"ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS {name} {sql_type}"
+                    )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_job_runs_target "
+                    "ON job_runs(job_type, target_session, model_version, started_at)"
+                )
+        return
+    with _conn() as c:
+        existing = {row[1] for row in c.execute("PRAGMA table_info(job_runs)").fetchall()}
+        for name, sql_type in job_columns.items():
+            if name not in existing:
+                c.execute(f"ALTER TABLE job_runs ADD COLUMN {name} {sql_type}")
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_job_runs_target "
+            "ON job_runs(job_type, target_session, model_version, started_at)"
+        )
+
+
 def init() -> None:
     """Create schema (idempotent). SQLite path also migrates legacy JSON once."""
     if _PG:
@@ -908,7 +1016,9 @@ def init() -> None:
                         cur.execute(stmt)
         _migrate_saved_screens_columns()
         _migrate_unified_research_columns()
+        _migrate_daily_job_control()
         _seed_candidate_enrichments()
+        abandon_stale_job_runs()
         return
     print(f"[db] Using local SQLite at {DB_PATH} — EPHEMERAL on most hosts "
           f"(e.g. Render's free plan wipes this on every restart/redeploy). "
@@ -919,8 +1029,10 @@ def init() -> None:
         c.executescript(_SCHEMA_SQLITE)
     _migrate_saved_screens_columns()
     _migrate_unified_research_columns()
+    _migrate_daily_job_control()
     _migrate_legacy_json()
     _seed_candidate_enrichments()
+    abandon_stale_job_runs()
 
 
 def storage_status() -> dict:
@@ -1151,6 +1263,9 @@ def set_setting(key: str, value: Any) -> None:
 
 # ── CFO workspace snapshots and daily jobs ───────────────────────────────────
 
+JOB_LEASE_SECONDS = 30 * 60
+_TERMINAL_JOB_STATUSES = {"completed", "failed", "abandoned", "superseded"}
+
 def _loads_payload(raw: Any, default: Any) -> Any:
     try:
         return json.loads(raw) if raw else default
@@ -1164,10 +1279,117 @@ def create_job_run(job_type: str = "daily_cfo") -> dict:
     with _conn() as c:
         c.execute(
             _sql("INSERT INTO job_runs(id, job_type, status, stage, progress, total, "
-                 "started_at) VALUES (?,?,?,?,?,?,?)"),
-            (job_id, job_type, "running", "queued", 0, 0, started),
+                 "started_at, heartbeat_at) VALUES (?,?,?,?,?,?,?,?)"),
+            (job_id, job_type, "running", "queued", 0, 0, started, started),
         )
     return get_job_run(job_id) or {"id": job_id, "status": "running"}
+
+
+def _lock_job_type(connection, job_type: str) -> None:
+    """Serialize lease acquisition across processes for one job type."""
+    if _PG:
+        connection.execute(
+            _sql("SELECT pg_advisory_xact_lock(hashtext(?))"),
+            (f"stocklens-job:{job_type}",),
+        )
+    else:
+        connection.execute("BEGIN IMMEDIATE")
+
+
+def _abandon_running_job(connection, job_id: str, now: float, reason: str) -> None:
+    connection.execute(
+        _sql("UPDATE job_runs SET status='abandoned', stage='abandoned', error=?, "
+             "heartbeat_at=?, finished_at=? WHERE id=? AND status='running'"),
+        (reason, now, now, job_id),
+    )
+
+
+def abandon_stale_job_runs(*, job_type: Optional[str] = None,
+                           lease_seconds: int = JOB_LEASE_SECONDS,
+                           now: Optional[float] = None) -> int:
+    """Finalize expired rows so history never reports multi-day zombie runs."""
+    current = float(now if now is not None else time.time())
+    cutoff = current - max(60, int(lease_seconds))
+    clauses = ["status='running'", "COALESCE(heartbeat_at, started_at)<=?"]
+    values: list[Any] = [cutoff]
+    if job_type:
+        clauses.append("job_type=?")
+        values.append(job_type)
+    with _conn() as c:
+        rows = c.execute(_sql(
+            f"SELECT id FROM job_runs WHERE {' AND '.join(clauses)}"
+        ), tuple(values)).fetchall()
+        for row in rows:
+            _abandon_running_job(
+                c, row["id"], current,
+                f"No heartbeat for {max(60, int(lease_seconds))} seconds",
+            )
+        c.execute(_sql("DELETE FROM job_leases WHERE expires_at<=?"), (current,))
+    return len(rows)
+
+
+def acquire_job_run(job_type: str = "daily_cfo", *,
+                    model_version: Optional[str] = None,
+                    lease_seconds: int = JOB_LEASE_SECONDS) -> dict:
+    """Atomically acquire or reuse a durable cross-process job lease."""
+    current = time.time()
+    ttl = max(60, int(lease_seconds))
+    job_id = uuid.uuid4().hex
+    lease_owner = uuid.uuid4().hex
+    with _conn() as c:
+        _lock_job_type(c, job_type)
+        lease = c.execute(
+            _sql("SELECT * FROM job_leases WHERE job_type=?"), (job_type,)
+        ).fetchone()
+        if lease and float(lease["expires_at"] or 0) > current:
+            active = c.execute(
+                _sql("SELECT * FROM job_runs WHERE id=?"), (lease["job_id"],)
+            ).fetchone()
+            if active and active["status"] == "running":
+                result = _row_to_job(active) or {"id": lease["job_id"]}
+                result.update({
+                    "reused": True,
+                    "lease_active": True,
+                    "lease_expires_at": float(lease["expires_at"]),
+                })
+                return result
+        if lease:
+            _abandon_running_job(
+                c, lease["job_id"], current,
+                "Durable job lease expired before completion",
+            )
+            c.execute(
+                _sql("DELETE FROM job_leases WHERE job_type=?"), (job_type,)
+            )
+
+        # A running row without the durable lease is left by a pre-lease deploy
+        # or interrupted transaction. It cannot own work after this lock is held.
+        orphans = c.execute(
+            _sql("SELECT id FROM job_runs WHERE job_type=? AND status='running'"),
+            (job_type,),
+        ).fetchall()
+        for row in orphans:
+            _abandon_running_job(
+                c, row["id"], current,
+                "Run had no durable lease owner after process recovery",
+            )
+
+        c.execute(
+            _sql("INSERT INTO job_runs(id,job_type,status,stage,progress,total,"
+                 "started_at,model_version,attempt,lease_owner,heartbeat_at) "
+                 "VALUES (?,?,?,?,?,?,?,?,?,?,?)"),
+            (job_id, job_type, "running", "queued", 0, 0, current,
+             model_version, 1, lease_owner, current),
+        )
+        c.execute(
+            _sql("INSERT INTO job_leases(job_type,job_id,lease_owner,acquired_at,"
+                 "heartbeat_at,expires_at) VALUES (?,?,?,?,?,?)"),
+            (job_type, job_id, lease_owner, current, current, current + ttl),
+        )
+    result = get_job_run(job_id) or {"id": job_id, "status": "running"}
+    result.update({"reused": False, "lease_active": True,
+                   "lease_expires_at": current + ttl})
+    return result
 
 
 def update_job_run(job_id: str, *, status: Optional[str] = None,
@@ -1184,14 +1406,61 @@ def update_job_run(job_id: str, *, status: Optional[str] = None,
     if payload is not None:
         fields.append("payload = ?")
         values.append(json.dumps(_json_nan_safe(payload)))
-    if status in {"completed", "failed"}:
+    current = time.time()
+    fields.append("heartbeat_at = ?")
+    values.append(current)
+    if status in _TERMINAL_JOB_STATUSES:
         fields.append("finished_at = ?")
-        values.append(time.time())
-    if not fields:
-        return
+        values.append(current)
     values.append(job_id)
     with _conn() as c:
-        c.execute(_sql(f"UPDATE job_runs SET {', '.join(fields)} WHERE id = ?"), tuple(values))
+        c.execute(
+            _sql(f"UPDATE job_runs SET {', '.join(fields)} "
+                 "WHERE id = ? AND status = 'running'"),
+            tuple(values),
+        )
+        if status in _TERMINAL_JOB_STATUSES:
+            c.execute(_sql("DELETE FROM job_leases WHERE job_id=?"), (job_id,))
+        else:
+            c.execute(
+                _sql("UPDATE job_leases SET heartbeat_at=?, expires_at=? WHERE job_id=?"),
+                (current, current + JOB_LEASE_SECONDS, job_id),
+            )
+
+
+def assign_job_run_target(job_id: str, *, target_session: str,
+                          model_version: str) -> dict:
+    """Attach the official session, count attempts and detect prior publication."""
+    target = str(target_session or "")[:10]
+    if len(target) != 10:
+        raise ValueError("target_session must be an ISO trading date")
+    current = time.time()
+    with _conn() as c:
+        row = c.execute(
+            _sql("SELECT job_type FROM job_runs WHERE id=?"), (job_id,)
+        ).fetchone()
+        if not row:
+            raise ValueError("Unknown job run")
+        previous = c.execute(_sql(
+            "SELECT COALESCE(MAX(attempt),0) AS value FROM job_runs "
+            "WHERE job_type=? AND target_session=? AND model_version=? AND id<>?"
+        ), (row["job_type"], target, model_version, job_id)).fetchone()
+        attempt = int(previous["value"] or 0) + 1
+        c.execute(_sql(
+            "UPDATE job_runs SET target_session=?,model_version=?,attempt=?,heartbeat_at=? "
+            "WHERE id=? AND status='running'"
+        ), (target, model_version, attempt, current, job_id))
+        c.execute(_sql(
+            "UPDATE job_leases SET heartbeat_at=?,expires_at=? WHERE job_id=?"
+        ), (current, current + JOB_LEASE_SECONDS, job_id))
+        snapshot = c.execute(_sql(
+            "SELECT id FROM analysis_snapshots WHERE trading_date=? AND model_version=? "
+            "AND status='valid' ORDER BY created_at DESC LIMIT 1"
+        ), (target, model_version)).fetchone()
+    return {
+        "job": get_job_run(job_id),
+        "existing_snapshot_id": snapshot["id"] if snapshot else None,
+    }
 
 
 def _row_to_job(row) -> Optional[dict]:
@@ -1233,8 +1502,62 @@ def job_run_history(job_type: str = "daily_cfo", limit: int = 30) -> list[dict]:
             continue
         ended = item.get("finished_at") or now
         item["duration_seconds"] = round(max(0, ended - item["started_at"]), 2)
+        heartbeat = item.get("heartbeat_at")
+        item["heartbeat_age_seconds"] = (
+            round(max(0, now - float(heartbeat)), 2) if heartbeat is not None else None
+        )
+        item["lease_stale"] = bool(
+            item.get("status") == "running"
+            and (heartbeat is None or now - float(heartbeat) > JOB_LEASE_SECONDS)
+        )
         result.append(item)
     return result
+
+
+def daily_job_control_status(job_type: str = "daily_cfo") -> dict:
+    """Expose durable ownership and failure streak without turning nulls into zeroes."""
+    latest = latest_job_run(job_type)
+    current = time.time()
+    with _conn() as c:
+        lease = c.execute(
+            _sql("SELECT * FROM job_leases WHERE job_type=?"), (job_type,)
+        ).fetchone()
+        snapshot = c.execute(_sql(
+            "SELECT trading_date,model_version,id FROM analysis_snapshots "
+            "WHERE status='valid' ORDER BY created_at DESC LIMIT 1"
+        )).fetchone()
+        terminal_rows = c.execute(_sql(
+            "SELECT status FROM job_runs WHERE job_type=? "
+            "AND status IN ('completed','failed','abandoned') "
+            "ORDER BY started_at DESC LIMIT 100"
+        ), (job_type,)).fetchall()
+    failure_streak = 0
+    for row in terminal_rows:
+        if row["status"] == "completed":
+            break
+        failure_streak += 1
+    if latest:
+        heartbeat = latest.get("heartbeat_at")
+        latest["heartbeat_age_seconds"] = (
+            round(max(0, current - float(heartbeat)), 2)
+            if heartbeat is not None else None
+        )
+        latest["lease_stale"] = bool(
+            latest.get("status") == "running"
+            and (heartbeat is None or current - float(heartbeat) > JOB_LEASE_SECONDS)
+        )
+    else:
+        latest = {"status": "never_run", "stage": "waiting", "progress": 0,
+                  "total": 0, "heartbeat_age_seconds": None, "lease_stale": False}
+    latest.update({
+        "latest_valid_session": snapshot["trading_date"] if snapshot else None,
+        "latest_valid_snapshot_id": snapshot["id"] if snapshot else None,
+        "latest_valid_model_version": snapshot["model_version"] if snapshot else None,
+        "consecutive_failures": failure_streak,
+        "lease_active": bool(lease and float(lease["expires_at"] or 0) > current),
+        "lease_expires_at": float(lease["expires_at"]) if lease else None,
+    })
+    return latest
 
 
 def _as_finite_float(value) -> Optional[float]:
@@ -1289,8 +1612,9 @@ def _recommendation_outcome_values(snapshot_id: str, item: dict, *,
 
 def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                               sectors: list[dict], *, model_version: str,
-                              trading_date: str) -> str:
-    """Atomically publish one immutable snapshot and all of its children."""
+                              trading_date: str,
+                              job_id: Optional[str] = None) -> str:
+    """Atomically publish one immutable snapshot per session/model pair."""
     snapshot_id = uuid.uuid4().hex
     now = time.time()
     safe_summary = dict(summary)
@@ -1301,6 +1625,31 @@ def publish_analysis_snapshot(summary: dict, candidates: list[dict],
                      if isinstance(summary.get("market_regime"), dict) else None)
     observational_remaining = {"WATCH": 20, "AVOID": 5}
     with _conn() as c:
+        if job_id:
+            if not _PG:
+                c.execute("BEGIN IMMEDIATE")
+            owner = c.execute(_sql(
+                "SELECT job_type,status,lease_owner FROM job_runs WHERE id=?"
+            ), (job_id,)).fetchone()
+            if not owner:
+                raise RuntimeError("Daily job ownership record is missing")
+            if _PG:
+                _lock_job_type(c, owner["job_type"])
+            lease = c.execute(_sql(
+                "SELECT job_id,lease_owner,expires_at FROM job_leases WHERE job_type=?"
+            ), (owner["job_type"],)).fetchone()
+            current = time.time()
+            if (owner["status"] != "running" or not lease
+                    or lease["job_id"] != job_id
+                    or lease["lease_owner"] != owner["lease_owner"]
+                    or float(lease["expires_at"] or 0) <= current):
+                raise RuntimeError("Daily job lost its durable publication lease")
+        existing_snapshot = c.execute(_sql(
+            "SELECT id FROM analysis_snapshots WHERE trading_date=? AND model_version=? "
+            "AND status='valid' ORDER BY created_at DESC LIMIT 1"
+        ), (trading_date, model_version)).fetchone()
+        if existing_snapshot:
+            return existing_snapshot["id"]
         existing_observations = c.execute(_sql(
             "SELECT action, COUNT(*) AS count FROM recommendation_outcomes "
             "WHERE model_version = ? AND signal_date = ? "
@@ -2044,9 +2393,29 @@ def archive_feature_snapshots(items: list[dict], *, feature_date: str,
     return len(values)
 
 
+_FINANCIAL_METADATA_KEYS = {
+    "quarter", "year", "period", "filing_date", "published_at",
+    "source", "source_url", "source_document", "supplemental_sources",
+}
+
+
+def _financial_metric_unit(metric_name: str, statement_type: str) -> str:
+    if metric_name in {"opm", "roe", "roce", "promoter_pledge"} \
+            or "margin" in metric_name or metric_name.endswith("_pct"):
+        return "percent"
+    if metric_name == "eps":
+        return "INR_per_share"
+    if metric_name == "market_cap":
+        return "INR_crore"
+    if statement_type == "ratios" or metric_name in {"debt_to_equity", "interest_coverage"}:
+        return "ratio"
+    return "INR_crore"
+
+
 def archive_financial_payloads(items: list[dict]) -> dict:
     """Normalize observed financial statements/events without inventing filing dates."""
     report_values: list[tuple] = []
+    metric_values: list[tuple] = []
     event_values: list[tuple] = []
     statement_keys = {
         "quarterly_results": "quarterly_income",
@@ -2066,6 +2435,34 @@ def archive_financial_payloads(items: list[dict]) -> dict:
         security_id = _security_id(symbol, item.get("isin"))
         observed_at = float(item.get("observed_at") or time.time())
         origin = item.get("origin") or payload.get("fundamentals_source")
+
+        def add_metrics(report_id: str, statement_type: str, period_label: str,
+                        values: dict, filing_date: Any, period_origin: Any,
+                        source_document: Any) -> None:
+            for metric_name, raw_value in values.items():
+                if metric_name in _FINANCIAL_METADATA_KEYS or isinstance(raw_value, bool):
+                    continue
+                metric_value = _as_finite_float(raw_value)
+                if metric_value is None:
+                    continue
+                unit = _financial_metric_unit(metric_name, statement_type)
+                _metric_json, revision_hash = _stable_payload({
+                    "value": metric_value, "unit": unit,
+                    "filing_date": filing_date, "source": period_origin,
+                    "source_document": source_document,
+                })
+                metric_values.append((
+                    hashlib.sha256(
+                        f"{report_id}|{metric_name}|{revision_hash}".encode()
+                    ).hexdigest(),
+                    report_id, security_id, symbol, statement_type, period_label,
+                    metric_name, metric_value, unit,
+                    str(filing_date) if filing_date else None, observed_at,
+                    str(period_origin) if period_origin else None,
+                    str(source_document) if source_document else None,
+                    revision_hash,
+                ))
+
         for key, statement_type in statement_keys.items():
             for index, period in enumerate(payload.get(key) or []):
                 if not isinstance(period, dict):
@@ -2074,25 +2471,43 @@ def archive_financial_payloads(items: list[dict]) -> dict:
                     period.get("quarter") or period.get("year")
                     or period.get("period") or f"row-{index}"
                 )
-                encoded, payload_hash = _stable_payload(period)
                 filing_date = period.get("filing_date") or period.get("published_at")
-                source_document = period.get("source_document") or period.get("source_url")
+                period_origin = period.get("source") or origin
+                source_document = (
+                    period.get("source_document") or period.get("source_url")
+                    or payload.get("source_url")
+                )
+                encoded, payload_hash = _stable_payload({
+                    "values": period, "filing_date": filing_date,
+                    "source": period_origin, "source_document": source_document,
+                })
                 report_id = hashlib.sha256(
                     f"{security_id}|{statement_type}|{period_label}|{payload_hash}".encode()
                 ).hexdigest()
                 report_values.append((
                     report_id, security_id, symbol, statement_type, period_label,
-                    str(filing_date) if filing_date else None, observed_at, origin,
+                    str(filing_date) if filing_date else None, observed_at, period_origin,
                     str(source_document) if source_document else None, payload_hash, encoded,
                 ))
+                add_metrics(report_id, statement_type, period_label, period,
+                            filing_date, period_origin, source_document)
         ratios = {key: payload.get(key) for key in ratio_keys if payload.get(key) is not None}
         if ratios:
-            encoded, payload_hash = _stable_payload(ratios)
+            ratio_source_document = payload.get("source_url")
+            encoded, payload_hash = _stable_payload({
+                "values": ratios, "source": origin,
+                "source_document": ratio_source_document,
+            })
+            ratio_report_id = hashlib.sha256(
+                f"{security_id}|ratios|{payload_hash}".encode()
+            ).hexdigest()
             report_values.append((
-                hashlib.sha256(f"{security_id}|ratios|{payload_hash}".encode()).hexdigest(),
+                ratio_report_id,
                 security_id, symbol, "ratios", "current_as_observed", None,
-                observed_at, origin, None, payload_hash, encoded,
+                observed_at, origin, ratio_source_document, payload_hash, encoded,
             ))
+            add_metrics(ratio_report_id, "ratios", "current_as_observed", ratios,
+                        None, origin, ratio_source_document)
         source_events = payload.get("events") or []
         events = [source_events] if isinstance(source_events, dict) else list(source_events)
         if payload.get("earnings_date"):
@@ -2131,19 +2546,29 @@ def archive_financial_payloads(items: list[dict]) -> dict:
         )
         _executemany(
             connection,
+            "INSERT INTO financial_metrics(id,report_id,security_id,symbol,statement_type,"
+            "period_label,metric_name,metric_value,unit,filing_date,observed_at,source,"
+            "source_document,revision_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT DO NOTHING",
+            metric_values,
+        )
+        _executemany(
+            connection,
             "INSERT INTO company_events(id,security_id,symbol,event_type,event_date,filing_date,"
             "severity,description,source,source_url,evidence_hash,observed_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
             event_values,
         )
-    return {"reports_attempted": len(report_values), "events_attempted": len(event_values)}
+    return {"reports_attempted": len(report_values),
+            "metrics_attempted": len(metric_values),
+            "events_attempted": len(event_values)}
 
 
 def data_archive_status() -> dict:
     tables = (
         "securities", "market_prices_raw", "market_prices_adjusted",
         "corporate_actions", "financial_reports", "company_events",
-        "stock_feature_snapshots",
+        "financial_metrics", "stock_feature_snapshots",
     )
     with _conn() as connection:
         counts = {
@@ -2171,6 +2596,31 @@ def data_archive_status() -> dict:
     return {"counts": counts, "latest_raw_date": latest_raw,
             "latest_feature_date": latest_features, "immutable_revisions": True,
             "latest_audit": latest_audit}
+
+
+def financial_metric_history(symbol: str, *, metric: Optional[str] = None,
+                             as_of: Optional[float] = None,
+                             limit: int = 500) -> list[dict]:
+    """Return immutable financial metric revisions, optionally point-in-time bounded."""
+    clauses = ["UPPER(symbol)=?"]
+    values: list[Any] = [str(symbol).strip().upper()]
+    if metric:
+        clauses.append("metric_name=?")
+        values.append(str(metric).strip().lower())
+    if as_of is not None:
+        clauses.append("observed_at<=?")
+        values.append(float(as_of))
+    bounded = max(1, min(int(limit), 2000))
+    values.append(bounded)
+    query = (
+        "SELECT id,report_id,security_id,symbol,statement_type,period_label,metric_name,"
+        "metric_value,unit,filing_date,observed_at,source,source_document,revision_hash "
+        f"FROM financial_metrics WHERE {' AND '.join(clauses)} "
+        "ORDER BY observed_at DESC, period_label DESC, metric_name LIMIT ?"
+    )
+    with _conn() as connection:
+        rows = connection.execute(_sql(query), tuple(values)).fetchall()
+    return [dict(row) for row in rows]
 
 
 def run_data_archive_audit(*, expected_date: Optional[str] = None,
@@ -2230,12 +2680,24 @@ def run_data_archive_audit(*, expected_date: Optional[str] = None,
         ) if latest_raw else 0
         adjusted_rows = count("SELECT COUNT(*) AS count FROM market_prices_adjusted")
         reports = count("SELECT COUNT(*) AS count FROM financial_reports")
+        latest_report_predicate = (
+            "f.observed_at=(SELECT MAX(newer.observed_at) FROM financial_reports newer "
+            "WHERE newer.security_id=f.security_id AND "
+            "newer.statement_type=f.statement_type AND newer.period_label=f.period_label)"
+        )
+        current_reports = count(
+            "SELECT COUNT(*) AS count FROM financial_reports f WHERE "
+            + latest_report_predicate
+        )
         reports_without_filing_date = count(
-            "SELECT COUNT(*) AS count FROM financial_reports WHERE filing_date IS NULL"
+            "SELECT COUNT(*) AS count FROM financial_reports f WHERE filing_date IS NULL AND "
+            + latest_report_predicate
         )
         reports_without_source_document = count(
-            "SELECT COUNT(*) AS count FROM financial_reports WHERE source_document IS NULL"
+            "SELECT COUNT(*) AS count FROM financial_reports f WHERE source_document IS NULL AND "
+            + latest_report_predicate
         )
+        financial_metrics = count("SELECT COUNT(*) AS count FROM financial_metrics")
         events = count("SELECT COUNT(*) AS count FROM company_events")
         events_without_source = count(
             "SELECT COUNT(*) AS count FROM company_events WHERE source IS NULL OR source=''"
@@ -2248,6 +2710,8 @@ def run_data_archive_audit(*, expected_date: Optional[str] = None,
             "SELECT COUNT(*) AS count FROM stock_feature_snapshots f LEFT JOIN securities s "
             "ON s.security_id=f.security_id WHERE s.security_id IS NULL",
             "SELECT COUNT(*) AS count FROM financial_reports f LEFT JOIN securities s "
+            "ON s.security_id=f.security_id WHERE s.security_id IS NULL",
+            "SELECT COUNT(*) AS count FROM financial_metrics f LEFT JOIN securities s "
             "ON s.security_id=f.security_id WHERE s.security_id IS NULL",
         ))
 
@@ -2278,12 +2742,15 @@ def run_data_archive_audit(*, expected_date: Optional[str] = None,
               f"{feature_full} stocks have full feature snapshots on the latest feature date"),
         check("archive_references", "pass" if not orphan_rows else "fail", orphan_rows,
               f"{orphan_rows} archived records lack a security-master parent"),
+        check("normalized_financial_metrics",
+              "pass" if financial_metrics or not reports else "warn", financial_metrics,
+              f"{financial_metrics} queryable point-in-time financial metrics are archived"),
         check("financial_filing_dates", "pass" if not reports_without_filing_date else "warn",
               reports_without_filing_date,
-              f"{reports_without_filing_date}/{reports} financial records lack a provider filing date"),
+              f"{reports_without_filing_date}/{current_reports} current financial records lack a provider filing date"),
         check("financial_documents", "pass" if not reports_without_source_document else "warn",
               reports_without_source_document,
-              f"{reports_without_source_document}/{reports} financial records lack a source document"),
+              f"{reports_without_source_document}/{current_reports} current financial records lack a source document"),
         check("event_sources", "pass" if not events_without_source else "warn", events_without_source,
               f"{events_without_source}/{events} events lack a named source"),
     ]
@@ -2294,7 +2761,8 @@ def run_data_archive_audit(*, expected_date: Optional[str] = None,
         "active_securities": securities, "latest_raw_date": latest_raw,
         "latest_feature_date": latest_features, "raw_coverage_pct": raw_coverage,
         "feature_coverage_pct": feature_coverage, "full_feature_count": feature_full,
-        "financial_report_count": reports, "event_count": events,
+        "financial_report_count": reports, "current_financial_report_count": current_reports,
+        "financial_metric_count": financial_metrics, "event_count": events,
         "failures": failures, "warnings": warnings,
     }
     result = {"status": status, "as_of_date": expected or latest_raw,

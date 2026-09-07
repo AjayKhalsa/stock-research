@@ -542,9 +542,12 @@ async def get_fundamentals(instrument: str) -> dict:
                 "industry": industry,
                 "earnings_date": earnings_date,
                 "source": "yfinance",
+                "source_url": f"https://finance.yahoo.com/quote/{sym}/financials/",
             }
         except Exception as e:
             print(f"[price_service] fundamentals error {sym}: {e}")
-            return {"bs_by_year": {}, "pl_by_year": {}, "cf_by_year": {}, "source": "yfinance"}
+            return {"bs_by_year": {}, "pl_by_year": {}, "cf_by_year": {},
+                    "source": "yfinance",
+                    "source_url": f"https://finance.yahoo.com/quote/{sym}/financials/"}
 
     return await asyncio.to_thread(_fetch)

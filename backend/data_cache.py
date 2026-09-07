@@ -46,7 +46,8 @@ def _year_of(label) -> Optional[int]:
     return int(m.group(0)) if m else None
 
 
-def _overlay_years(entries: list, by_year: dict, keys: list) -> int:
+def _overlay_years(entries: list, by_year: dict, keys: list,
+                   source_url: Optional[str] = None) -> int:
     """
     Overlay reported yfinance values onto Screener annual entries, matching on
     calendar year. yfinance wins for the listed keys when it has a value.
@@ -67,6 +68,13 @@ def _overlay_years(entries: list, by_year: dict, keys: list) -> int:
                 entry[k] = v
                 hit = True
         if hit:
+            if not entry.get("source"):
+                entry["source"] = "Yahoo Finance"
+                entry["source_url"] = source_url
+            supplemental = entry.setdefault("supplemental_sources", [])
+            source = {"source": "Yahoo Finance", "source_url": source_url}
+            if source not in supplemental:
+                supplemental.append(source)
             touched += 1
     return touched
 
@@ -99,6 +107,16 @@ def enrich_with_yf_fundamentals(screener_data: dict, yf_funds: dict) -> dict:
     if yf_funds.get("earnings_date"):
         screener_data["earnings_date"] = yf_funds["earnings_date"]
 
+    provider_sources = []
+    if screener_data.get("source_url"):
+        provider_sources.append({"source": "Screener.in",
+                                 "source_url": screener_data["source_url"]})
+    if yf_funds.get("source_url"):
+        provider_sources.append({"source": "Yahoo Finance",
+                                 "source_url": yf_funds["source_url"]})
+    if provider_sources:
+        screener_data["provider_sources"] = provider_sources
+
     bs_by = yf_funds.get("bs_by_year") or {}
     pl_by = yf_funds.get("pl_by_year") or {}
     cf_by = yf_funds.get("cf_by_year") or {}
@@ -121,9 +139,10 @@ def enrich_with_yf_fundamentals(screener_data: dict, yf_funds: dict) -> dict:
         screener_data["annual_cf"] = cf
 
     n = 0
-    n += _overlay_years(bs, bs_by, _YF_BS_OVERLAY)
-    n += _overlay_years(pl, pl_by, _YF_PL_OVERLAY)
-    n += _overlay_years(cf, cf_by, _YF_CF_OVERLAY)
+    yahoo_source_url = yf_funds.get("source_url")
+    n += _overlay_years(bs, bs_by, _YF_BS_OVERLAY, yahoo_source_url)
+    n += _overlay_years(pl, pl_by, _YF_PL_OVERLAY, yahoo_source_url)
+    n += _overlay_years(cf, cf_by, _YF_CF_OVERLAY, yahoo_source_url)
 
     screener_data["fundamentals_source"] = (
         "yfinance+screener" if n else "screener"
