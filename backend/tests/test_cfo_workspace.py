@@ -485,6 +485,9 @@ class CfoWorkspaceApiTests(unittest.TestCase):
         self.assertNotIn("account_value", saved.json())
         self.assertEqual(self.client.get("/api/portfolio/settings").json()["max_open_positions"], 8)
 
+    def test_postgres_bootstrap_defers_job_index_until_after_column_migration(self):
+        self.assertNotIn("idx_job_runs_target", db._SCHEMA_PG)
+
     def test_daily_job_is_protected(self):
         response = self.client.post("/api/jobs/daily/run")
         self.assertEqual(response.status_code, 401)

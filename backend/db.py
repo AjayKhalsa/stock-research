@@ -282,9 +282,6 @@ CREATE TABLE IF NOT EXISTS job_runs (
     heartbeat_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs_latest ON job_runs(job_type, started_at);
-CREATE INDEX IF NOT EXISTS idx_job_runs_target
-    ON job_runs(job_type, target_session, model_version, started_at);
-
 CREATE TABLE IF NOT EXISTS job_leases (
     job_type     TEXT PRIMARY KEY,
     job_id       TEXT NOT NULL,
@@ -681,9 +678,6 @@ CREATE TABLE IF NOT EXISTS job_runs (
     heartbeat_at DOUBLE PRECISION
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs_latest ON job_runs(job_type, started_at);
-CREATE INDEX IF NOT EXISTS idx_job_runs_target
-    ON job_runs(job_type, target_session, model_version, started_at);
-
 CREATE TABLE IF NOT EXISTS job_leases (
     job_type     TEXT PRIMARY KEY,
     job_id       TEXT NOT NULL,
